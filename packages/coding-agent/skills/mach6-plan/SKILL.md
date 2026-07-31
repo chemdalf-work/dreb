@@ -32,6 +32,8 @@ This command is strictly for **planning**. Do NOT implement any code changes —
 6. Never invoke `ctx_*` directly, arbitrary MCP methods, or a generic MCP client in core.
 7. RTK is rejected due to fidelity, exit-code, and actionable-diagnostic failures.
 
+**Plan-stage limit:** use `context_mode` only for large generated output, configuration, file, or log analysis; keep planning decisions and direct source evidence native.
+
 ## Required child handoff
 
 When launching a child, repeat the routing boundary above and provide the exact task, a bounded file set or claim set, required direct verification, validation commands, and completion criteria. The child must use no direct `ctx_*` calls, arbitrary MCP methods, or a generic MCP client in core.
