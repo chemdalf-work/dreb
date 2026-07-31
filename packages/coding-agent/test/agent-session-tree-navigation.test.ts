@@ -22,8 +22,8 @@ describe.skipIf(process.env.DREB_SKIP_LIVE_API === "1" || !API_KEY)("AgentSessio
 		});
 	});
 
-	afterEach(() => {
-		ctx.cleanup();
+	afterEach(async () => {
+		await ctx.cleanup();
 	});
 
 	it("should navigate to user message and put text in editor", async () => {
@@ -287,8 +287,8 @@ describe.skipIf(process.env.DREB_SKIP_LIVE_API === "1" || !API_KEY)(
 			});
 		});
 
-		afterEach(() => {
-			ctx.cleanup();
+		afterEach(async () => {
+			await ctx.cleanup();
 		});
 
 		it("should navigate between branches correctly", async () => {

@@ -158,7 +158,7 @@ describe("AgentSession model switching", () => {
 					.map((entry) => entry.thinkingLevel),
 			).toEqual(["off", "high", "off", "high"]);
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 });
@@ -270,7 +270,7 @@ describe("AgentSession model switching — thinkingDisplay", () => {
 			await session.setModel(adaptiveModel);
 			expect(session.agent.thinkingDisplay).toBe("summarized");
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
@@ -294,7 +294,7 @@ describe("AgentSession model switching — thinkingDisplay", () => {
 			expect(session.model?.id).toBe(adaptiveModel.id);
 			expect(session.agent.thinkingDisplay).toBe("omitted");
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 });
@@ -302,7 +302,7 @@ describe("AgentSession model switching — thinkingDisplay", () => {
 describe("AgentSession switchSession — thinkingDisplay", () => {
 	const tempDirs: string[] = [];
 
-	afterEach(() => {
+	afterEach(async () => {
 		for (const dir of tempDirs.splice(0)) {
 			rmSync(dir, { recursive: true, force: true });
 		}
@@ -368,7 +368,7 @@ describe("AgentSession switchSession — thinkingDisplay", () => {
 			expect(session.model?.id).toBe(adaptiveModel.id);
 			expect(session.agent.thinkingDisplay).toBe("summarized");
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
@@ -454,7 +454,7 @@ describe("AgentSession switchSession — thinkingDisplay", () => {
 			expect(session.agent.thinkingDisplay).toBe("omitted");
 			expect(session.systemPrompt).toContain(resumedModelAppend);
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 });
@@ -471,7 +471,7 @@ describe("AgentSession model switching — system prompt identity", () => {
 			);
 			expect(session.systemPrompt).not.toContain(reasoningModel.id);
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
@@ -489,7 +489,7 @@ describe("AgentSession model switching — system prompt identity", () => {
 			);
 			expect(session.systemPrompt).not.toContain(reasoningModel.id);
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 });

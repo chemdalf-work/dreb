@@ -107,7 +107,7 @@ async function dispatchRpcCommand(
 }
 
 describe("RPC dashboard state/resources DTOs", () => {
-	it("includes scoped models in get_state data", () => {
+	it("includes scoped models in get_state data", async () => {
 		const scoped = model("anthropic", "claude-scoped", "Claude Scoped");
 		const { session, cleanup } = createTestSession({ inMemory: true });
 		session.setScopedModels([{ model: scoped, thinkingLevel: "high" }]);
@@ -125,11 +125,11 @@ describe("RPC dashboard state/resources DTOs", () => {
 				},
 			]);
 		} finally {
-			cleanup();
+			await cleanup();
 		}
 	});
 
-	it("includes the current task snapshot in get_state data", () => {
+	it("includes the current task snapshot in get_state data", async () => {
 		const { session, cleanup } = createTestSession({ inMemory: true });
 		const tasks = [
 			{ id: "read", title: "Read existing code", status: "completed" as const },
@@ -144,11 +144,11 @@ describe("RPC dashboard state/resources DTOs", () => {
 			expect(state.tasks).not.toBe(tasks);
 			expect(state.tasks[0]).not.toBe(tasks[0]);
 		} finally {
-			cleanup();
+			await cleanup();
 		}
 	});
 
-	it("includes automatic retry activity in get_state data", () => {
+	it("includes automatic retry activity in get_state data", async () => {
 		const { session, cleanup } = createTestSession({ inMemory: true });
 		const retryingSession = session as unknown as {
 			_retryPromise: Promise<void>;
@@ -163,11 +163,11 @@ describe("RPC dashboard state/resources DTOs", () => {
 			expect(state.isRetrying).toBe(true);
 			expect(state.retryAttempt).toBe(2);
 		} finally {
-			cleanup();
+			await cleanup();
 		}
 	});
 
-	it("includes OAuth subscription usage in get_state data", () => {
+	it("includes OAuth subscription usage in get_state data", async () => {
 		const { session, cleanup } = createTestSession({ inMemory: true });
 		const isUsingOAuth = vi.spyOn(session.modelRegistry, "isUsingOAuth").mockReturnValue(true);
 
@@ -177,7 +177,7 @@ describe("RPC dashboard state/resources DTOs", () => {
 			expect(isUsingOAuth).toHaveBeenCalledWith(session.model);
 			expect(state.usingSubscription).toBe(true);
 		} finally {
-			cleanup();
+			await cleanup();
 		}
 	});
 
@@ -472,7 +472,7 @@ describe("runRpcMode dashboard dispatcher", () => {
 			);
 			await expect(pendingAsk).resolves.toEqual({ answers: [{ selected: ["SQLite"], skipped: false }] });
 		} finally {
-			cleanup();
+			await cleanup();
 			for (const listener of process.stdin.listeners("end")) {
 				if (!existingEndListeners.has(listener)) {
 					process.stdin.off("end", listener as (...args: unknown[]) => void);

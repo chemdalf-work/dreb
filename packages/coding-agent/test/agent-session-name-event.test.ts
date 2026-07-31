@@ -3,7 +3,7 @@ import type { AgentSessionEvent } from "../src/core/agent-session.js";
 import { createTestSession } from "./utilities.js";
 
 describe("AgentSession session name events", () => {
-	it("emits session_name_changed after persisting the new name", () => {
+	it("emits session_name_changed after persisting the new name", async () => {
 		const { session, cleanup } = createTestSession({ inMemory: true });
 		const events: AgentSessionEvent[] = [];
 		const unsubscribe = session.subscribe((event) => events.push(event));
@@ -15,7 +15,7 @@ describe("AgentSession session name events", () => {
 			expect(events).toContainEqual({ type: "session_name_changed", name: "Dashboard Session" });
 		} finally {
 			unsubscribe();
-			cleanup();
+			await cleanup();
 		}
 	});
 });

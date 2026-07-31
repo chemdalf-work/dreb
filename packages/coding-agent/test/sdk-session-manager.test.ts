@@ -33,7 +33,7 @@ describe("createAgentSession session manager defaults", () => {
 		mkdirSync(agentDir, { recursive: true });
 	});
 
-	afterEach(() => {
+	afterEach(async () => {
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true, force: true });
 		}
@@ -57,7 +57,7 @@ describe("createAgentSession session manager defaults", () => {
 		expect(sessionDir).toBe(expectedSessionDir);
 		expect(sessionFile?.startsWith(`${expectedSessionDir}/`)).toBe(true);
 
-		session.dispose();
+		await session.dispose();
 	});
 
 	it("keeps an explicit sessionManager override", async () => {
@@ -75,7 +75,7 @@ describe("createAgentSession session manager defaults", () => {
 		expect(session.sessionManager).toBe(sessionManager);
 		expect(session.sessionManager.isPersisted()).toBe(false);
 
-		session.dispose();
+		await session.dispose();
 	});
 
 	it.each(["high", "xhigh"] as const)(
@@ -93,7 +93,7 @@ describe("createAgentSession session manager defaults", () => {
 			try {
 				expect(session.thinkingLevel).toBe("off");
 			} finally {
-				session.dispose();
+				await session.dispose();
 			}
 		},
 	);

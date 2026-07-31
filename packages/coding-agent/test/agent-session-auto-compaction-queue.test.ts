@@ -824,4 +824,20 @@ describe("AgentSession auto-compaction queue resume", () => {
 			expect(session.isCompacting).toBe(false);
 		});
 	});
+
+	it("settles disposal when an auto_compaction_start subscriber throws", async () => {
+		const runAutoCompaction = (
+			session as unknown as {
+				_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<void>;
+			}
+		)._runAutoCompaction.bind(session);
+		session.subscribe((event) => {
+			if (event.type === "auto_compaction_start") {
+				throw new Error("start subscriber failed");
+			}
+		});
+
+		await expect(runAutoCompaction("threshold", false)).resolves.toBeUndefined();
+		await expect(session.dispose()).resolves.toBeUndefined();
+	});
 });

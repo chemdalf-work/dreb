@@ -12,8 +12,8 @@ import { createHarness, createHarnessWithExtensions, type Harness } from "./test
 describe("test harness", () => {
 	let harness: Harness;
 
-	afterEach(() => {
-		harness?.cleanup();
+	afterEach(async () => {
+		await harness?.cleanup();
 	});
 
 	it("simple text response", async () => {

@@ -120,10 +120,7 @@ export async function runPrintMode(session: AgentSession, options: PrintModeOpti
 
 		return exitCode;
 	} finally {
-		const extensionRunner = session.extensionRunner;
-		if (extensionRunner?.hasHandlers("session_shutdown")) {
-			await extensionRunner.emit({ type: "session_shutdown" });
-		}
+		await session.dispose();
 
 		// Ensure stdout is fully flushed before returning
 		// This prevents race conditions where the process exits before all output is written

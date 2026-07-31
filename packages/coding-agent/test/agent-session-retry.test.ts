@@ -65,9 +65,9 @@ describe("AgentSession retry", () => {
 		mkdirSync(tempDir, { recursive: true });
 	});
 
-	afterEach(() => {
+	afterEach(async () => {
 		if (session) {
-			session.dispose();
+			await session.dispose();
 		}
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true });
@@ -492,7 +492,7 @@ describe("AgentSession retry", () => {
 			});
 			return stream;
 		};
-		created.session.dispose();
+		await created.session.dispose();
 
 		const model = findModel("anthropic", "sonnet")!;
 		const agent = new Agent({

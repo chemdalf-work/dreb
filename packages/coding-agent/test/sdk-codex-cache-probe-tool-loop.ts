@@ -363,7 +363,7 @@ async function main(): Promise<void> {
 	console.log(`session file: ${session.sessionFile}`);
 
 	unsubscribe();
-	session.dispose();
+	await session.dispose();
 }
 
 main().catch((error: unknown) => {
