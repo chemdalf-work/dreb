@@ -74,6 +74,8 @@ Documentation files to check on every feature change:
 - `packages/coding-agent/docs/` (feature-specific docs: extensions, json, rpc, sdk, etc.)
 - `AGENTS.md` (this file — development guide)
 
+For the optional `dreb-context-mode` package, preserve the boundary in public docs: it is separately installed, discovered automatically by later main sessions and subagents, and not a generic MCP client in core. Link readers to the package for its OS-process privileges and package-owned persistent storage; RTK remains rejected because of fidelity, exit-code, and actionable-diagnostic failures.
+
 ## Nested Context Trust Boundary
 
 The initial startup scan still walks upward from the main or subagent launch cwd and is separate from lazy nested/out-of-cwd loading. Lazy loading defaults **off**. Its global-only policy lives in `~/.dreb/agent/settings.json`: `context.trustedFolders` grants canonical existing roots and descendants, with native-realpath matching that denies symlink escapes. Project `.dreb/settings.json` cannot add or override trusted roots or enable loading.

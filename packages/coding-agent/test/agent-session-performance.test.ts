@@ -56,9 +56,9 @@ describe("AgentSession performance tracking", () => {
 		mkdirSync(tempDir, { recursive: true });
 	});
 
-	afterEach(() => {
+	afterEach(async () => {
 		if (session) {
-			session.dispose();
+			await session.dispose();
 		}
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true });

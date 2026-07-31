@@ -20,6 +20,22 @@ argument-hint: "<pr-number> [code|errors|tests|completeness|simplify]"
 
 **Important: Do NOT fix any issues in this session. Fixes happen via a later, user-invoked `/skill:mach6-implement`.**
 
+## Optional `context_mode` routing boundary
+
+`context_mode` is available only through the optional, separately installed `dreb-context-mode` package. This guidance is advisory, not universal deterministic interception.
+
+1. Start code discovery with `search`.
+2. Use native tools for expected output of ≤2 KB; for 2–5 KB unless the work is clearly analytical; and for edits, verbatim, exact, or ordered facts, and Git/CI/version/release/publish evidence.
+3. Use `context_mode` only for precise, large derived analysis or broad gathers expected to exceed 5 KB.
+4. Treat its output as derived, not proof: directly verify material claims against source or bounded native evidence.
+5. On an unavailable or failed call, show a bounded visible diagnostic, then continue natively; never silently fall back or report partial protocol output as success.
+6. Never invoke `ctx_*` directly, arbitrary MCP methods, or a generic MCP client in core.
+7. RTK is rejected due to fidelity, exit-code, and actionable-diagnostic failures.
+
+## Required child handoff
+
+When launching a child, repeat the routing boundary above and provide the exact task, a bounded file set or claim set, required direct verification, validation commands, and completion criteria. The child must use no direct `ctx_*` calls, arbitrary MCP methods, or a generic MCP client in core.
+
 ## Step 1: Set up task tracking
 
 ```

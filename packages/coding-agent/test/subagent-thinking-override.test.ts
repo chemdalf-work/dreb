@@ -165,7 +165,7 @@ beforeEach(() => {
 	);
 });
 
-afterEach(() => {
+afterEach(async () => {
 	rmSync(tempCwd, { recursive: true, force: true });
 	vi.restoreAllMocks();
 });
@@ -493,7 +493,7 @@ describe("parallel and chain inheritance", () => {
 				thinking: "low",
 			});
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
@@ -555,7 +555,7 @@ describe("parallel and chain inheritance", () => {
 				],
 			});
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 

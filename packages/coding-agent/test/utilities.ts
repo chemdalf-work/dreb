@@ -178,7 +178,7 @@ export interface TestSessionContext {
 	session: AgentSession;
 	sessionManager: SessionManager;
 	tempDir: string;
-	cleanup: () => void;
+	cleanup: () => Promise<void>;
 }
 
 export interface CreateTestExtensionsResultInput {
@@ -289,8 +289,8 @@ export function createTestSession(options: TestSessionOptions = {}): TestSession
 	// Must subscribe to enable session persistence
 	session.subscribe(() => {});
 
-	const cleanup = () => {
-		session.dispose();
+	const cleanup = async () => {
+		await session.dispose();
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true });
 		}

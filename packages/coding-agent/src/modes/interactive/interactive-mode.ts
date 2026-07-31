@@ -3231,8 +3231,7 @@ export class InteractiveMode {
 	}
 
 	/**
-	 * Gracefully shutdown the agent.
-	 * Emits shutdown event to extensions, then exits.
+	 * Gracefully shutdown the agent, dispose the session, then exit.
 	 */
 	private isShuttingDown = false;
 
@@ -3240,13 +3239,7 @@ export class InteractiveMode {
 		if (this.isShuttingDown) return;
 		this.isShuttingDown = true;
 
-		// Emit shutdown event to extensions
-		const extensionRunner = this.session.extensionRunner;
-		if (extensionRunner?.hasHandlers("session_shutdown")) {
-			await extensionRunner.emit({
-				type: "session_shutdown",
-			});
-		}
+		await this.session.dispose();
 
 		// Wait for any pending renders to complete
 		// requestRender() uses process.nextTick(), so we wait one tick

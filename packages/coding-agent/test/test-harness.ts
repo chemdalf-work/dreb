@@ -352,7 +352,7 @@ export interface Harness {
 	/** Temp directory (cleaned up by cleanup()). */
 	tempDir: string;
 	/** Dispose session and remove temp directory. */
-	cleanup: () => void;
+	cleanup: () => Promise<void>;
 }
 
 function createTempDir(): string {
@@ -407,8 +407,8 @@ function createHarnessWithResourceLoader(
 		events.push(event);
 	});
 
-	const cleanup = () => {
-		session.dispose();
+	const cleanup = async () => {
+		await session.dispose();
 		if (existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true });
 		}

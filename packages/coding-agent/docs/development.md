@@ -39,6 +39,10 @@ packages/
 
 Dependencies flow one way through the workspace: `coding-agent` depends on `agent`, `ai`, and `tui`; frontend packages such as `telegram`, `dashboard`, and `semantic-search` build on the published workspace APIs instead of creating reverse dependencies. Changes to a dependency require rebuilding downstream packages — `npm run build` handles this automatically in the correct order.
 
+## Optional external analysis package
+
+[dreb-context-mode](https://github.com/chemdalf-work/dreb-context-mode) is an optional installable extension package, not a generic MCP client in core. Its automatic main-session and subagent discovery, advisory routing, OS-process privileges, and package-owned persistent storage belong to that package's documentation and tests. Keep core documentation explicit about that boundary; do not add `ctx_*` tools, arbitrary MCP dispatch, or RTK interception to core. RTK remains rejected because its fidelity, exit-code, and actionable-diagnostic failures are unsafe for automatic use.
+
 ## Code style
 
 The project uses [Biome](https://biomejs.dev/) for linting and formatting:
