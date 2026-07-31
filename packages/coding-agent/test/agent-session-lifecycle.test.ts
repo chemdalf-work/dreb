@@ -86,7 +86,7 @@ describe("AgentSession.dispose", () => {
 		expect(second).toBe(first);
 		await Promise.all([first, second]);
 		expect(runner.emit).toHaveBeenCalledTimes(1);
-		expect(runner.emit).toHaveBeenCalledWith({ type: "session_shutdown" });
+		expect(runner.emit).toHaveBeenCalledWith({ type: "session_shutdown" }, { throwOnError: true });
 	});
 
 	it("shuts down each reload runtime once", async () => {
@@ -105,7 +105,7 @@ describe("AgentSession.dispose", () => {
 		await session.dispose();
 		expect(oldRunner.emit).toHaveBeenCalledTimes(1);
 		expect(newRunner.emit).toHaveBeenCalledTimes(1);
-		expect(newRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown" });
+		expect(newRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown" }, { throwOnError: true });
 	});
 
 	it("shares an extension runtime shutdown promise", async () => {
@@ -125,6 +125,80 @@ describe("AgentSession.dispose", () => {
 		expect(runner.emit).toHaveBeenCalledTimes(1);
 		finishShutdown!();
 		await Promise.all([first, second]);
+	});
+
+	it("shares a rejecting extension runtime shutdown promise", async () => {
+		const session = createSession();
+		const runner = createRunner();
+		const shutdownError = new Error("shutdown failed");
+		runner.emit.mockRejectedValue(shutdownError);
+		const internals = session as any;
+
+		const first = internals._shutdownExtensionRuntime(runner);
+		const second = internals._shutdownExtensionRuntime(runner);
+
+		expect(second).toBe(first);
+		expect(runner.emit).toHaveBeenCalledOnce();
+		await expect(first).rejects.toBe(shutdownError);
+		await expect(second).rejects.toBe(shutdownError);
+	});
+
+	it("rejects shared disposal after a shutdown failure while still releasing local resources", async () => {
+		const session = createSession();
+		const runner = createRunner();
+		const shutdownError = new Error("shutdown failed");
+		runner.emit.mockRejectedValue(shutdownError);
+		const internals = session as any;
+		const runnerRef = { current: runner };
+		const unsubscribeExtensionErrors = vi.fn();
+		const disconnect = vi.spyOn(internals, "_disconnectFromAgent");
+		const disposePerformanceTracker = vi.spyOn(internals.performanceTracker, "dispose");
+		internals._extensionRunner = runner;
+		internals._extensionRunnerRef = runnerRef;
+		internals._extensionErrorUnsubscriber = unsubscribeExtensionErrors;
+		internals._extensionErrorListener = vi.fn();
+		internals._extensionUIContext = {};
+		internals._extensionCommandContextActions = {};
+		internals._extensionShutdownHandler = vi.fn();
+		internals._eventListeners = [vi.fn()];
+
+		const first = session.dispose();
+		const second = session.dispose();
+
+		expect(second).toBe(first);
+		await expect(first).rejects.toBe(shutdownError);
+		await expect(second).rejects.toBe(shutdownError);
+		expect(runner.emit).toHaveBeenCalledOnce();
+		expect(unsubscribeExtensionErrors).toHaveBeenCalledOnce();
+		expect(disconnect).toHaveBeenCalledOnce();
+		expect(disposePerformanceTracker).toHaveBeenCalledOnce();
+		expect(internals._extensionRunner).toBeUndefined();
+		expect(runnerRef.current).toBeUndefined();
+		expect(internals._extensionErrorUnsubscriber).toBeUndefined();
+		expect(internals._extensionErrorListener).toBeUndefined();
+		expect(internals._extensionUIContext).toBeUndefined();
+		expect(internals._extensionCommandContextActions).toBeUndefined();
+		expect(internals._extensionShutdownHandler).toBeUndefined();
+		expect(internals._eventListeners).toEqual([]);
+	});
+
+	it("rejects reload before replacing resources or runtime when shutdown fails", async () => {
+		const session = createSession();
+		const runner = createRunner();
+		const shutdownError = new Error("shutdown failed");
+		runner.emit.mockRejectedValue(shutdownError);
+		const internals = session as any;
+		internals._extensionRunner = runner;
+		const reloadSettings = vi.spyOn(session.settingsManager, "reload");
+		const reloadResources = vi.spyOn(internals._resourceLoader, "reload");
+		const buildRuntime = vi.spyOn(internals, "_buildRuntime");
+
+		await expect(session.reload()).rejects.toBe(shutdownError);
+
+		expect(runner.emit).toHaveBeenCalledOnce();
+		expect(reloadSettings).not.toHaveBeenCalled();
+		expect(reloadResources).not.toHaveBeenCalled();
+		expect(buildRuntime).not.toHaveBeenCalled();
 	});
 
 	it("returns the dispose promise and skips reload work when disposal starts first", async () => {
