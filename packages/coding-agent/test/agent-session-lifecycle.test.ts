@@ -7,6 +7,7 @@ import { ModelRegistry } from "../src/core/model-registry.js";
 import { createAgentSession } from "../src/core/sdk.js";
 import { SessionManager } from "../src/core/session-manager.js";
 import { SettingsManager } from "../src/core/settings-manager.js";
+import type { BashOperations } from "../src/core/tools/bash.js";
 import { createTestExtensionsResult, createTestResourceLoader } from "./utilities.js";
 
 type RunnerDouble = {
@@ -303,6 +304,101 @@ describe("AgentSession.dispose", () => {
 		expect(internals._unsubscribeAgent).toBeUndefined();
 		expect(internals._unsubscribeGuardrailSentinel).toBeUndefined();
 		expect(internals._unsubscribeGuardrailCounter).toBeUndefined();
+	});
+
+	it("aborts and awaits in-flight Bash without recording a late result or reconnecting", async () => {
+		const session = createSession();
+		let bashSignal: AbortSignal | undefined;
+		let finishExecution: () => void;
+		let markStarted: () => void;
+		const started = new Promise<void>((resolve) => {
+			markStarted = resolve;
+		});
+		const operations: BashOperations = {
+			exec: vi.fn((_command, _cwd, options) => {
+				bashSignal = options.signal;
+				markStarted!();
+				return new Promise<{ exitCode: number | null }>((resolve) => {
+					finishExecution = () => resolve({ exitCode: 0 });
+				});
+			}),
+		};
+		const recordBashResult = vi.spyOn(session, "recordBashResult");
+		const subscribe = vi.spyOn(session.agent, "subscribe");
+
+		const executing = session.executeBash("long-running", undefined, { operations });
+		await started;
+		let disposalSettled = false;
+		const disposing = session.dispose().then(() => {
+			disposalSettled = true;
+		});
+		await vi.waitFor(() => expect(bashSignal?.aborted).toBe(true));
+		await Promise.resolve();
+		expect(disposalSettled).toBe(false);
+
+		finishExecution!();
+		await expect(executing).resolves.toMatchObject({ cancelled: true });
+		await disposing;
+
+		expect(recordBashResult).not.toHaveBeenCalled();
+		expect(
+			session.sessionManager
+				.getEntries()
+				.some((entry) => entry.type === "message" && entry.message.role === "bashExecution"),
+		).toBe(false);
+		expect(subscribe).not.toHaveBeenCalled();
+	});
+
+	it("aborts and awaits branch summarization without late tree mutation or reconnecting", async () => {
+		const session = createSession();
+		session.sessionManager.appendMessage({ role: "user", content: "root", timestamp: 1 });
+		session.sessionManager.appendMessage({ role: "user", content: "branch", timestamp: 2 });
+		const entriesBefore = session.sessionManager.getEntries();
+		const targetId = entriesBefore[0].id;
+		const leafBefore = session.sessionManager.getLeafId();
+		let summarySignal: AbortSignal | undefined;
+		let finishSummary: () => void;
+		let markStarted: () => void;
+		const started = new Promise<void>((resolve) => {
+			markStarted = resolve;
+		});
+		const runner = createRunner();
+		runner.hasHandlers.mockImplementation(
+			(eventType: string) => eventType === "session_before_tree" || eventType === "session_shutdown",
+		);
+		runner.emit.mockImplementation((event: { type: string; signal?: AbortSignal }) => {
+			if (event.type !== "session_before_tree") return Promise.resolve();
+			summarySignal = event.signal;
+			markStarted!();
+			return new Promise((resolve) => {
+				finishSummary = () => resolve({ summary: { summary: "late summary" } });
+			});
+		});
+		const internals = session as any;
+		internals._extensionRunner = runner;
+		const replaceMessages = vi.spyOn(session.agent, "replaceMessages");
+		const subscribe = vi.spyOn(session.agent, "subscribe");
+
+		const navigating = session.navigateTree(targetId, { summarize: true });
+		await started;
+		let disposalSettled = false;
+		const disposing = session.dispose().then(() => {
+			disposalSettled = true;
+		});
+		await vi.waitFor(() => expect(summarySignal?.aborted).toBe(true));
+		await Promise.resolve();
+		expect(disposalSettled).toBe(false);
+
+		finishSummary!();
+		await expect(navigating).resolves.toMatchObject({ cancelled: true, aborted: true });
+		await disposing;
+
+		expect(session.sessionManager.getEntries()).toHaveLength(entriesBefore.length);
+		expect(session.sessionManager.getEntries().some((entry) => entry.type === "branch_summary")).toBe(false);
+		expect(session.sessionManager.getLeafId()).toBe(leafBefore);
+		expect(replaceMessages).not.toHaveBeenCalled();
+		expect(subscribe).not.toHaveBeenCalled();
+		expect(internals._branchSummaryAbortController).toBeUndefined();
 	});
 
 	it("prevents a session switch that was waiting on an extension from reconnecting during disposal", async () => {

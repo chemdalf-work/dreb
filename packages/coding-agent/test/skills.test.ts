@@ -499,6 +499,35 @@ describe("skills", () => {
 			for (const skillName of skillNames.slice(0, 4)) {
 				expect(readBuiltInSkill(skillName)).toContain(childHandoff);
 			}
+
+			const stageLimits: Record<string, string> = {
+				"mach6-issue":
+					"**Issue-stage limit:** use `context_mode` only to derive a bounded packet from genuinely large issue evidence; keep issue creation, issue text, comments, and bounded assessment evidence native.",
+				"mach6-plan":
+					"**Plan-stage limit:** use `context_mode` only for large generated output, configuration, file, or log analysis; keep planning decisions and direct source evidence native.",
+				"mach6-implement":
+					"**Implement-stage limit:** execute tests and builds natively; use `context_mode` only to analyze unusually large failure output, then verify every proposed fix with direct source and native reruns.",
+				"mach6-review":
+					"**Review-stage limit:** each reviewer may receive at most one bounded `context_mode` packet; every reviewer must verify its material claims against source or tests before reporting a finding.",
+				"mach6-publish":
+					"**Publish-stage limit:** keep all Git, CI, version, merge, tag, and release evidence native and ordered; do not use `context_mode` in publish steps.",
+			};
+			for (const [skillName, stageLimit] of Object.entries(stageLimits)) {
+				expect(readBuiltInSkill(skillName)).toContain(stageLimit);
+			}
+		});
+
+		it("mach6 skills should use portable mktemp templates", () => {
+			for (const skillName of [
+				"mach6-issue",
+				"mach6-plan",
+				"mach6-push",
+				"mach6-review",
+				"mach6-implement",
+				"mach6-publish",
+			]) {
+				expect(readBuiltInSkill(skillName)).not.toMatch(/mktemp \/tmp\/[^\s`"']*XXXXXX\.[^\s`"']+/);
+			}
 		});
 
 		it("model-routing-guide should remain an explicit, skill-only research workflow", () => {
