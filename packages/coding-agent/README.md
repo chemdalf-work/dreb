@@ -578,7 +578,7 @@ await session.prompt("What files are in the current directory?");
 await session.dispose();
 ```
 
-Always `await session.dispose()` when an SDK session is no longer needed. It awaits extension shutdown handlers before releasing session resources.
+Always `await session.dispose()` when an SDK session is no longer needed. It awaits extension shutdown handlers before releasing session resources, then rejects if any handler failed.
 
 See [docs/sdk.md](docs/sdk.md) and [examples/sdk/](examples/sdk/).
 

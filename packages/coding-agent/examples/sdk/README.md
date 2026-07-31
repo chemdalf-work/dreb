@@ -105,7 +105,7 @@ await session.prompt("Hello");
 await session.dispose();
 ```
 
-Always `await session.dispose()` when finished. It waits for extension shutdown handlers before releasing session resources.
+Always `await session.dispose()` when finished. It waits for extension shutdown handlers before releasing session resources, then rejects if any handler failed.
 
 ## Options
 

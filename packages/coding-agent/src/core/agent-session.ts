@@ -1428,25 +1428,52 @@ export class AgentSession {
 			this._waitForDisposalOperations(),
 			this.waitForRetry(),
 		]);
-		await extensionShutdown;
+		let shutdownFailure: unknown;
+		let didShutdownFail = false;
+		let teardownFailure: unknown;
+		let didTeardownFail = false;
+		const teardown = (callback: () => void) => {
+			try {
+				callback();
+			} catch (error) {
+				if (!didTeardownFail) {
+					didTeardownFail = true;
+					teardownFailure = error;
+				}
+			}
+		};
 
-		this._extensionErrorUnsubscriber?.();
-		this._extensionErrorUnsubscriber = undefined;
-		this._extensionErrorListener = undefined;
-		this._extensionUIContext = undefined;
-		this._extensionCommandContextActions = undefined;
-		this._extensionShutdownHandler = undefined;
-		const extensionRunnerRef = this._extensionRunnerRef;
-		if (extensionRunnerRef && extensionRunnerRef.current === extensionRunner) {
-			extensionRunnerRef.current = undefined;
-		}
-		this._extensionRunner = undefined;
+		try {
+			await extensionShutdown;
+		} catch (error) {
+			didShutdownFail = true;
+			shutdownFailure = error;
+		} finally {
+			teardown(() => this._extensionErrorUnsubscriber?.());
+			this._extensionErrorUnsubscriber = undefined;
+			this._extensionErrorListener = undefined;
+			this._extensionUIContext = undefined;
+			this._extensionCommandContextActions = undefined;
+			this._extensionShutdownHandler = undefined;
+			const extensionRunnerRef = this._extensionRunnerRef;
+			if (extensionRunnerRef && extensionRunnerRef.current === extensionRunner) {
+				extensionRunnerRef.current = undefined;
+			}
+			this._extensionRunner = undefined;
 
-		this._disconnectFromAgent();
-		if (this._ownsPerformanceTracker) {
-			this.performanceTracker.dispose();
+			teardown(() => this._disconnectFromAgent());
+			if (this._ownsPerformanceTracker) {
+				teardown(() => this.performanceTracker.dispose());
+			}
+			this._eventListeners = [];
 		}
-		this._eventListeners = [];
+
+		if (didShutdownFail) {
+			throw shutdownFailure;
+		}
+		if (didTeardownFail) {
+			throw teardownFailure;
+		}
 	}
 
 	private _shutdownExtensionRuntime(extensionRunner: ExtensionRunner | undefined): Promise<void> {
