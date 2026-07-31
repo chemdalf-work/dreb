@@ -34,7 +34,7 @@ describe.skipIf(process.env.DREB_SKIP_LIVE_API === "1" || !API_KEY)("AgentSessio
 
 	afterEach(async () => {
 		if (session) {
-			session.dispose();
+			await session.dispose();
 		}
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true });

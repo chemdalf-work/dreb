@@ -25,32 +25,48 @@ import {
 } from "@dreb/coding-agent";
 
 // Read-only mode (no edit/write) - uses process.cwd()
-await createAgentSession({
+const { session: readOnlySession } = await createAgentSession({
 	tools: readOnlyTools,
 	sessionManager: SessionManager.inMemory(),
 });
-console.log("Read-only session created");
+try {
+	console.log("Read-only session created");
+} finally {
+	await readOnlySession.dispose();
+}
 
 // Custom tool selection - uses process.cwd()
-await createAgentSession({
+const { session: customToolsSession } = await createAgentSession({
 	tools: [readTool, bashTool, grepTool],
 	sessionManager: SessionManager.inMemory(),
 });
-console.log("Custom tools session created");
+try {
+	console.log("Custom tools session created");
+} finally {
+	await customToolsSession.dispose();
+}
 
 // With custom cwd - MUST use factory functions!
 const customCwd = "/path/to/project";
-await createAgentSession({
+const { session: customCwdSession } = await createAgentSession({
 	cwd: customCwd,
 	tools: createCodingTools(customCwd), // Tools resolve paths relative to customCwd
 	sessionManager: SessionManager.inMemory(),
 });
-console.log("Custom cwd session created");
+try {
+	console.log("Custom cwd session created");
+} finally {
+	await customCwdSession.dispose();
+}
 
 // Or pick specific tools for custom cwd
-await createAgentSession({
+const { session: specificToolsSession } = await createAgentSession({
 	cwd: customCwd,
 	tools: [createReadTool(customCwd), createBashTool(customCwd), createGrepTool(customCwd)],
 	sessionManager: SessionManager.inMemory(),
 });
-console.log("Specific tools with custom cwd session created");
+try {
+	console.log("Specific tools with custom cwd session created");
+} finally {
+	await specificToolsSession.dispose();
+}

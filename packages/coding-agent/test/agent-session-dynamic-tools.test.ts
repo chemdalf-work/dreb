@@ -19,7 +19,7 @@ describe("AgentSession dynamic tool registration", () => {
 		mkdirSync(agentDir, { recursive: true });
 	});
 
-	afterEach(() => {
+	afterEach(async () => {
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true, force: true });
 		}
@@ -88,7 +88,7 @@ describe("AgentSession dynamic tool registration", () => {
 		expect(session.systemPrompt).toContain("- dynamic_tool: Run dynamic test behavior");
 		expect(session.systemPrompt).toContain("- Use dynamic_tool when the user asks for dynamic behavior tests.");
 
-		session.dispose();
+		await session.dispose();
 	});
 
 	it("removes subagent and adds explicit guidance when new parent sessions configure zero", async () => {
@@ -203,7 +203,7 @@ describe("AgentSession dynamic tool registration", () => {
 		expect(firstAsk).toHaveBeenCalledTimes(1);
 		expect(secondAsk).toHaveBeenCalledTimes(1);
 
-		session.dispose();
+		await session.dispose();
 	});
 
 	it("returns source metadata for SDK custom tools", async () => {
@@ -246,7 +246,7 @@ describe("AgentSession dynamic tool registration", () => {
 		});
 		expect(session.getActiveToolNames()).toContain("sdk_tool");
 
-		session.dispose();
+		await session.dispose();
 	});
 
 	it("keeps custom tools active but omits them from available tools when promptSnippet is not provided", async () => {
@@ -292,6 +292,6 @@ describe("AgentSession dynamic tool registration", () => {
 		expect(session.systemPrompt).not.toContain("hidden_tool");
 		expect(session.systemPrompt).not.toContain("Description should not appear in available tools");
 
-		session.dispose();
+		await session.dispose();
 	});
 });

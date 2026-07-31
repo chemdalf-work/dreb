@@ -186,7 +186,7 @@ beforeEach(() => {
 	mockSpawn();
 });
 
-afterEach(() => {
+afterEach(async () => {
 	abortBackgroundAgents();
 	rmSync(tempCwd, { recursive: true, force: true });
 	vi.restoreAllMocks();
@@ -638,7 +638,7 @@ describe("pre-spawn subagent arbitration", () => {
 			.find((entry) => entry.type === "custom" && entry.customType === "subagent_arbitration");
 		expect(persisted).toMatchObject({ type: "custom", data: { type: "subagent_arbitration", status: "success" } });
 		expect(JSON.stringify(sessionManager.buildSessionContext().messages)).not.toContain("subagent_arbitration");
-		session.dispose();
+		await session.dispose();
 	});
 
 	test("AgentSession persists a scrubbed authentication failure and never spawns", async () => {
@@ -701,7 +701,7 @@ describe("pre-spawn subagent arbitration", () => {
 		});
 		expect(JSON.stringify(persisted)).not.toContain("AUTH_SECRET_123");
 		expect(JSON.stringify(sessionManager.buildSessionContext().messages)).not.toContain("subagent_arbitration");
-		session.dispose();
+		await session.dispose();
 	});
 
 	test("updates the background registry to the final agent before child lifecycle events", async () => {

@@ -98,6 +98,18 @@ Resources carry source provenance so commands, tools, skills, and prompts can be
 
 dreb packages make those resources installable and shareable through npm, git, URLs, or local paths. Use `dreb install`, `dreb list`, `dreb update`, and `dreb config` to manage them; project-local packages can be checked into settings so teams get the same skills, extensions, prompts, and themes.
 
+### Optional context-efficient analysis
+
+The separately maintained [`dreb-context-mode`](https://github.com/chemdalf-work/dreb-context-mode) package adds advisory, context-efficient analysis routing without adding a generic MCP client to dreb's core. Install it once:
+
+```bash
+dreb install git:github.com/chemdalf-work/dreb-context-mode
+```
+
+After installation, normal main sessions and subagents discover the package automatically; users do not repeatedly invoke a skill or `ctx_*` command. Its guidance starts code discovery with semantic `search`, keeps small, exact, ordered, edit, Git/CI/version/release/publish evidence native, and reserves `context_mode` for precise large derived analysis or broad gathers. It is advisory rather than universal deterministic interception, and material derived claims still require direct source or bounded native verification. A failed call shows a bounded visible diagnostic before native continuation; it never silently falls back or treats partial protocol output as success.
+
+This is external package code, not an OS sandbox: its child process has the dreb user's filesystem, network, executable, and other OS privileges. Operations that index data persist it only in the package's dreb-owned local storage, with project isolation, retention, removal, and abandoned-directory pruning documented by the [package](https://github.com/chemdalf-work/dreb-context-mode); dreb core remains without a generic MCP client. Review the package before installing it. RTK is intentionally not integrated because fidelity, exit-code, and actionable-diagnostic failures made automatic interception unsafe.
+
 ### Sessions, memory, and continuity
 
 Sessions are persistent JSONL files with a tree structure. You can resume recent sessions, browse past sessions, branch in-place with `/tree`, fork sessions into new files, compact long conversations, import/export JSONL, export HTML, or choose a custom session directory.

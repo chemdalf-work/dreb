@@ -98,7 +98,7 @@ function expandSkillCommand(session: AgentSession, text: string): string {
 }
 
 describe("AgentSession._expandSkillCommand", () => {
-	it("passes non-skill input through unchanged", () => {
+	it("passes non-skill input through unchanged", async () => {
 		const session = createSession([validSkill]);
 		try {
 			expect(expandSkillCommand(session, "hello world")).toBe("hello world");
@@ -106,22 +106,22 @@ describe("AgentSession._expandSkillCommand", () => {
 			expect(expandSkillCommand(session, "/model sonnet")).toBe("/model sonnet");
 			expect(expandSkillCommand(session, "")).toBe("");
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("expands /skill:name with no args", () => {
+	it("expands /skill:name with no args", async () => {
 		const session = createSession([validSkill]);
 		try {
 			const result = expandSkillCommand(session, "/skill:valid-skill");
 			expect(result).toContain('<skill name="valid-skill"');
 			expect(result).toContain("This is a valid skill that follows the Agent Skills standard.");
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("expands /skill:name with args and performs substitution", () => {
+	it("expands /skill:name with args and performs substitution", async () => {
 		const session = createSession([substitutionSkill]);
 		try {
 			const result = expandSkillCommand(session, "/skill:substitution-test foo bar");
@@ -133,11 +133,11 @@ describe("AgentSession._expandSkillCommand", () => {
 			expect(result).toMatch(/Session: [0-9a-f-]{36}\./);
 			expect(result).not.toContain("$" + "{DREB_SESSION_ID}");
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("returns original text for unknown skill name", () => {
+	it("returns original text for unknown skill name", async () => {
 		const session = createSession([validSkill]);
 		try {
 			const warnSpy = vi.spyOn(log, "warn").mockImplementation(() => {});
@@ -146,11 +146,11 @@ describe("AgentSession._expandSkillCommand", () => {
 			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Unknown skill "nonexistent"'));
 			warnSpy.mockRestore();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("returns original text for unknown skill with args", () => {
+	it("returns original text for unknown skill with args", async () => {
 		const session = createSession([validSkill]);
 		try {
 			const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -158,11 +158,11 @@ describe("AgentSession._expandSkillCommand", () => {
 			expect(result).toBe("/skill:nonexistent some args");
 			consoleSpy.mockRestore();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("returns original text when skill file cannot be read (error path)", () => {
+	it("returns original text when skill file cannot be read (error path)", async () => {
 		const session = createSession([brokenSkill]);
 		try {
 			const warnSpy = vi.spyOn(session, "warnInSession").mockImplementation(() => {});
@@ -171,11 +171,11 @@ describe("AgentSession._expandSkillCommand", () => {
 			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Skill expansion failed for "broken-skill"'));
 			warnSpy.mockRestore();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("returns original text when no skills are loaded", () => {
+	it("returns original text when no skills are loaded", async () => {
 		const session = createSession([]);
 		try {
 			const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -183,11 +183,11 @@ describe("AgentSession._expandSkillCommand", () => {
 			expect(result).toBe("/skill:anything");
 			consoleSpy.mockRestore();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("expands userInvocable: false skills (manual dispatch bypasses autocomplete filter)", () => {
+	it("expands userInvocable: false skills (manual dispatch bypasses autocomplete filter)", async () => {
 		const session = createSession([nonUserInvocableSkill]);
 		try {
 			// _expandSkillCommand searches all skills by name, regardless of userInvocable.
@@ -196,7 +196,7 @@ describe("AgentSession._expandSkillCommand", () => {
 			expect(result).toContain('<skill name="not-user-invocable"');
 			expect(result).toContain("This skill is hidden from the slash command menu.");
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 });

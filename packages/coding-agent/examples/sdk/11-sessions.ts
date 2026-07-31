@@ -10,20 +10,32 @@ import { createAgentSession, SessionManager } from "@dreb/coding-agent";
 const { session: inMemory } = await createAgentSession({
 	sessionManager: SessionManager.inMemory(),
 });
-console.log("In-memory session:", inMemory.sessionFile ?? "(none)");
+try {
+	console.log("In-memory session:", inMemory.sessionFile ?? "(none)");
+} finally {
+	await inMemory.dispose();
+}
 
 // New persistent session
 const { session: newSession } = await createAgentSession({
 	sessionManager: SessionManager.create(process.cwd()),
 });
-console.log("New session file:", newSession.sessionFile);
+try {
+	console.log("New session file:", newSession.sessionFile);
+} finally {
+	await newSession.dispose();
+}
 
 // Continue most recent session (or create new if none)
 const { session: continued, modelFallbackMessage } = await createAgentSession({
 	sessionManager: SessionManager.continueRecent(process.cwd()),
 });
-if (modelFallbackMessage) console.log("Note:", modelFallbackMessage);
-console.log("Continued session:", continued.sessionFile);
+try {
+	if (modelFallbackMessage) console.log("Note:", modelFallbackMessage);
+	console.log("Continued session:", continued.sessionFile);
+} finally {
+	await continued.dispose();
+}
 
 // List and open specific session
 const sessions = await SessionManager.list(process.cwd());
@@ -36,7 +48,11 @@ if (sessions.length > 0) {
 	const { session: opened } = await createAgentSession({
 		sessionManager: SessionManager.open(sessions[0].path),
 	});
-	console.log(`\nOpened: ${opened.sessionId}`);
+	try {
+		console.log(`\nOpened: ${opened.sessionId}`);
+	} finally {
+		await opened.dispose();
+	}
 }
 
 // Custom session directory (no cwd encoding)

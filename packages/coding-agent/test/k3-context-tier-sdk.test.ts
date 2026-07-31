@@ -45,7 +45,7 @@ describe("createAgentSession K3 auto context tier", () => {
 		mkdirSync(agentDir, { recursive: true });
 	});
 
-	afterEach(() => {
+	afterEach(async () => {
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true, force: true });
 		}
@@ -82,7 +82,7 @@ describe("createAgentSession K3 auto context tier", () => {
 		expect(session.model?.wireModelId).toBe(K3_256K_WIRE_MODEL_ID);
 		expect(session.model?.contextWindow).toBe(K3_256K_CONTEXT_WINDOW);
 
-		session.dispose();
+		await session.dispose();
 	});
 
 	it("resumes straight into the 1M tier when restored context already exceeds the cutoff", async () => {
@@ -96,6 +96,6 @@ describe("createAgentSession K3 auto context tier", () => {
 		expect(session.model?.wireModelId).toBeUndefined();
 		expect(session.model?.contextWindow).toBe(K3_1M_CONTEXT_WINDOW);
 
-		session.dispose();
+		await session.dispose();
 	});
 });

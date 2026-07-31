@@ -56,10 +56,10 @@ function previewFor(sessionManager: SessionManager, id: string): string {
 	return findNode(toRpcTreeNodes(sessionManager.getTree()), id)!.preview;
 }
 
-afterEach(() => {
+afterEach(async () => {
 	vi.restoreAllMocks();
 	for (const context of sessionContexts.splice(0, sessionContexts.length).reverse()) {
-		context.cleanup();
+		await context.cleanup();
 	}
 });
 
