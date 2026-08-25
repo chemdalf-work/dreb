@@ -712,6 +712,7 @@ export class InteractiveMode {
 	 */
 	async run(): Promise<void> {
 		await this.init();
+		await this.refreshDailyCostAndWarn();
 
 		// Start version check asynchronously
 		this.checkForNewVersion().then((newVersion) => {
@@ -2767,7 +2768,7 @@ export class InteractiveMode {
 				// Buddy reaction: session wrap-up quip
 				this.buddyController.handleEvent(event);
 
-				await this.footerDataProvider.refreshDailyCost();
+				await this.refreshDailyCostAndWarn();
 				this.ui.requestRender();
 				break;
 
@@ -2912,6 +2913,16 @@ export class InteractiveMode {
 			case "background_agent_start":
 			case "background_agent_end": {
 				this.updateBackgroundAgentStatus();
+				await this.refreshDailyCostAndWarn();
+				this.ui.requestRender();
+				break;
+			}
+
+			case "background_agent_event": {
+				if (this.backgroundEventUpdatesCost(event.event)) {
+					await this.refreshDailyCostAndWarn();
+					this.ui.requestRender();
+				}
 				break;
 			}
 
@@ -3550,6 +3561,29 @@ export class InteractiveMode {
 	// =========================================================================
 	// UI helpers
 	// =========================================================================
+
+	private backgroundEventUpdatesCost(event: Record<string, unknown>): boolean {
+		let current: Record<string, unknown> | undefined = event;
+		for (let depth = 0; current && depth < 16; depth++) {
+			if (current.type === "session") return true;
+			if (current.type === "message_end") {
+				const message = current.message;
+				return typeof message === "object" && message !== null && "role" in message && message.role === "assistant";
+			}
+			const nested: unknown = current.event;
+			current = typeof nested === "object" && nested !== null ? (nested as Record<string, unknown>) : undefined;
+		}
+		return false;
+	}
+
+	private async refreshDailyCostAndWarn(): Promise<void> {
+		const warnings = await this.footerDataProvider.refreshDailyCost(this.session.sessionManager.getSessionFile());
+		for (const warning of warnings) {
+			this.showWarning(
+				`Daily API spend crossed the $${warning.threshold.toFixed(0)} threshold (now $${warning.cost.toFixed(2)}). This is warning-only; work continues.`,
+			);
+		}
+	}
 
 	clearEditor(): void {
 		this.editor.setText("");
@@ -4493,7 +4527,7 @@ export class InteractiveMode {
 
 		// Switch session via AgentSession (emits extension session events)
 		await this.session.switchSession(sessionPath);
-		await this.footerDataProvider.refreshDailyCost();
+		await this.refreshDailyCostAndWarn();
 
 		// Clear and re-render the chat
 		this.resetChatDisplay();
@@ -5072,7 +5106,7 @@ ${cycleModelForward || cycleModelBackward ? `| \`${cycleModelForward}\` / \`${cy
 
 		// New session via session (emits extension session events)
 		await this.session.newSession();
-		await this.footerDataProvider.refreshDailyCost();
+		await this.refreshDailyCostAndWarn();
 
 		// Clear UI state
 		this.headerContainer.clear();
