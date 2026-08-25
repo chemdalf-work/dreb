@@ -1,3 +1,10 @@
 npx biome check --error-on-warnings .
 npx tsgo --noEmit
+
+# Git exports repository-local variables to hooks. Clear them before running
+# tests that create and inspect nested temporary repositories.
+for git_var in $(git rev-parse --local-env-vars); do
+	unset "$git_var"
+done
+
 bash test.sh --no-live-api
