@@ -14,14 +14,15 @@ function makeSessionFilename(date: Date): string {
 	return `${ts}_${randomUUID()}.jsonl`;
 }
 
-function makeSessionJsonl(costs: number[]): string {
+function makeSessionJsonl(costs: number[], timestamp = new Date(), header: Record<string, unknown> = {}): string {
 	const lines = [
 		JSON.stringify({
 			type: "session",
 			version: 3,
 			id: randomUUID(),
-			timestamp: new Date().toISOString(),
+			timestamp: timestamp.toISOString(),
 			cwd: "/test",
+			...header,
 		}),
 	];
 	for (const cost of costs) {
@@ -30,9 +31,12 @@ function makeSessionJsonl(costs: number[]): string {
 				type: "message",
 				id: `msg-${randomUUID().slice(0, 8)}`,
 				parentId: null,
-				timestamp: new Date().toISOString(),
+				timestamp: timestamp.toISOString(),
 				message: {
 					role: "assistant",
+					provider: "test-provider",
+					model: "test-model",
+					timestamp: timestamp.getTime(),
 					content: [{ type: "text", text: "hello" }],
 					usage: {
 						input: 100,
@@ -188,7 +192,7 @@ describe("DailyCostTracker", () => {
 		writeFileSync(join(projectB, makeSessionFilename(now)), makeSessionJsonl([1.0]));
 
 		// Yesterday's session — should NOT be included
-		writeFileSync(join(projectA, makeSessionFilename(yesterday)), makeSessionJsonl([10.0]));
+		writeFileSync(join(projectA, makeSessionFilename(yesterday)), makeSessionJsonl([10.0], yesterday));
 
 		tracker = await createTracker(tmpDir);
 		expect(tracker.getDailyCost()).toBeCloseTo(1.75, 5);
@@ -431,5 +435,125 @@ describe("DailyCostTracker", () => {
 
 		tracker = await createTracker(tmpDir);
 		expect(tracker.getDailyCost()).toBeCloseTo(1.0, 5);
+	});
+
+	it("aggregates active, completed, chained, and nested child sessions without duplicates", async () => {
+		const sessionsDir = join(tmpDir, "sessions");
+		const subagentSessionsDir = join(tmpDir, "subagent-sessions");
+		const projectDir = join(sessionsDir, "--project--");
+		mkdirSync(projectDir, { recursive: true });
+		const now = new Date();
+		const parentFile = join(projectDir, makeSessionFilename(now));
+		writeFileSync(parentFile, makeSessionJsonl([1], now));
+
+		const childDir = join(subagentSessionsDir, "child-a");
+		mkdirSync(childDir, { recursive: true });
+		const childFile = join(childDir, makeSessionFilename(now));
+		writeFileSync(childFile, makeSessionJsonl([2], now, { agentType: "feature-dev", parentSession: parentFile }));
+
+		const chainDir = join(subagentSessionsDir, "chain-b");
+		for (const [step, cost, agentType] of [
+			[1, 3, "Explore"],
+			[2, 4, "feature-dev"],
+		] as const) {
+			const stepDir = join(chainDir, `step-${step}`);
+			mkdirSync(stepDir, { recursive: true });
+			writeFileSync(
+				join(stepDir, makeSessionFilename(now)),
+				makeSessionJsonl([cost], now, { agentType, parentSession: parentFile }),
+			);
+		}
+
+		const grandchildDir = join(subagentSessionsDir, "grandchild-c");
+		mkdirSync(grandchildDir, { recursive: true });
+		writeFileSync(
+			join(grandchildDir, makeSessionFilename(now)),
+			makeSessionJsonl([5], now, { agentType: "test-reviewer", parentSession: childFile }),
+		);
+
+		const malformedDir = join(subagentSessionsDir, "malformed-d");
+		mkdirSync(malformedDir, { recursive: true });
+		writeFileSync(join(malformedDir, makeSessionFilename(now)), "{not valid jsonl\n");
+
+		tracker = new DailyCostTracker({ sessionsDir, subagentSessionsDir, warningStateDir: false });
+		await tracker.refresh(parentFile);
+		expect(tracker.getSnapshot().main.cost).toBeCloseTo(1, 5);
+		expect(tracker.getSnapshot().children.cost).toBeCloseTo(14, 5);
+		expect(tracker.getDailyCost()).toBeCloseTo(15, 5);
+
+		const summary = tracker.getSessionCostSummary(parentFile);
+		expect(summary.children).toMatchObject({ input: 400, output: 200, totalTokens: 600, cost: 14 });
+		expect(summary.childSessions).toHaveLength(3);
+		expect(summary.childSessions.map((child) => [child.id, child.cost, child.depth])).toEqual([
+			["chain-b", 7, 1],
+			["child-a", 2, 1],
+			["grandchild-c", 5, 2],
+		]);
+		expect(summary.childSessions.find((child) => child.id === "chain-b")?.agentTypes).toEqual([
+			"Explore",
+			"feature-dev",
+		]);
+
+		await tracker.refresh(parentFile);
+		expect(tracker.getDailyCost()).toBeCloseTo(15, 5);
+
+		tracker.dispose();
+		const recovered = new DailyCostTracker({ sessionsDir, subagentSessionsDir, warningStateDir: false });
+		await recovered.refresh(parentFile);
+		expect(recovered.getSessionCostSummary(parentFile).children.cost).toBeCloseTo(14, 5);
+		recovered.dispose();
+		tracker = null;
+	});
+
+	it("uses message timestamps and resets totals on local-day rollover", async () => {
+		const sessionsDir = join(tmpDir, "sessions");
+		const projectDir = join(sessionsDir, "--project--");
+		mkdirSync(projectDir, { recursive: true });
+		const dayOne = new Date(2026, 7, 25, 12, 0, 0);
+		const dayTwo = new Date(2026, 7, 26, 12, 0, 0);
+		writeFileSync(join(projectDir, makeSessionFilename(dayOne)), makeSessionJsonl([3], dayOne));
+		writeFileSync(join(projectDir, makeSessionFilename(dayTwo)), makeSessionJsonl([7], dayTwo));
+
+		let currentDay = dayOne;
+		tracker = new DailyCostTracker({
+			sessionsDir,
+			subagentSessionsDir: false,
+			warningStateDir: false,
+			now: () => currentDay,
+		});
+		await tracker.refresh();
+		expect(tracker.getDailyCost()).toBeCloseTo(3, 5);
+		expect(tracker.getSnapshot().localDate).toBe("2026-08-25");
+
+		currentDay = dayTwo;
+		await tracker.refresh();
+		expect(tracker.getDailyCost()).toBeCloseTo(7, 5);
+		expect(tracker.getSnapshot().localDate).toBe("2026-08-26");
+	});
+
+	it("persists and deduplicates every crossed $50 warning threshold", async () => {
+		const sessionsDir = join(tmpDir, "sessions");
+		const warningStateDir = join(tmpDir, "warnings");
+		const projectDir = join(sessionsDir, "--project--");
+		mkdirSync(projectDir, { recursive: true });
+		const now = new Date();
+		writeFileSync(join(projectDir, makeSessionFilename(now)), makeSessionJsonl([125], now));
+
+		tracker = new DailyCostTracker({ sessionsDir, subagentSessionsDir: false, warningStateDir });
+		await tracker.refresh();
+		expect(tracker.consumeWarnings().map((warning) => warning.threshold)).toEqual([50, 100]);
+		await tracker.refresh();
+		expect(tracker.consumeWarnings()).toEqual([]);
+
+		tracker.dispose();
+		const recovered = new DailyCostTracker({ sessionsDir, subagentSessionsDir: false, warningStateDir });
+		await recovered.refresh();
+		expect(recovered.consumeWarnings()).toEqual([]);
+
+		writeFileSync(join(projectDir, makeSessionFilename(now)), makeSessionJsonl([40], now));
+		await recovered.refresh();
+		expect(recovered.consumeWarnings().map((warning) => warning.threshold)).toEqual([150]);
+		recovered.dispose();
+		tracker = null;
 	});
 });

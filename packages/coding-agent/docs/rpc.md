@@ -283,7 +283,7 @@ Response:
 
 #### get_daily_cost
 
-Get the same-day aggregate cost across all session files. The RPC process scans once on first call so the first response is current, then returns the cached value (refreshed periodically by the tracker).
+Get the same-local-day aggregate cost across all main and descendant subagent session files. Child chains are grouped without double counting. The RPC process scans once on first call so the first response is current, then returns the cached value (refreshed periodically by the tracker).
 
 ```json
 {"type": "get_daily_cost"}
