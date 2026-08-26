@@ -1380,6 +1380,47 @@ describe("spawn-time model availability probing", () => {
 		expect(spawn).not.toHaveBeenCalled();
 	});
 
+	test("executeSingle fails instead of replacing an unavailable explicit model with the parent", async () => {
+		const result = await executeSingle(
+			makeAgents(["primary-model", "fallback-model"]),
+			"test-agent",
+			"do work",
+			process.cwd(),
+			undefined,
+			undefined,
+			"missing-model",
+			"anthropic",
+			probeRegistry(),
+			undefined,
+			"parent-model",
+		);
+
+		expect(result.exitCode).toBe(1);
+		expect(result.errorMessage).toContain('Model "missing-model" not found');
+		expect(result.errorMessage).not.toContain("Falling back to parent model");
+		expect(completeSimple).not.toHaveBeenCalled();
+		expect(spawn).not.toHaveBeenCalled();
+	});
+
+	test("executeSingle rejects an empty explicit model instead of treating it as absent", async () => {
+		const result = await executeSingle(
+			makeAgents("parent-model"),
+			"test-agent",
+			"do work",
+			process.cwd(),
+			undefined,
+			undefined,
+			"",
+			"anthropic",
+			probeRegistry(),
+			undefined,
+			"parent-model",
+		);
+
+		expect(result).toMatchObject({ exitCode: 1, errorMessage: expect.stringContaining("must be a non-empty") });
+		expect(spawn).not.toHaveBeenCalled();
+	});
+
 	test("executeSingle model override skips fallback probes and uses the override model", async () => {
 		mockSpawnSubagentResult({ model: "parent-model", output: "override output" });
 

@@ -12,6 +12,7 @@ import { keyHint } from "../../modes/interactive/components/keybinding-hints.js"
 import { attachJsonlLineReader, serializeJsonLine } from "../../modes/rpc/jsonl.js";
 import type { RpcClient } from "../../modes/rpc/rpc-client.js";
 import type { RpcPendingMessages } from "../../modes/rpc/rpc-types.js";
+import { classifyCodingRisk } from "../coding-risk.js";
 import type {
 	DispatchAgentSummary,
 	DispatchArbitrationRecord,
@@ -224,15 +225,12 @@ function summarizeAgentsForArbitration(
 ): DispatchAgentSummary[] {
 	return [...agents.values()].map((agent) => {
 		const settingsModels = getAgentModelsForAgent?.(agent.name);
+		const declaredTools = filterSubagentTools(agent.tools).split(",").filter(Boolean);
 		return {
 			name: agent.name,
 			description: agent.description,
-			tools: [
-				...new Set([
-					...filterSubagentTools(agent.tools).split(",").filter(Boolean),
-					...SUBAGENT_ALWAYS_ACTIVE_TOOLS,
-				]),
-			],
+			tools: [...new Set([...declaredTools, ...SUBAGENT_ALWAYS_ACTIVE_TOOLS])],
+			profile: declaredTools.includes("edit") || declaredTools.includes("write") ? "full" : "lean",
 			modelDefaults:
 				settingsModels && settingsModels.length > 0
 					? [...settingsModels]
@@ -1153,6 +1151,18 @@ export function resolveSubagentThinkingOverride(
 	return taskThinking ?? topLevelThinking;
 }
 
+function explicitRouteLocks(
+	agent: string | undefined,
+	model: string | undefined,
+	thinking: ThinkingLevel | undefined,
+): Array<keyof DispatchRoute> {
+	return [
+		...(agent !== undefined ? (["agent"] as const) : []),
+		...(model !== undefined ? (["model"] as const) : []),
+		...(thinking !== undefined ? (["thinking"] as const) : []),
+	];
+}
+
 /**
  * Resolve a per-task cwd.
  * Accepts absolute paths as-is. Resolves relative paths against the parent cwd,
@@ -1174,6 +1184,8 @@ function clampCwd(defaultCwd: string, itemCwd?: string): { ok: true; cwd: string
 export interface SubagentArbitrationHooks {
 	arbitrate: (request: DispatchArbitrationRequest, signal?: AbortSignal) => Promise<DispatchArbitrationResult>;
 	onRecord: (record: DispatchArbitrationRecord) => void;
+	/** Route fields explicitly supplied in this tool call. */
+	locked?: Array<keyof DispatchRoute>;
 	step?: number;
 	defaultThinkingLevel?: ThinkingLevel;
 	getAgentModelsForAgent?: (name: string) => string[] | undefined;
@@ -1220,20 +1232,34 @@ export async function executeSingle(
 			errorMessage: `Task prompt too long (${task.length} chars, max ${MAX_TASK_LENGTH}). Shorten the prompt.`,
 		};
 	}
+	if (modelOverride !== undefined && !modelOverride.trim()) {
+		return {
+			agent: name,
+			task,
+			exitCode: 1,
+			output: "",
+			stderr: "",
+			errorMessage: "Explicit model override must be a non-empty provider/model ID.",
+		};
+	}
 
 	// Phase 1: resolve the parent's proposal with the existing precedence and
 	// fallback behavior so the arbiter receives one concrete canonical route.
 	const configuredModelSpec =
-		modelOverride || (agentModels && agentModels.length > 0 ? agentModels : undefined) || config.model;
+		modelOverride !== undefined
+			? modelOverride
+			: (agentModels && agentModels.length > 0 ? agentModels : undefined) || config.model;
 	const modelSpec = configuredModelSpec || parentModel;
-	let effectiveConfig: AgentTypeConfig = modelOverride ? { ...config, model: modelOverride } : config;
+	let effectiveConfig: AgentTypeConfig = modelOverride !== undefined ? { ...config, model: modelOverride } : config;
 	let resolvedProvider = parentProvider;
 	let resolvedModel: Model<Api> | undefined;
 	let warning: string | undefined;
 	let skippedModels: SkippedFallbackModel[] = [];
 
 	if (modelSpec) {
-		const parentFallback = configuredModelSpec ? parentModel : undefined;
+		// Explicit per-call model choices are hard locks and must never silently
+		// degrade to the parent model. Defaults may retain the legacy fallback.
+		const parentFallback = configuredModelSpec && modelOverride === undefined ? parentModel : undefined;
 		const resolved = await resolveModelForSubagentSpawn(modelSpec, parentProvider, registry, parentFallback, signal);
 		skippedModels = resolved.skippedModels;
 		if (!resolved.ok) {
@@ -1263,6 +1289,19 @@ export async function executeSingle(
 			errorMessage: `Cannot validate thinking level "${thinkingOverride}" because agent "${name}" has no configured model and no parent model is available. Set a model on the agent or pass a per-call model override.`,
 		};
 	}
+	if (thinkingOverride !== undefined) {
+		const validation = validateThinkingLevelForModel(resolvedModel, thinkingOverride);
+		if (!validation.ok) {
+			return {
+				agent: name,
+				task,
+				exitCode: 1,
+				output: "",
+				stderr: "",
+				errorMessage: validation.error,
+			};
+		}
+	}
 
 	const proposalModelId = Array.isArray(effectiveConfig.model) ? effectiveConfig.model[0] : effectiveConfig.model;
 	const proposalSelectedModel = proposalModelId ? canonicalModelRef(resolvedProvider, proposalModelId) : undefined;
@@ -1274,6 +1313,12 @@ export async function executeSingle(
 			model: proposalSelectedModel ?? "",
 			thinking: resolveEffectiveThinkingLevel(resolvedModel, thinkingOverride, arbitration.defaultThinkingLevel),
 		};
+		const locked = arbitration.locked ?? explicitRouteLocks(agentName, modelOverride, thinkingOverride);
+		const agentSummaries = summarizeAgentsForArbitration(agents, arbitration.getAgentModelsForAgent);
+		const codingRisk = classifyCodingRisk({
+			task,
+			tools: agentSummaries.find((agent) => agent.name === name)?.tools,
+		});
 		let arbitrationResult: DispatchArbitrationResult;
 		try {
 			arbitrationResult = await arbitration.arbitrate(
@@ -1281,7 +1326,9 @@ export async function executeSingle(
 					task,
 					cwd,
 					proposed,
-					agents: summarizeAgentsForArbitration(agents, arbitration.getAgentModelsForAgent),
+					locked,
+					codingRisk,
+					agents: agentSummaries,
 					parentSessionFile,
 					step: arbitration.step,
 				},
@@ -1295,6 +1342,8 @@ export async function executeSingle(
 					proposed,
 					final: null,
 					changed: [],
+					locked,
+					codingRisk,
 					step: arbitration.step,
 					errorCode: "internal_error",
 					errorMessage,
@@ -1317,6 +1366,8 @@ export async function executeSingle(
 					proposed,
 					final: null,
 					changed: [],
+					locked,
+					codingRisk,
 					step: arbitration.step,
 					errorCode: arbitrationResult.code,
 					errorMessage: arbitrationResult.error,
@@ -1337,6 +1388,32 @@ export async function executeSingle(
 			}
 
 			const decision = arbitrationResult.decision;
+			const changedLockedField = locked.find((field) => proposed[field] !== decision[field]);
+			if (changedLockedField) {
+				const errorMessage = `Arbiter changed explicit ${changedLockedField}; explicit per-call routing choices are immutable.`;
+				const record: DispatchArbitrationRecord = {
+					status: "failure",
+					proposed,
+					final: null,
+					changed: [],
+					locked,
+					codingRisk,
+					step: arbitration.step,
+					errorCode: "locked_route_changed",
+					errorMessage,
+				};
+				try {
+					arbitration.onRecord(record);
+				} catch {}
+				return {
+					agent: name,
+					task,
+					exitCode: 1,
+					output: "",
+					stderr: "",
+					errorMessage: `Dispatch arbitration failed: ${errorMessage}`,
+				};
+			}
 			const selectedConfig = agents.get(decision.agent);
 			const slash = decision.model.indexOf("/");
 			const selectedProvider = slash > 0 ? decision.model.slice(0, slash) : "";
@@ -1351,6 +1428,8 @@ export async function executeSingle(
 					proposed,
 					final: null,
 					changed: [],
+					locked,
+					codingRisk,
 					step: arbitration.step,
 					errorCode: !selectedConfig ? "unknown_agent" : "out_of_scope_model",
 					errorMessage,
@@ -1375,6 +1454,8 @@ export async function executeSingle(
 					proposed,
 					final: null,
 					changed: [],
+					locked,
+					codingRisk,
 					step: arbitration.step,
 					errorCode: "unsupported_thinking",
 					errorMessage: finalThinkingValidation.error,
@@ -1405,6 +1486,8 @@ export async function executeSingle(
 					proposed,
 					final: decision,
 					changed: arbitrationResult.changed,
+					locked,
+					codingRisk,
 					step: arbitration.step,
 				});
 			} catch (error) {
@@ -1537,7 +1620,17 @@ async function executeChain(
 			parentSessionFile,
 			onChildEvent,
 			resolveSubagentThinkingOverride(step.thinking, defaultThinking),
-			arbitration ? { ...arbitration, step: i + 1 } : undefined,
+			arbitration
+				? {
+						...arbitration,
+						locked: explicitRouteLocks(
+							step.agent ?? defaultAgent,
+							step.model ?? defaultModel,
+							step.thinking ?? defaultThinking,
+						),
+						step: i + 1,
+					}
+				: undefined,
 			onControlAvailable,
 		);
 		results.push(result);
@@ -1986,6 +2079,7 @@ const taskItemSchema = Type.Object({
 	),
 	model: Type.Optional(
 		Type.String({
+			minLength: 1,
 			description:
 				"Model override for this task. Takes precedence over agent definition model. Note: a single-string override discards the agent's fallback list.",
 		}),
@@ -1998,6 +2092,7 @@ const subagentSchema = Type.Object({
 	task: Type.Optional(Type.String({ description: "Task prompt (single mode)", minLength: 1 })),
 	model: Type.Optional(
 		Type.String({
+			minLength: 1,
 			description:
 				"Model override. Takes precedence over agent definition model. Note: a single-string override discards the agent's fallback list. For parallel/chain, set per-task instead.",
 		}),
@@ -2397,9 +2492,10 @@ export function createSubagentToolDefinition(
 					agentName: string,
 					task: string,
 					taskLabel: string,
-					taskCwd?: string,
-					modelOverride?: string,
-					thinkingOverride?: ThinkingLevel,
+					taskCwd: string | undefined,
+					modelOverride: string | undefined,
+					thinkingOverride: ThinkingLevel | undefined,
+					locked: Array<keyof DispatchRoute>,
 				) => {
 					const resolvedCwd = taskCwd ?? cwd;
 					// Each background agent gets its own session subdirectory
@@ -2432,6 +2528,7 @@ export function createSubagentToolDefinition(
 									? {
 											arbitrate,
 											onRecord: onArbitrationRecord,
+											locked,
 											defaultThinkingLevel: getDefaultThinkingLevel?.(),
 											getAgentModelsForAgent,
 										}
@@ -2451,6 +2548,7 @@ export function createSubagentToolDefinition(
 						undefined,
 						params.model,
 						params.thinking,
+						explicitRouteLocks(params.agent, params.model, params.thinking),
 					);
 					return {
 						content: [
@@ -2481,6 +2579,11 @@ export function createSubagentToolDefinition(
 							cwdResult.cwd,
 							item.model || params.model,
 							resolveSubagentThinkingOverride(item.thinking, params.thinking),
+							explicitRouteLocks(
+								item.agent ?? params.agent,
+								item.model ?? params.model,
+								item.thinking ?? params.thinking,
+							),
 						);
 						launched.push({ id: agentId, agentName, taskText: item.task });
 					}

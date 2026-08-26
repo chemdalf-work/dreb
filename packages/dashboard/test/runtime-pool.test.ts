@@ -868,6 +868,8 @@ describe("RuntimePool", () => {
 			proposed: { agent: "Explore", model: "provider/frontier", thinking: "high" },
 			final: { agent: "feature-dev", model: "provider/cheap", thinking: "low" },
 			changed: ["agent", "model", "thinking"],
+			locked: [],
+			codingRisk: { level: "medium", signals: ["implementation"] },
 		});
 		expect(handle.backgroundAgents.get("bg1")).toMatchObject({
 			agentType: "feature-dev",
@@ -875,6 +877,8 @@ describe("RuntimePool", () => {
 				{
 					status: "success",
 					final: { agent: "feature-dev", model: "provider/cheap", thinking: "low" },
+					locked: [],
+					codingRisk: { level: "medium", signals: ["implementation"] },
 				},
 			],
 		});
