@@ -38,6 +38,8 @@ export interface SubagentArbitrationDto {
 	proposed: ArbitrationRouteDto;
 	final: ArbitrationRouteDto | null;
 	changed: Array<"agent" | "model" | "thinking">;
+	locked?: Array<"agent" | "model" | "thinking">;
+	codingRisk?: { level: "low" | "medium" | "high"; signals: string[] };
 	step?: number;
 	errorCode?: string;
 	errorMessage?: string;

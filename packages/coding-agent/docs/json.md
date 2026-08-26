@@ -18,7 +18,7 @@ type AgentSessionEvent =
   | { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
   | { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
   | { type: "background_agent_start"; agentId: string; agentType: string; taskSummary: string; sessionDir?: string }
-  | { type: "subagent_arbitration"; agentId: string; status: "success" | "failure"; proposed: DispatchRoute; final: DispatchRoute | null; changed: ("agent" | "model" | "thinking")[]; step?: number; errorCode?: string; errorMessage?: string }
+  | { type: "subagent_arbitration"; agentId: string; status: "success" | "failure"; proposed: DispatchRoute; final: DispatchRoute | null; changed: ("agent" | "model" | "thinking")[]; locked?: ("agent" | "model" | "thinking")[]; codingRisk?: { level: "low" | "medium" | "high"; signals: string[] }; step?: number; errorCode?: string; errorMessage?: string }
   | { type: "background_agent_end"; agentId: string; agentType: string; success: boolean; model?: string; thinking?: ThinkingLevel; steps?: SubagentStepMetadata[]; sessionFile?: string }
   | { type: "background_agent_event"; agentId: string; event: Record<string, unknown> }
   | { type: "parent_paused_for_background_agents"; runningAgentCount: number; turnsUsed: number; turnLimit: number }
@@ -102,10 +102,10 @@ Followed by events as they occur:
 {"type":"agent_end","messages":[...]}
 ```
 
-With global Dispatch Arbiter enabled, each background start is followed before child events/spawn by one safe structured decision. Unchanged decisions use an empty `changed`; failed decisions use `final: null`, prevent spawn, and carry only host-generated errors. Chain decisions also include `step`.
+With global Dispatch Arbiter enabled, each background start is followed before child events/spawn by one safe structured decision. Unchanged decisions use an empty `changed`; failed decisions use `final: null`, prevent spawn, and carry only host-generated errors. `locked` identifies explicit per-invocation route fields that the arbiter cannot change. `codingRisk` is a deterministic host-generated assessment with fixed signal labels. Chain decisions also include `step`.
 
 ```json
-{"type":"subagent_arbitration","agentId":"a1b2c3","status":"success","proposed":{"agent":"Explore","model":"provider/frontier","thinking":"high"},"final":{"agent":"feature-dev","model":"provider/worker","thinking":"medium"},"changed":["agent","model","thinking"]}
+{"type":"subagent_arbitration","agentId":"a1b2c3","status":"success","proposed":{"agent":"Explore","model":"provider/frontier","thinking":"high"},"final":{"agent":"Explore","model":"provider/worker","thinking":"medium"},"changed":["model","thinking"],"locked":["agent"],"codingRisk":{"level":"low","signals":["bounded-research"]}}
 ```
 
 The event never contains the arbiter prompt, response, reasoning, guide, task, or conversation excerpt. The matching parent session persists the same safe fields as a non-context custom JSONL entry.
