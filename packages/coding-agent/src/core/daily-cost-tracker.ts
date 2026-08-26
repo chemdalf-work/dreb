@@ -277,29 +277,65 @@ async function parseSessionFile(
 	return result;
 }
 
-function findDescendantDepths(groups: Map<string, MutableChildGroup>, parentSessionFile?: string): Map<string, number> {
-	const depths = new Map<string, number>();
-	if (!parentSessionFile) return depths;
-	const knownParentFiles = new Map<string, number>([[comparablePath(parentSessionFile), 0]]);
+function findOrderedDescendantDepths(
+	groups: Map<string, MutableChildGroup>,
+	parentSessionFile?: string,
+): Map<string, number> {
+	const orderedDepths = new Map<string, number>();
+	if (!parentSessionFile) return orderedDepths;
+
+	type ParentLink = { depth: number; groupId: string | undefined };
+	const descendants = new Map<string, ParentLink>();
+	const knownParentFiles = new Map<string, ParentLink>([
+		[comparablePath(parentSessionFile), { depth: 0, groupId: undefined }],
+	]);
 	let changed = true;
 	while (changed) {
 		changed = false;
 		for (const group of groups.values()) {
-			if (depths.has(group.id)) continue;
-			let parentDepth: number | undefined;
+			if (descendants.has(group.id)) continue;
+			let parentLink: ParentLink | undefined;
 			for (const parent of group.parentSessionFiles) {
-				for (const [knownFile, depth] of knownParentFiles) {
-					if (pathMatches(parent, knownFile)) parentDepth = Math.min(parentDepth ?? depth, depth);
+				for (const [knownFile, candidate] of knownParentFiles) {
+					if (!pathMatches(parent, knownFile)) continue;
+					if (
+						!parentLink ||
+						candidate.depth < parentLink.depth ||
+						(candidate.depth === parentLink.depth &&
+							(candidate.groupId ?? "").localeCompare(parentLink.groupId ?? "") < 0)
+					) {
+						parentLink = candidate;
+					}
 				}
 			}
-			if (parentDepth === undefined) continue;
-			const depth = parentDepth + 1;
-			depths.set(group.id, depth);
-			for (const file of group.sessionFiles) knownParentFiles.set(comparablePath(file), depth);
+			if (!parentLink) continue;
+			const descendant = { depth: parentLink.depth + 1, groupId: parentLink.groupId };
+			descendants.set(group.id, descendant);
+			for (const file of group.sessionFiles) {
+				knownParentFiles.set(comparablePath(file), { depth: descendant.depth, groupId: group.id });
+			}
 			changed = true;
 		}
 	}
-	return depths;
+
+	const childrenByParent = new Map<string | undefined, MutableChildGroup[]>();
+	for (const [groupId, { groupId: parentGroupId }] of descendants) {
+		const siblings = childrenByParent.get(parentGroupId) ?? [];
+		siblings.push(groups.get(groupId)!);
+		childrenByParent.set(parentGroupId, siblings);
+	}
+	for (const siblings of childrenByParent.values()) {
+		siblings.sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id));
+	}
+
+	const visitChildren = (parentGroupId: string | undefined): void => {
+		for (const group of childrenByParent.get(parentGroupId) ?? []) {
+			orderedDepths.set(group.id, descendants.get(group.id)!.depth);
+			visitChildren(group.id);
+		}
+	};
+	visitChildren(undefined);
+	return orderedDepths;
 }
 
 function publicChildSummary(group: MutableChildGroup): ChildUsageSummary {
@@ -465,7 +501,7 @@ export class DailyCostTracker {
 				}
 			}
 
-			const descendantDepths = findDescendantDepths(childGroups, this.trackedParentSessionFile);
+			const descendantDepths = findOrderedDescendantDepths(childGroups, this.trackedParentSessionFile);
 			for (const metadata of childFiles) {
 				if (!metadata.groupId) continue;
 				const group = childGroups.get(metadata.groupId)!;
@@ -491,7 +527,6 @@ export class DailyCostTracker {
 				addUsage(sessionChildren, group.all);
 				childSessions.push(publicChildSummary(group));
 			}
-			childSessions.sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id));
 			this.sessionSummary = { children: sessionChildren, childSessions };
 		} else {
 			this.sessionSummary = { children: newUsage(), childSessions: [] };
