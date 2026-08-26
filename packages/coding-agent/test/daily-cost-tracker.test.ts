@@ -505,6 +505,50 @@ describe("DailyCostTracker", () => {
 		tracker = null;
 	});
 
+	it("orders interleaved descendants in tree preorder", async () => {
+		const sessionsDir = join(tmpDir, "sessions");
+		const subagentSessionsDir = join(tmpDir, "subagent-sessions");
+		const projectDir = join(sessionsDir, "--project--");
+		mkdirSync(projectDir, { recursive: true });
+		const now = new Date();
+		const parentFile = join(projectDir, makeSessionFilename(now));
+		writeFileSync(parentFile, makeSessionJsonl([1], now));
+
+		const childAStarted = new Date(now.getTime() - 3 * 60_000);
+		const childADir = join(subagentSessionsDir, "child-a");
+		mkdirSync(childADir, { recursive: true });
+		const childAFile = join(childADir, makeSessionFilename(childAStarted));
+		writeFileSync(
+			childAFile,
+			makeSessionJsonl([2], childAStarted, { agentType: "feature-dev", parentSession: parentFile }),
+		);
+
+		const childBStarted = new Date(now.getTime() - 2 * 60_000);
+		const childBDir = join(subagentSessionsDir, "child-b");
+		mkdirSync(childBDir, { recursive: true });
+		writeFileSync(
+			join(childBDir, makeSessionFilename(childBStarted)),
+			makeSessionJsonl([3], childBStarted, { agentType: "Explore", parentSession: parentFile }),
+		);
+
+		const grandchildStarted = new Date(now.getTime() - 60_000);
+		const grandchildDir = join(subagentSessionsDir, "grandchild-a1");
+		mkdirSync(grandchildDir, { recursive: true });
+		writeFileSync(
+			join(grandchildDir, makeSessionFilename(grandchildStarted)),
+			makeSessionJsonl([4], grandchildStarted, { agentType: "test-reviewer", parentSession: childAFile }),
+		);
+
+		tracker = new DailyCostTracker({ sessionsDir, subagentSessionsDir, warningStateDir: false });
+		await tracker.refresh(parentFile);
+
+		expect(tracker.getSessionCostSummary(parentFile).childSessions.map(({ id, depth }) => [id, depth])).toEqual([
+			["child-a", 1],
+			["grandchild-a1", 2],
+			["child-b", 1],
+		]);
+	});
+
 	it("uses message timestamps and resets totals on local-day rollover", async () => {
 		const sessionsDir = join(tmpDir, "sessions");
 		const projectDir = join(sessionsDir, "--project--");
