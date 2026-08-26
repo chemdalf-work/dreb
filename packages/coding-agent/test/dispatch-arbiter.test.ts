@@ -69,7 +69,7 @@ function response(value: unknown): AssistantMessage {
 
 const arbiterModel = model("provider", "router");
 const workerModel = model("provider", "worker");
-const cheapModel = model("other", "cheap", false);
+const cheapModel = { ...model("other", "cheap", false), cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
 const allModels = [arbiterModel, workerModel, cheapModel];
 
 let tempDir: string;
@@ -82,12 +82,21 @@ const request: DispatchArbitrationRequest = {
 	task: "Implement the feature without changing this task",
 	cwd: "/tmp/project",
 	proposed: { agent: "Explore", model: "provider/worker", thinking: "high" },
+	locked: [],
+	codingRisk: { level: "medium", signals: ["implementation"] },
 	agents: [
-		{ name: "Explore", description: "factual research", tools: ["read", "grep"], modelDefaults: [] },
+		{
+			name: "Explore",
+			description: "factual research",
+			tools: ["read", "grep"],
+			profile: "lean",
+			modelDefaults: [],
+		},
 		{
 			name: "feature-dev",
 			description: "implementation",
 			tools: ["read", "edit", "write"],
+			profile: "full",
 			modelDefaults: ["provider/worker"],
 		},
 	],
@@ -178,6 +187,27 @@ describe("DispatchArbiter", () => {
 		expect(context.messages[0].content).toContain("Inspected source files");
 		expect(context.messages[0].content).toContain("Tool read completed: TOOL_OUTPUT_START_");
 		expect(context.messages[0].content).toContain("...[truncated]");
+		expect(context.messages[0].content).toContain('"codingRisk":{"level":"medium","signals":["implementation"]}');
+		expect(context.messages[0].content).toContain('"profile":"lean"');
+		const arbitrationInput = JSON.parse(String(context.messages[0].content).replace(/^ARBITRATION_INPUT\n/, ""));
+		expect(arbitrationInput.candidateModels).toEqual(
+			expect.arrayContaining([
+				{
+					id: "provider/worker",
+					pricingPerMillionTokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+					contextWindow: 100_000,
+					reasoning: true,
+					input: ["text"],
+				},
+				{
+					id: "other/cheap",
+					pricingPerMillionTokens: null,
+					contextWindow: 100_000,
+					reasoning: false,
+					input: ["text"],
+				},
+			]),
+		);
 		expect(context.messages[0].content).not.toContain("TOOL_OUTPUT_END");
 		expect(context.messages[0].content).not.toContain("sk-123456789012345678901234567890");
 		expect(options.apiKey).toBe("api-key");
@@ -274,6 +304,16 @@ describe("DispatchArbiter", () => {
 		expect(result).toMatchObject({ enabled: true, ok: false, code });
 	});
 
+	test.each([
+		["agent", { agent: "feature-dev", model: "provider/worker", thinking: "high" }],
+		["model", { agent: "Explore", model: "other/cheap", thinking: "off" }],
+		["thinking", { agent: "Explore", model: "provider/worker", thinking: "medium" }],
+	] as const)("rejects changes to explicitly locked %s", async (field, decision) => {
+		complete.mockResolvedValue(response(decision));
+		const result = await createArbiter().arbitrate({ ...request, locked: [field] });
+		expect(result).toMatchObject({ enabled: true, ok: false, code: "locked_route_changed" });
+	});
+
 	test("rejects an oversized aggregate package before provider inference", async () => {
 		const oversizedRequest: DispatchArbitrationRequest = {
 			...request,
@@ -281,6 +321,7 @@ describe("DispatchArbiter", () => {
 				name: `agent-${index}`,
 				description: "x".repeat(1_000),
 				tools: ["read", "grep"],
+				profile: "lean",
 				modelDefaults: ["provider/worker"],
 			})),
 		};
