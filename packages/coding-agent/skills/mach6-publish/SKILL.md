@@ -14,7 +14,21 @@ argument-hint: "<pr-number>"
 2. **No `#N` in comment bodies** — Use "finding 3", "item 3" etc. instead.
 3. **Safe git** — Never use `git add -A` or `git add .`. Stage files by name. Never stage secrets.
 4. **Task tracking** — Use the `tasks_update` tool to show progress.
-5. **Non-interactive `gh`** — Set `GH_PAGER=cat` and `GH_EDITOR=cat` before all `gh` commands to prevent interactive prompts from hanging the agent. Use `--body-file` instead of inline `--body` for all `gh pr comment`, `gh pr create`, and `gh issue create` calls to avoid shell interpretation of backticks. Write each body to a **unique per-invocation temp file** via `mktemp` (e.g. `GH_BODY="$(mktemp /tmp/gh-comment.XXXXXX.md)"`) — never a fixed path like `/tmp/gh-comment.md`, which concurrent mach6 sessions on the same machine would clobber, cross-posting one session's body to another's PR/issue.
+5. **Non-interactive `gh`** — Set `GH_PAGER=cat` and `GH_EDITOR=cat` before all `gh` commands to prevent interactive prompts from hanging the agent. Use `--body-file` instead of inline `--body` for all `gh pr comment`, `gh pr create`, and `gh issue create` calls to avoid shell interpretation of backticks. Write each body to a **unique per-invocation temp file** via `mktemp` (e.g. `GH_BODY="$(mktemp /tmp/gh-comment.XXXXXX)"`) — never a fixed path like `/tmp/gh-comment.md`, which concurrent mach6 sessions on the same machine would clobber, cross-posting one session's body to another's PR/issue.
+
+## Optional `context_mode` routing boundary
+
+`context_mode` is available only through the optional, separately installed `dreb-context-mode` package. This guidance is advisory, not universal deterministic interception.
+
+1. Start code discovery with `search`.
+2. Use native tools for expected output of ≤2 KB; for 2–5 KB unless the work is clearly analytical; and for edits, verbatim, exact, or ordered facts, and Git/CI/version/release/publish evidence.
+3. Use `context_mode` only for precise, large derived analysis or broad gathers expected to exceed 5 KB.
+4. Treat its output as derived, not proof: directly verify material claims against source or bounded native evidence.
+5. On an unavailable or failed call, show a bounded visible diagnostic, then continue natively; never silently fall back or report partial protocol output as success.
+6. Never invoke `ctx_*` directly, arbitrary MCP methods, or a generic MCP client in core.
+7. RTK is rejected due to fidelity, exit-code, and actionable-diagnostic failures.
+
+**Publish-stage limit:** keep all Git, CI, version, merge, tag, and release evidence native and ordered; do not use `context_mode` in publish steps.
 
 ## Step 1: Set up task tracking
 
@@ -181,7 +195,7 @@ git push --tags
 
 3. Present draft to user for approval, then create:
    ```bash
-   GH_NOTES="$(mktemp /tmp/gh-release-notes.XXXXXX.md)"
+   GH_NOTES="$(mktemp /tmp/gh-release-notes.XXXXXX)"
    cat > "$GH_NOTES" << 'MACH6_EOF'
    <release-notes>
    MACH6_EOF

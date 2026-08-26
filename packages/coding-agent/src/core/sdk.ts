@@ -152,6 +152,11 @@ function getDefaultAgentDir(): string {
  * ```typescript
  * // Minimal - uses defaults
  * const { session } = await createAgentSession();
+ * try {
+ *   await session.prompt('Summarize this project.');
+ * } finally {
+ *   await session.dispose();
+ * }
  *
  * // With explicit model
  * import { getModel } from '@dreb/ai';
@@ -159,11 +164,21 @@ function getDefaultAgentDir(): string {
  *   model: getModel('anthropic', 'claude-opus-4-5'),
  *   thinkingLevel: 'high',
  * });
+ * try {
+ *   await session.prompt('Review the current changes.');
+ * } finally {
+ *   await session.dispose();
+ * }
  *
  * // Continue previous session
  * const { session, modelFallbackMessage } = await createAgentSession({
  *   continueSession: true,
  * });
+ * try {
+ *   console.log(modelFallbackMessage);
+ * } finally {
+ *   await session.dispose();
+ * }
  *
  * // Full control
  * const loader = new DefaultResourceLoader({
@@ -178,6 +193,11 @@ function getDefaultAgentDir(): string {
  *   resourceLoader: loader,
  *   sessionManager: SessionManager.inMemory(),
  * });
+ * try {
+ *   await session.prompt('Use the configured tools.');
+ * } finally {
+ *   await session.dispose();
+ * }
  * ```
  */
 export async function createAgentSession(options: CreateAgentSessionOptions = {}): Promise<CreateAgentSessionResult> {

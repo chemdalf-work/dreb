@@ -4,7 +4,7 @@ Claude Code is a great product. dreb isn't trying to compete on features — it'
 
 Concretely, dreb ships *without* things Claude Code has — and that's intentional:
 
-- **No MCP.** Build CLI tools with READMEs (see [Skills](#skills)), or build an extension that adds MCP support.
+- **No generic MCP client in the core.** Build CLI tools with READMEs (see [Skills](#skills)), or build an extension that adds MCP support.
 - **No permission popups.** Run in a container, or build your own confirmation flow with [extensions](#extensions).
 - **No plan mode.** Write plans to files, or build it with extensions, or install a package.
 - **No background bash in the main agent.** The main agent runs commands synchronously. For parallel work, use the `subagent` tool — each subagent runs as an independent process with its own tools.
@@ -508,6 +508,18 @@ Bundle and share extensions, skills, prompts, and themes via npm or git.
 
 > **Note:** Third-party packages can include extensions (arbitrary code) and skills (model instructions). Skim what you're installing, same as any other dependency.
 
+### Optional context-efficient analysis
+
+[`dreb-context-mode`](https://github.com/chemdalf-work/dreb-context-mode) is a separately maintained extension package, not a generic MCP client in dreb's core. Install it once:
+
+```bash
+dreb install git:github.com/chemdalf-work/dreb-context-mode
+```
+
+Later main sessions and subagents discover it automatically; no repeated skill invocation or direct `ctx_*` call is required. Its `context_mode` guidance is advisory rather than universal deterministic interception: start discovery with `search`, keep small or exact evidence native, use derived large analysis only where appropriate, and directly verify material claims. Failure produces a bounded visible diagnostic followed by native continuation, never a silent fallback or partial protocol success.
+
+The package is external code and not an OS sandbox. Its process has the dreb user's filesystem, network, executable, and other OS privileges. Indexed data persists only in package-owned dreb local storage; consult the [package documentation](https://github.com/chemdalf-work/dreb-context-mode) for project isolation, retention, removal, and abandoned-directory pruning. RTK is not integrated because its fidelity, exit-code, and actionable-diagnostic failures make automatic interception unsafe.
+
 ```bash
 dreb install npm:@foo/my-tools
 dreb install npm:@foo/my-tools@1.2.3      # pinned version
@@ -563,7 +575,10 @@ const { session } = await createAgentSession({
 });
 
 await session.prompt("What files are in the current directory?");
+await session.dispose();
 ```
+
+Always `await session.dispose()` when an SDK session is no longer needed. It awaits extension shutdown handlers before releasing session resources, then rejects if any handler failed.
 
 See [docs/sdk.md](docs/sdk.md) and [examples/sdk/](examples/sdk/).
 

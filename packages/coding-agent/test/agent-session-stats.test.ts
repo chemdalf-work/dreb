@@ -78,7 +78,7 @@ function syncAgentMessages(session: AgentSession, sessionManager: SessionManager
 }
 
 describe("AgentSession.getSessionStats", () => {
-	it("exposes the current context usage alongside token totals", () => {
+	it("exposes the current context usage alongside token totals", async () => {
 		const { session, sessionManager } = createSession();
 
 		try {
@@ -92,11 +92,11 @@ describe("AgentSession.getSessionStats", () => {
 			expect(stats.contextUsage?.contextWindow).toBe(model.contextWindow);
 			expect(stats.contextUsage?.percent).toBe((200 / model.contextWindow) * 100);
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("reports unknown current context usage immediately after compaction", () => {
+	it("reports unknown current context usage immediately after compaction", async () => {
 		const { session, sessionManager } = createSession();
 
 		try {
@@ -114,11 +114,11 @@ describe("AgentSession.getSessionStats", () => {
 			expect(stats.contextUsage?.tokens).toBeNull();
 			expect(stats.contextUsage?.percent).toBeNull();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("uses post-compaction usage for current context instead of stale kept usage", () => {
+	it("uses post-compaction usage for current context instead of stale kept usage", async () => {
 		const { session, sessionManager } = createSession();
 
 		try {
@@ -137,7 +137,7 @@ describe("AgentSession.getSessionStats", () => {
 			expect(stats.contextUsage?.tokens).toBe(25_000);
 			expect(stats.contextUsage?.percent).toBe((25_000 / model.contextWindow) * 100);
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 });

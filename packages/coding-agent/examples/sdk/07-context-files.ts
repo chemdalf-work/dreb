@@ -32,9 +32,12 @@ for (const file of discovered) {
 	console.log(`  - ${file.path} (${file.content.length} chars)`);
 }
 
-await createAgentSession({
+const { session } = await createAgentSession({
 	resourceLoader: loader,
 	sessionManager: SessionManager.inMemory(),
 });
-
-console.log(`Session created with ${discovered.length + 1} context files`);
+try {
+	console.log(`Session created with ${discovered.length + 1} context files`);
+} finally {
+	await session.dispose();
+}

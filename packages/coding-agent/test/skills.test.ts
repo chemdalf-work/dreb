@@ -469,6 +469,67 @@ describe("skills", () => {
 			expect(builtinNames).toContain("model-routing-guide");
 		});
 
+		it("mach6 skills should keep the optional context_mode routing contract", () => {
+			const skillNames = ["mach6-issue", "mach6-plan", "mach6-implement", "mach6-review", "mach6-publish"];
+			const routingBoundary = [
+				"## Optional `context_mode` routing boundary",
+				"",
+				"`context_mode` is available only through the optional, separately installed `dreb-context-mode` package. This guidance is advisory, not universal deterministic interception.",
+				"",
+				"1. Start code discovery with `search`.",
+				"2. Use native tools for expected output of ≤2 KB; for 2–5 KB unless the work is clearly analytical; and for edits, verbatim, exact, or ordered facts, and Git/CI/version/release/publish evidence.",
+				"3. Use `context_mode` only for precise, large derived analysis or broad gathers expected to exceed 5 KB.",
+				"4. Treat its output as derived, not proof: directly verify material claims against source or bounded native evidence.",
+				"5. On an unavailable or failed call, show a bounded visible diagnostic, then continue natively; never silently fall back or report partial protocol output as success.",
+				"6. Never invoke `ctx_*` directly, arbitrary MCP methods, or a generic MCP client in core.",
+				"7. RTK is rejected due to fidelity, exit-code, and actionable-diagnostic failures.",
+			].join("\n");
+			const childHandoff =
+				"When launching a child, repeat the routing boundary above and provide the exact task, a bounded file set or claim set, required direct verification, validation commands, and completion criteria. The child must use no direct `ctx_*` calls, arbitrary MCP methods, or a generic MCP client in core.";
+
+			for (const skillName of skillNames) {
+				const body = readBuiltInSkill(skillName);
+				expect(body).toContain(routingBoundary);
+				// Keep the literal wildcard in the routing guidance, but reject every concrete ctx_ tool name.
+				expect(body).not.toMatch(/\bctx_(?!\*)[A-Za-z0-9_]+\b/);
+				// Skills must not demonstrate any direct MCP tool invocation either.
+				expect(body).not.toMatch(/\b(?:mcp__[A-Za-z0-9_]+|(?:mcp|client)\.(?:callTool|invoke)|tools\/call)\b/);
+			}
+
+			for (const skillName of skillNames.slice(0, 4)) {
+				expect(readBuiltInSkill(skillName)).toContain(childHandoff);
+			}
+
+			const stageLimits: Record<string, string> = {
+				"mach6-issue":
+					"**Issue-stage limit:** use `context_mode` only to derive a bounded packet from genuinely large issue evidence; keep issue creation, issue text, comments, and bounded assessment evidence native.",
+				"mach6-plan":
+					"**Plan-stage limit:** use `context_mode` only for large generated output, configuration, file, or log analysis; keep planning decisions and direct source evidence native.",
+				"mach6-implement":
+					"**Implement-stage limit:** execute tests and builds natively; use `context_mode` only to analyze unusually large failure output, then verify every proposed fix with direct source and native reruns.",
+				"mach6-review":
+					"**Review-stage limit:** each reviewer may receive at most one bounded `context_mode` packet; every reviewer must verify its material claims against source or tests before reporting a finding.",
+				"mach6-publish":
+					"**Publish-stage limit:** keep all Git, CI, version, merge, tag, and release evidence native and ordered; do not use `context_mode` in publish steps.",
+			};
+			for (const [skillName, stageLimit] of Object.entries(stageLimits)) {
+				expect(readBuiltInSkill(skillName)).toContain(stageLimit);
+			}
+		});
+
+		it("mach6 skills should use portable mktemp templates", () => {
+			for (const skillName of [
+				"mach6-issue",
+				"mach6-plan",
+				"mach6-push",
+				"mach6-review",
+				"mach6-implement",
+				"mach6-publish",
+			]) {
+				expect(readBuiltInSkill(skillName)).not.toMatch(/mktemp \/tmp\/[^\s`"']*XXXXXX\.[^\s`"']+/);
+			}
+		});
+
 		it("model-routing-guide should remain an explicit, skill-only research workflow", () => {
 			const guide = getBuiltInSkill("model-routing-guide");
 			expect(guide.disableModelInvocation).toBe(true);

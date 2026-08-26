@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.js";
 import { createExtensionRuntime, discoverAndLoadExtensions } from "../src/core/extensions/loader.js";
-import { ExtensionRunner } from "../src/core/extensions/runner.js";
+import { ExtensionRunner, emitSessionShutdownEvent } from "../src/core/extensions/runner.js";
 import type { ExtensionActions, ExtensionContextActions, ProviderConfig } from "../src/core/extensions/types.js";
 import { KeybindingsManager, type KeyId } from "../src/core/keybindings.js";
 import { ModelRegistry } from "../src/core/model-registry.js";
@@ -424,6 +424,82 @@ describe("ExtensionRunner", () => {
 			expect(errors.length).toBe(1);
 			expect(errors[0].error).toContain("Handler error!");
 			expect(errors[0].event).toBe("context");
+		});
+
+		it("runs every shutdown handler, emits diagnostics, then rejects with their failures", async () => {
+			fs.writeFileSync(path.join(extensionsDir, "shutdown.ts"), "export default function() {}");
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const calls: string[] = [];
+			const firstFailure = new Error("first shutdown failure");
+			const secondFailure = new Error("second shutdown failure");
+			result.extensions[0]!.handlers.set("session_shutdown", [
+				async () => {
+					calls.push("first");
+					throw firstFailure;
+				},
+				async () => {
+					calls.push("second");
+				},
+				async () => {
+					calls.push("third");
+					throw secondFailure;
+				},
+			]);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: Array<{ event: string; error: string }> = [];
+			runner.onError((error) => errors.push(error));
+
+			const failure = await emitSessionShutdownEvent(runner).then(
+				() => undefined,
+				(error: unknown) => error,
+			);
+
+			expect(calls).toEqual(["first", "second", "third"]);
+			expect(errors.map(({ event, error }) => ({ event, error }))).toEqual([
+				{ event: "session_shutdown", error: "first shutdown failure" },
+				{ event: "session_shutdown", error: "second shutdown failure" },
+			]);
+			expect(failure).toBeInstanceOf(AggregateError);
+			expect((failure as AggregateError).errors).toEqual([firstFailure, secondFailure]);
+		});
+
+		it("rethrows one shutdown handler failure without wrapping it", async () => {
+			fs.writeFileSync(path.join(extensionsDir, "single-shutdown.ts"), "export default function() {}");
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const failure = new Error("single shutdown failure");
+			result.extensions[0]!.handlers.set("session_shutdown", [
+				async () => {
+					throw failure;
+				},
+			]);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			await expect(emitSessionShutdownEvent(runner)).rejects.toBe(failure);
+		});
+
+		it("continues to swallow and diagnose ordinary event handler errors", async () => {
+			fs.writeFileSync(path.join(extensionsDir, "ordinary-event.ts"), "export default function() {}");
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const calls: string[] = [];
+			result.extensions[0]!.handlers.set("agent_end", [
+				async () => {
+					calls.push("first");
+					throw new Error("ordinary event failure");
+				},
+				async () => {
+					calls.push("second");
+				},
+			]);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: Array<{ event: string; error: string }> = [];
+			runner.onError((error) => errors.push(error));
+
+			await expect(runner.emit({ type: "agent_end", messages: [] })).resolves.toBeUndefined();
+
+			expect(calls).toEqual(["first", "second"]);
+			expect(errors.map(({ event, error }) => ({ event, error }))).toEqual([
+				{ event: "agent_end", error: "ordinary event failure" },
+			]);
 		});
 	});
 

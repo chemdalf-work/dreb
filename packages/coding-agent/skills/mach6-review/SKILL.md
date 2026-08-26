@@ -14,11 +14,29 @@ argument-hint: "<pr-number> [code|errors|tests|completeness|simplify]"
 2. **HTML markers** — Use `<!-- mach6-review -->` and `<!-- mach6-assessment -->` as the first line of comment bodies.
 3. **No `#N` in comment bodies** — Use "finding 3", "item 3", "stage 2" etc. instead.
 4. **Task tracking** — Use the `tasks_update` tool to show progress.
-5. **Non-interactive `gh`** — Set `GH_PAGER=cat` and `GH_EDITOR=cat` before all `gh` commands to prevent interactive prompts from hanging the agent. Use `--body-file` instead of inline `--body` for all `gh pr comment`, `gh pr create`, and `gh issue create` calls to avoid shell interpretation of backticks. Write each body to a **unique per-invocation temp file** via `mktemp` (e.g. `GH_BODY="$(mktemp /tmp/gh-comment.XXXXXX.md)"`) — never a fixed path like `/tmp/gh-comment.md`, which concurrent mach6 sessions on the same machine would clobber, cross-posting one session's body to another's PR/issue.
+5. **Non-interactive `gh`** — Set `GH_PAGER=cat` and `GH_EDITOR=cat` before all `gh` commands to prevent interactive prompts from hanging the agent. Use `--body-file` instead of inline `--body` for all `gh pr comment`, `gh pr create`, and `gh issue create` calls to avoid shell interpretation of backticks. Write each body to a **unique per-invocation temp file** via `mktemp` (e.g. `GH_BODY="$(mktemp /tmp/gh-comment.XXXXXX)"`) — never a fixed path like `/tmp/gh-comment.md`, which concurrent mach6 sessions on the same machine would clobber, cross-posting one session's body to another's PR/issue.
 6. **User-controlled checkpoint** — This formal multi-agent review runs only from an explicit user request, either through its slash command or a direct instruction to an agent to invoke it. An agent may invoke it in response to that request; otherwise agents must only offer it with `suggest_next`, never invoke it autonomously or start a review-fix-review loop.
 7. **Review durable work only** — Do not launch formal review agents against uncommitted or unpushed work. The commit, push, and GitHub progress comment are the accountability and recovery boundary.
 
 **Important: Do NOT fix any issues in this session. Fixes happen via a later, user-invoked `/skill:mach6-implement`.**
+
+## Optional `context_mode` routing boundary
+
+`context_mode` is available only through the optional, separately installed `dreb-context-mode` package. This guidance is advisory, not universal deterministic interception.
+
+1. Start code discovery with `search`.
+2. Use native tools for expected output of ≤2 KB; for 2–5 KB unless the work is clearly analytical; and for edits, verbatim, exact, or ordered facts, and Git/CI/version/release/publish evidence.
+3. Use `context_mode` only for precise, large derived analysis or broad gathers expected to exceed 5 KB.
+4. Treat its output as derived, not proof: directly verify material claims against source or bounded native evidence.
+5. On an unavailable or failed call, show a bounded visible diagnostic, then continue natively; never silently fall back or report partial protocol output as success.
+6. Never invoke `ctx_*` directly, arbitrary MCP methods, or a generic MCP client in core.
+7. RTK is rejected due to fidelity, exit-code, and actionable-diagnostic failures.
+
+**Review-stage limit:** each reviewer may receive at most one bounded `context_mode` packet; every reviewer must verify its material claims against source or tests before reporting a finding.
+
+## Required child handoff
+
+When launching a child, repeat the routing boundary above and provide the exact task, a bounded file set or claim set, required direct verification, validation commands, and completion criteria. The child must use no direct `ctx_*` calls, arbitrary MCP methods, or a generic MCP client in core.
 
 ## Step 1: Set up task tracking
 
@@ -126,7 +144,7 @@ Update task: review → completed, post-review → in_progress.
 Compile all findings from all agents into a single structured comment:
 
 ```bash
-GH_BODY="$(mktemp /tmp/gh-comment.XXXXXX.md)"
+GH_BODY="$(mktemp /tmp/gh-comment.XXXXXX)"
 cat > "$GH_BODY" << 'MACH6_EOF'
 <!-- mach6-review -->
 ## Code Review
@@ -195,7 +213,7 @@ Update task: assess → completed, post-assess → in_progress.
 ## Step 7: Post assessment
 
 ```bash
-GH_BODY="$(mktemp /tmp/gh-comment.XXXXXX.md)"
+GH_BODY="$(mktemp /tmp/gh-comment.XXXXXX)"
 cat > "$GH_BODY" << 'MACH6_EOF'
 <!-- mach6-assessment -->
 ## Review Assessment
@@ -229,7 +247,7 @@ Present to the user:
 
 If any findings were classified as **deferred**, ask the user if they want to create issues for them:
 ```bash
-GH_BODY="$(mktemp /tmp/gh-body.XXXXXX.md)"
+GH_BODY="$(mktemp /tmp/gh-body.XXXXXX)"
 cat > "$GH_BODY" << 'MACH6_EOF'
 <body referencing PR and finding>
 MACH6_EOF

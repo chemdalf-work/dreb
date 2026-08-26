@@ -132,8 +132,8 @@ describe("AgentSession background agent guardrails", () => {
 		};
 	});
 
-	afterEach(() => {
-		session.dispose();
+	afterEach(async () => {
+		await session.dispose();
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true });
 		}
@@ -219,7 +219,7 @@ describe("AgentSession background agent guardrails", () => {
 	});
 
 	describe("Layer D: Turn counter", () => {
-		it("shouldContinue returns true when no background agents are running", () => {
+		it("shouldContinue returns true when no background agents are running", async () => {
 			// With no bg agents, shouldContinue should allow unlimited turns
 			let callCount = 0;
 			streamResponder = (stream) => {
@@ -316,7 +316,7 @@ describe("AgentSession background agent guardrails", () => {
 			expect(sessionAny._bgTurnCounter).toBe(0);
 		});
 
-		it("shouldContinue returns false when bgTurnCounter reaches BG_TURN_LIMIT", () => {
+		it("shouldContinue returns false when bgTurnCounter reaches BG_TURN_LIMIT", async () => {
 			const sessionAny = session as any;
 
 			// Simulate bg agents running
@@ -333,7 +333,7 @@ describe("AgentSession background agent guardrails", () => {
 			expect(shouldContinue()).toBe(false);
 		});
 
-		it("shouldContinue does not inject stale steer warnings", () => {
+		it("shouldContinue does not inject stale steer warnings", async () => {
 			const sessionAny = session as any;
 
 			// Simulate bg agents running and counter at limit
@@ -350,7 +350,7 @@ describe("AgentSession background agent guardrails", () => {
 			expect(steerCalls.length).toBe(0);
 		});
 
-		it("emits parent_paused_for_background_agents event when the guardrail halts", () => {
+		it("emits parent_paused_for_background_agents event when the guardrail halts", async () => {
 			const sessionAny = session as any;
 
 			const events: any[] = [];
@@ -375,7 +375,7 @@ describe("AgentSession background agent guardrails", () => {
 			expect(steerCalls.length).toBe(0);
 		});
 
-		it("emits the pause notification only once when shouldContinue is re-entered at the limit", () => {
+		it("emits the pause notification only once when shouldContinue is re-entered at the limit", async () => {
 			const sessionAny = session as any;
 
 			const events: any[] = [];
@@ -397,7 +397,7 @@ describe("AgentSession background agent guardrails", () => {
 			expect(steerCalls.length).toBe(0);
 		});
 
-		it("re-emits the pause notification for a new episode after a bg-delivery reset", () => {
+		it("re-emits the pause notification for a new episode after a bg-delivery reset", async () => {
 			const sessionAny = session as any;
 
 			const events: any[] = [];
@@ -472,7 +472,7 @@ describe("AgentSession background agent guardrails", () => {
 			expect(steerCalls.length).toBe(0);
 		});
 
-		it("does not pause and emits no event when the guardrail is disabled", () => {
+		it("does not pause and emits no event when the guardrail is disabled", async () => {
 			const sessionAny = session as any;
 			session.settingsManager.setBackgroundAgentGuardrailEnabled(false);
 
@@ -492,7 +492,7 @@ describe("AgentSession background agent guardrails", () => {
 			expect(pauseEvents.length).toBe(0);
 		});
 
-		it("respects a custom parentTurnLimit", () => {
+		it("respects a custom parentTurnLimit", async () => {
 			const sessionAny = session as any;
 			// parentTurnLimit is JSON-only (no setter); poke the merged settings view directly.
 			(session.settingsManager as any).settings.backgroundAgents = { parentTurnLimit: 1 };
@@ -519,7 +519,7 @@ describe("AgentSession background agent guardrails", () => {
 			expect(pauseEvents[0].turnLimit).toBe(1);
 		});
 
-		it("bgTurnCounter resets on bg agent delivery via _handleBackgroundComplete", () => {
+		it("bgTurnCounter resets on bg agent delivery via _handleBackgroundComplete", async () => {
 			const sessionAny = session as any;
 
 			// Simulate bg agents having run — counter is elevated
@@ -545,7 +545,7 @@ describe("AgentSession background agent guardrails", () => {
 	});
 
 	describe("Layer C: steer vs followUp delivery", () => {
-		it("uses steer() when agent is streaming during bg agent delivery", () => {
+		it("uses steer() when agent is streaming during bg agent delivery", async () => {
 			// Simulate agent currently streaming
 			Object.defineProperty(agent.state, "isStreaming", { value: true, configurable: true });
 
@@ -630,7 +630,7 @@ describe("AgentSession background agent guardrails", () => {
 			promptSpy.mockRestore();
 		});
 
-		it("does not trigger a response for cancelled bg agents", () => {
+		it("does not trigger a response for cancelled bg agents", async () => {
 			const sessionAny = session as any;
 			const promptSpy = vi.spyOn(agent, "prompt");
 			const appendSpy = vi.spyOn(agent, "appendMessage");
@@ -658,7 +658,7 @@ describe("AgentSession background agent guardrails", () => {
 			appendSpy.mockRestore();
 		});
 
-		it("does not reset bgTurnCounter for cancelled bg agents", () => {
+		it("does not reset bgTurnCounter for cancelled bg agents", async () => {
 			const sessionAny = session as any;
 			sessionAny._bgTurnCounter = 3;
 
@@ -679,7 +679,7 @@ describe("AgentSession background agent guardrails", () => {
 			expect(sessionAny._bgTurnCounter).toBe(3);
 		});
 
-		it("includes session log path in completion message when sessionFile is set", () => {
+		it("includes session log path in completion message when sessionFile is set", async () => {
 			const sessionAny = session as any;
 			const promptSpy = vi.spyOn(agent, "prompt").mockResolvedValue(undefined as any);
 
@@ -704,7 +704,7 @@ describe("AgentSession background agent guardrails", () => {
 			promptSpy.mockRestore();
 		});
 
-		it("includes effective model and thinking in delivery and completion events", () => {
+		it("includes effective model and thinking in delivery and completion events", async () => {
 			const sessionAny = session as any;
 			const promptSpy = vi.spyOn(agent, "prompt").mockResolvedValue(undefined as any);
 			const events: any[] = [];
@@ -736,7 +736,7 @@ describe("AgentSession background agent guardrails", () => {
 			promptSpy.mockRestore();
 		});
 
-		it("includes structured chain-step metadata in completion events", () => {
+		it("includes structured chain-step metadata in completion events", async () => {
 			const sessionAny = session as any;
 			vi.spyOn(agent, "prompt").mockResolvedValue(undefined as any);
 			const events: any[] = [];
@@ -778,7 +778,7 @@ describe("AgentSession background agent guardrails", () => {
 			});
 		});
 
-		it("omits session log from completion message when sessionFile is not set", () => {
+		it("omits session log from completion message when sessionFile is not set", async () => {
 			const sessionAny = session as any;
 			const promptSpy = vi.spyOn(agent, "prompt").mockResolvedValue(undefined as any);
 
@@ -802,7 +802,7 @@ describe("AgentSession background agent guardrails", () => {
 			promptSpy.mockRestore();
 		});
 
-		it("does not include error message when agent is cancelled by user (even with exitCode !== 0)", () => {
+		it("does not include error message when agent is cancelled by user (even with exitCode !== 0)", async () => {
 			const sessionAny = session as any;
 			const appendSpy = vi.spyOn(agent, "appendMessage");
 
@@ -829,7 +829,7 @@ describe("AgentSession background agent guardrails", () => {
 			appendSpy.mockRestore();
 		});
 
-		it("still shows error message for non-cancelled agents that fail", () => {
+		it("still shows error message for non-cancelled agents that fail", async () => {
 			const sessionAny = session as any;
 			const promptSpy = vi.spyOn(agent, "prompt").mockResolvedValue(undefined as any);
 
@@ -857,11 +857,11 @@ describe("AgentSession background agent guardrails", () => {
 	});
 
 	describe("Guardrail cleanup on dispose", () => {
-		it("should clear shouldContinue on dispose", () => {
+		it("should clear shouldContinue on dispose", async () => {
 			// Before dispose, shouldContinue should be set
 			expect((agent as any)._shouldContinue).toBeDefined();
 
-			session.dispose();
+			await session.dispose();
 
 			// After dispose, shouldContinue should be cleared
 			expect((agent as any)._shouldContinue).toBeUndefined();

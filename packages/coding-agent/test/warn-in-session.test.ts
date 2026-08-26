@@ -55,7 +55,7 @@ function createMinimalSession(resourceLoader?: ReturnType<typeof createTestResou
 // ============================================================================
 
 describe("warnInSession", () => {
-	it("queues message to _pendingNextTurnMessages when not streaming", () => {
+	it("queues message to _pendingNextTurnMessages when not streaming", async () => {
 		const { session } = createMinimalSession();
 		try {
 			expect(session.isStreaming).toBe(false);
@@ -70,11 +70,11 @@ describe("warnInSession", () => {
 			expect(pending[0].content).toContain("Inform the user about this issue");
 			expect(pending[0].display).toBe(true);
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("calls agent.steer() when streaming", () => {
+	it("calls agent.steer() when streaming", async () => {
 		const { session, agent } = createMinimalSession();
 		try {
 			// Mock isStreaming to return true
@@ -95,11 +95,11 @@ describe("warnInSession", () => {
 
 			steerSpy.mockRestore();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("appends actionable suffix by default", () => {
+	it("appends actionable suffix by default", async () => {
 		const { session } = createMinimalSession();
 		try {
 			session.warnInSession("something broke");
@@ -110,11 +110,11 @@ describe("warnInSession", () => {
 			);
 			expect(pending[0].content).not.toContain("Note this for context");
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("appends informational suffix when informational option is true", () => {
+	it("appends informational suffix when informational option is true", async () => {
 		const { session } = createMinimalSession();
 		try {
 			session.warnInSession("config changed", { informational: true });
@@ -125,11 +125,11 @@ describe("warnInSession", () => {
 			);
 			expect(pending[0].content).not.toContain("Inform the user about this issue");
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("queues multiple warnings in order", () => {
+	it("queues multiple warnings in order", async () => {
 		const { session } = createMinimalSession();
 		try {
 			session.warnInSession("first warning");
@@ -142,7 +142,7 @@ describe("warnInSession", () => {
 			expect(pending[1].content).toContain("second warning");
 			expect(pending[2].content).toContain("third warning");
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 });
@@ -180,7 +180,7 @@ describe("AgentSession.reload() diagnostic surfacing", () => {
 
 			warnSpy.mockRestore();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
@@ -205,7 +205,7 @@ describe("AgentSession.reload() diagnostic surfacing", () => {
 
 			warnSpy.mockRestore();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
@@ -222,7 +222,7 @@ describe("AgentSession.reload() diagnostic surfacing", () => {
 
 			warnSpy.mockRestore();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
@@ -244,7 +244,7 @@ describe("AgentSession.reload() diagnostic surfacing", () => {
 
 			warnSpy.mockRestore();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 });
@@ -254,7 +254,7 @@ describe("AgentSession.reload() diagnostic surfacing", () => {
 // ============================================================================
 
 describe("warnResourceDiagnostics", () => {
-	it("formats skill, prompt, theme, context diagnostics and extension errors into a single warning", () => {
+	it("formats skill, prompt, theme, context diagnostics and extension errors into a single warning", async () => {
 		const resourceLoader = createTestResourceLoader();
 		resourceLoader.getSkills = () => ({
 			skills: [],
@@ -283,11 +283,11 @@ describe("warnResourceDiagnostics", () => {
 
 			warnSpy.mockRestore();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("includes extension errors", () => {
+	it("includes extension errors", async () => {
 		const resourceLoader = createTestResourceLoader();
 		const originalGetExtensions = resourceLoader.getExtensions;
 		resourceLoader.getExtensions = () => ({
@@ -306,11 +306,11 @@ describe("warnResourceDiagnostics", () => {
 
 			warnSpy.mockRestore();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("does not call warnInSession when there are no diagnostics or errors", () => {
+	it("does not call warnInSession when there are no diagnostics or errors", async () => {
 		const resourceLoader = createTestResourceLoader();
 
 		const { session } = createMinimalSession(resourceLoader);
@@ -323,7 +323,7 @@ describe("warnResourceDiagnostics", () => {
 
 			warnSpy.mockRestore();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 });
@@ -333,7 +333,7 @@ describe("warnResourceDiagnostics", () => {
 // ============================================================================
 
 describe("onWarning informational mapping", () => {
-	it("routes sse_parse_error as informational", () => {
+	it("routes sse_parse_error as informational", async () => {
 		const { session } = createMinimalSession();
 		try {
 			const warnSpy = vi.spyOn(session, "warnInSession");
@@ -352,11 +352,11 @@ describe("onWarning informational mapping", () => {
 
 			warnSpy.mockRestore();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("routes ws_parse_error as informational", () => {
+	it("routes ws_parse_error as informational", async () => {
 		const { session } = createMinimalSession();
 		try {
 			const code: string = "ws_parse_error";
@@ -367,11 +367,11 @@ describe("onWarning informational mapping", () => {
 			const pending = (session as any)._pendingNextTurnMessages;
 			expect(pending[0].content).toContain("Note this for context");
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("routes json_parse_total_failure as informational", () => {
+	it("routes json_parse_total_failure as informational", async () => {
 		const { session } = createMinimalSession();
 		try {
 			const code: string = "json_parse_total_failure";
@@ -382,11 +382,11 @@ describe("onWarning informational mapping", () => {
 			const pending = (session as any)._pendingNextTurnMessages;
 			expect(pending[0].content).toContain("Note this for context");
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("routes unknown warning codes as actionable (not informational)", () => {
+	it("routes unknown warning codes as actionable (not informational)", async () => {
 		const { session } = createMinimalSession();
 		try {
 			const code: string = "some_other_error";
@@ -398,7 +398,7 @@ describe("onWarning informational mapping", () => {
 			expect(pending[0].content).toContain("Inform the user about this issue");
 			expect(pending[0].content).not.toContain("Note this for context");
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 });
@@ -408,11 +408,11 @@ describe("onWarning informational mapping", () => {
 // ============================================================================
 
 describe("configValueWarnings forwarding", () => {
-	afterEach(() => {
+	afterEach(async () => {
 		clearConfigValueCache();
 	});
 
-	it("drains configValueWarnings and forwards each to warnInSession", () => {
+	it("drains configValueWarnings and forwards each to warnInSession", async () => {
 		const { session } = createMinimalSession();
 		try {
 			const warnSpy = vi.spyOn(session, "warnInSession");
@@ -436,11 +436,11 @@ describe("configValueWarnings forwarding", () => {
 
 			warnSpy.mockRestore();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("splice(0) on empty array produces no warnings", () => {
+	it("splice(0) on empty array produces no warnings", async () => {
 		const { session } = createMinimalSession();
 		try {
 			const warnSpy = vi.spyOn(session, "warnInSession");
@@ -455,7 +455,7 @@ describe("configValueWarnings forwarding", () => {
 
 			warnSpy.mockRestore();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 });
@@ -467,8 +467,8 @@ describe("configValueWarnings forwarding", () => {
 describe("event queue error recovery", () => {
 	let harness: Harness;
 
-	afterEach(() => {
-		harness?.cleanup();
+	afterEach(async () => {
+		await harness?.cleanup();
 	});
 
 	it("recovers from event processing errors and processes subsequent events", async () => {

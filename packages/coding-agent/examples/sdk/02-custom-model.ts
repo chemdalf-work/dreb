@@ -37,13 +37,16 @@ if (available.length > 0) {
 		authStorage,
 		modelRegistry,
 	});
+	try {
+		session.subscribe((event) => {
+			if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+				process.stdout.write(event.assistantMessageEvent.delta);
+			}
+		});
 
-	session.subscribe((event) => {
-		if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-			process.stdout.write(event.assistantMessageEvent.delta);
-		}
-	});
-
-	await session.prompt("Say hello in one sentence.");
-	console.log();
+		await session.prompt("Say hello in one sentence.");
+		console.log();
+	} finally {
+		await session.dispose();
+	}
 }
