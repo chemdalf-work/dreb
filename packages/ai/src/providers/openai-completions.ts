@@ -867,7 +867,7 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
 	const isGroq = provider === "groq" || baseUrl.includes("groq.com");
 
 	const reasoningEffortMap =
-		isGroq && model.id === "qwen/qwen3-32b"
+		isGroq && model.id === "qwen/qwen3.6-27b"
 			? {
 					minimal: "default",
 					low: "default",
