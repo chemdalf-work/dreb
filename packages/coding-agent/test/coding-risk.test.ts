@@ -68,6 +68,9 @@ describe("classifyCodingRisk", () => {
 		"Research database schema; migrate the database.",
 		"Inspect the auth flow, fix OAuth credentials.",
 		"Inspect OAuth\nconfigure access control",
+		"Investigate OAuth: fix credentials.",
+		"Investigate OAuth — fix credentials.",
+		"Investigate OAuth\n- fix credentials.",
 	])("does not let a research prefix hide an explicit follow-on mutation: %s", (task) => {
 		expect(classifyCodingRisk({ task, tools: ["read", "search"] }).level).toBe("high");
 	});
