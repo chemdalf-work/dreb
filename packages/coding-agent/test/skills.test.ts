@@ -486,6 +486,8 @@ describe("skills", () => {
 			].join("\n");
 			const childHandoff =
 				"When launching a child, repeat the routing boundary above and provide the exact task, a bounded file set or claim set, required direct verification, validation commands, and completion criteria. The child must use no direct `ctx_*` calls, arbitrary MCP methods, or a generic MCP client in core.";
+			const reviewChildHandoff =
+				"When launching a child, repeat the routing boundary above and provide the exact task, a bounded file set or claim set, required direct verification, validation commands, and completion criteria. Set every task item's `cwd` to the verified `REVIEW_CWD`; do not rely on the parent session's working directory. The child must use no direct `ctx_*` calls, arbitrary MCP methods, or a generic MCP client in core.";
 
 			for (const skillName of skillNames) {
 				const body = readBuiltInSkill(skillName);
@@ -496,9 +498,10 @@ describe("skills", () => {
 				expect(body).not.toMatch(/\b(?:mcp__[A-Za-z0-9_]+|(?:mcp|client)\.(?:callTool|invoke)|tools\/call)\b/);
 			}
 
-			for (const skillName of skillNames.slice(0, 4)) {
+			for (const skillName of skillNames.slice(0, 3)) {
 				expect(readBuiltInSkill(skillName)).toContain(childHandoff);
 			}
+			expect(readBuiltInSkill("mach6-review")).toContain(reviewChildHandoff);
 
 			const stageLimits: Record<string, string> = {
 				"mach6-issue":
@@ -648,8 +651,10 @@ describe("skills", () => {
 			expect(body).toContain("Do not reject a finding merely because the relevant lines are unchanged");
 			expect(body).toContain("verify that each is fixed");
 			expect(body).toContain("one parallel `subagent` `tasks` call");
+			expect(body).toContain('REVIEW_CWD="$(git rev-parse --show-toplevel)"');
+			expect(body).toContain("Set `cwd: REVIEW_CWD` on every task item");
 			expect(body).toContain("If dispatch arbitration or a specialist agent fails, retry that specialist");
-			expect(body).toContain("A retry may run separately after the original parallel batch");
+			expect(body).toContain("one-item `tasks` array carrying `cwd: REVIEW_CWD`");
 			expect(body).not.toContain("Skip `simplifier` unless `simplify` was explicitly requested");
 			for (const agent of [
 				"code-reviewer",

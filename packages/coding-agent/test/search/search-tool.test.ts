@@ -498,6 +498,32 @@ describe("createSearchToolDefinition", () => {
 				expect(result.details!.indexBuilt).toBe(false);
 			});
 
+			it("rejects a multi-repository search root before indexing", async () => {
+				const multiRepoRoot = mkdtempSync(path.join(tmpdir(), "search-multi-repo-"));
+				mkdirSync(path.join(multiRepoRoot, "repo-a", ".git"), { recursive: true });
+				mkdirSync(path.join(multiRepoRoot, "repo-b"), { recursive: true });
+				writeFileSync(path.join(multiRepoRoot, "repo-b", ".git"), "gitdir: elsewhere", "utf-8");
+				try {
+					const result = await differentCwdTool.execute(
+						"t-projdir-multi-repo",
+						{ query: "AuthMiddleware", searchDir: multiRepoRoot, restrictToDir: "repo-a" },
+						undefined,
+						undefined,
+						undefined as any,
+					);
+					const text = (result.content[0] as { type: "text"; text: string }).text;
+
+					expect(text).toContain("Refusing to index multi-repository root");
+					expect(text).toContain("repo-a");
+					expect(text).toContain("repo-b");
+					expect(text).toContain("restrictToDir only filters results");
+					expect(result.details).toEqual({ resultCount: 0, indexBuilt: false });
+					expect(existsSync(path.join(multiRepoRoot, ".dreb", "index"))).toBe(false);
+				} finally {
+					rmSync(multiRepoRoot, { recursive: true, force: true });
+				}
+			});
+
 			it("returns error when searchDir is a file, not a directory", async () => {
 				const tmpFile = path.join(mkdtempSync(path.join(tmpdir(), "search-file-")), "not-a-dir.txt");
 				writeFileSync(tmpFile, "hello", "utf-8");

@@ -2078,15 +2078,17 @@ const thinkingLevelSchema = Type.Union(
 	{ description: "Thinking level override for the child model." },
 );
 
+const cwdSchema = Type.Optional(
+	Type.String({
+		description:
+			"Working directory (defaults to parent's cwd). Accepts absolute paths or relative paths within parent's cwd.",
+	}),
+);
+
 const taskItemSchema = Type.Object({
 	agent: Type.Optional(Type.String({ minLength: 1, description: "Agent type name (default: 'Explore')" })),
 	task: Type.String({ description: "The task prompt for this subagent" }),
-	cwd: Type.Optional(
-		Type.String({
-			description:
-				"Working directory (defaults to parent's cwd). Accepts absolute paths or relative paths within parent's cwd.",
-		}),
-	),
+	cwd: cwdSchema,
 	model: Type.Optional(
 		Type.String({
 			minLength: 1,
@@ -2100,6 +2102,7 @@ const taskItemSchema = Type.Object({
 const subagentSchema = Type.Object({
 	agent: Type.Optional(Type.String({ minLength: 1, description: "Agent type name (default: 'Explore')" })),
 	task: Type.Optional(Type.String({ description: "Task prompt (single mode)", minLength: 1 })),
+	cwd: cwdSchema,
 	model: Type.Optional(
 		Type.String({
 			minLength: 1,
@@ -2551,11 +2554,18 @@ export function createSubagentToolDefinition(
 				if (params.task) {
 					// Single background task
 					const agentName = params.agent || DEFAULT_AGENT;
+					const cwdResult = clampCwd(cwd, params.cwd);
+					if (!cwdResult.ok) {
+						return {
+							content: [{ type: "text", text: `Error: ${cwdResult.error}` }],
+							details: { mode: "single", agentCount: 0 } as SubagentToolDetails,
+						};
+					}
 					const agentId = launchBackgroundTask(
 						agentName,
 						params.task,
 						`${agentName} task`,
-						undefined,
+						cwdResult.cwd,
 						params.model,
 						params.thinking,
 						explicitRouteLocks(params.agent, params.model, params.thinking),

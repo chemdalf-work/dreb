@@ -5,7 +5,7 @@
  * Feature-gated on `node:sqlite` availability (Node 22+).
  */
 
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { AgentTool } from "@dreb/agent-core";
@@ -34,7 +34,7 @@ const searchSchema = Type.Object({
 	searchDir: Type.Optional(
 		Type.String({
 			description:
-				"Directory to index and search instead of cwd (useful when cwd is ~/). The entire contents of this directory are scanned and indexed.",
+				"Directory to index and search instead of cwd (useful when cwd is ~/). The entire contents of this directory are scanned and indexed; multi-repository roots are rejected.",
 		}),
 	),
 	rebuild: Type.Optional(Type.Boolean({ description: "Force a clean rebuild of the search index (default: false)" })),
@@ -54,6 +54,19 @@ export interface SearchToolDetails {
 
 function normalizeLineEndings(text: string): string {
 	return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+function findImmediateGitRepositories(searchRoot: string): string[] {
+	if (existsSync(path.join(searchRoot, ".git"))) return [];
+
+	const repositories: string[] = [];
+	for (const entry of readdirSync(searchRoot, { withFileTypes: true })) {
+		if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+		if (!existsSync(path.join(searchRoot, entry.name, ".git"))) continue;
+		repositories.push(entry.name);
+		if (repositories.length === 3) break;
+	}
+	return repositories;
 }
 
 // ============================================================================
@@ -149,6 +162,7 @@ export function createSearchToolDefinition(cwd: string): ToolDefinition<typeof s
 		promptSnippet: "Semantic codebase search — natural language queries over code and docs",
 		promptGuidelines: [
 			"Use `search` as your default exploration tool — for understanding code, finding where things are, and answering questions about the codebase. Use `grep` when you already know the exact text or pattern you're looking for.",
+			"Set searchDir to one repository root. Multi-repository roots are rejected because the entire searchDir is indexed.",
 			"The first search query builds an index (may take 10-60s). Subsequent queries are fast.",
 		],
 		parameters: searchSchema,
@@ -185,6 +199,19 @@ export function createSearchToolDefinition(cwd: string): ToolDefinition<typeof s
 						{
 							type: "text",
 							text: `searchDir does not exist or is not a directory: ${resolvedSearchDir}`,
+						},
+					],
+					details: { resultCount: 0, indexBuilt: false },
+				};
+			}
+
+			const nestedRepositories = findImmediateGitRepositories(resolvedSearchDir);
+			if (nestedRepositories.length > 1) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Refusing to index multi-repository root ${resolvedSearchDir}. Found repositories: ${nestedRepositories.join(", ")}. Set searchDir to one repository root; restrictToDir only filters results and does not reduce indexing.`,
 						},
 					],
 					details: { resultCount: 0, indexBuilt: false },
