@@ -230,6 +230,7 @@ describe("pre-spawn subagent arbitration", () => {
 					order.push("record");
 					records.push(record);
 				},
+				locked: [],
 				defaultThinkingLevel: "high",
 			},
 		);
@@ -237,7 +238,13 @@ describe("pre-spawn subagent arbitration", () => {
 		expect(result.exitCode).toBe(0);
 		expect(result.agent).toBe("arbiter-b");
 		expect(result.task).toBe(originalTask);
-		expect(arbitrationRequest?.cwd).toBe(childCwd);
+		expect(arbitrationRequest).toMatchObject({
+			cwd: childCwd,
+			locked: [],
+			codingRisk: { level: "medium", signals: ["implementation"] },
+		});
+		expect(arbitrationRequest?.agents.find((agent) => agent.name === "arbiter-a")?.profile).toBe("lean");
+		expect(arbitrationRequest?.agents.find((agent) => agent.name === "arbiter-b")?.profile).toBe("full");
 		expect(vi.mocked(spawn).mock.calls[0][2]).toMatchObject({ cwd: childCwd });
 		expect(arbitrationRequest?.agents.find((agent) => agent.name === "arbiter-b")?.tools).toEqual([
 			"read",
@@ -265,6 +272,109 @@ describe("pre-spawn subagent arbitration", () => {
 		]);
 		expect(args).not.toContain("A prompt");
 		expect(args[args.length - 1]).toBe(originalTask);
+	});
+
+	test("fails closed when an arbitration hook changes an explicit route field", async () => {
+		const records: DispatchArbitrationRecord[] = [];
+		let arbitrationRequest: DispatchArbitrationRequest | undefined;
+		const result = await executeSingle(
+			agents(),
+			"arbiter-a",
+			"Implement the requested change",
+			tempCwd,
+			undefined,
+			undefined,
+			"provider/worker",
+			"provider",
+			registry,
+			undefined,
+			"worker",
+			undefined,
+			undefined,
+			undefined,
+			"high",
+			{
+				arbitrate: async (request) => {
+					arbitrationRequest = request;
+					return {
+						enabled: true,
+						ok: true,
+						decision: { ...request.proposed, model: "provider/cheap" },
+						changed: ["model"],
+					};
+				},
+				onRecord: (record) => records.push(record),
+			},
+		);
+
+		expect(arbitrationRequest?.locked).toEqual(["agent", "model", "thinking"]);
+		expect(result).toMatchObject({ exitCode: 1, errorMessage: expect.stringContaining("explicit model") });
+		expect(records).toEqual([
+			expect.objectContaining({
+				status: "failure",
+				errorCode: "locked_route_changed",
+				locked: ["agent", "model", "thinking"],
+			}),
+		]);
+		expect(spawn).not.toHaveBeenCalled();
+	});
+
+	test("rejects unsupported explicit thinking before arbitration can normalize the lock", async () => {
+		const arbitrate = vi.fn();
+		const result = await executeSingle(
+			agents(),
+			"arbiter-b",
+			"Implement the requested change",
+			tempCwd,
+			undefined,
+			undefined,
+			"provider/cheap",
+			"provider",
+			registry,
+			undefined,
+			"worker",
+			undefined,
+			undefined,
+			undefined,
+			"high",
+			{ arbitrate, onRecord: vi.fn() },
+		);
+
+		expect(result).toMatchObject({
+			exitCode: 1,
+			errorMessage: expect.stringContaining('Thinking level "high" is not supported'),
+		});
+		expect(arbitrate).not.toHaveBeenCalled();
+		expect(spawn).not.toHaveBeenCalled();
+	});
+
+	test.each(["", "   "])("rejects blank explicit agent names before arbitration: %j", async (agentName) => {
+		const arbitrate = vi.fn();
+		const result = await executeSingle(
+			agents(),
+			agentName,
+			"Inspect the repository",
+			tempCwd,
+			undefined,
+			undefined,
+			undefined,
+			"provider",
+			registry,
+			undefined,
+			"worker",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			{ arbitrate, onRecord: vi.fn() },
+		);
+
+		expect(result).toMatchObject({
+			exitCode: 1,
+			errorMessage: "Explicit agent override must be a non-empty agent type name.",
+		});
+		expect(arbitrate).not.toHaveBeenCalled();
+		expect(spawn).not.toHaveBeenCalled();
 	});
 
 	test.each([
@@ -370,6 +480,7 @@ describe("pre-spawn subagent arbitration", () => {
 					changed: [...route.changed],
 				}),
 				onRecord: (record) => records.push(record),
+				locked: [],
 				defaultThinkingLevel: "high",
 			},
 		);
@@ -439,6 +550,7 @@ describe("pre-spawn subagent arbitration", () => {
 					changed: ["agent", "model"],
 				}),
 				onRecord: vi.fn(),
+				locked: [],
 			},
 		);
 
@@ -629,13 +741,27 @@ describe("pre-spawn subagent arbitration", () => {
 		expect(events).toHaveLength(2);
 		expect(events).toEqual(
 			expect.arrayContaining([
-				expect.objectContaining({ status: "success", agentId: expect.any(String), changed: [] }),
+				expect.objectContaining({
+					status: "success",
+					agentId: expect.any(String),
+					changed: [],
+					locked: ["agent"],
+					codingRisk: { level: "low", signals: ["bounded-research"] },
+				}),
 			]),
 		);
 		const persisted = sessionManager
 			.getEntries()
 			.find((entry) => entry.type === "custom" && entry.customType === "subagent_arbitration");
-		expect(persisted).toMatchObject({ type: "custom", data: { type: "subagent_arbitration", status: "success" } });
+		expect(persisted).toMatchObject({
+			type: "custom",
+			data: {
+				type: "subagent_arbitration",
+				status: "success",
+				locked: ["agent"],
+				codingRisk: { level: "low", signals: ["bounded-research"] },
+			},
+		});
 		expect(JSON.stringify(sessionManager.buildSessionContext().messages)).not.toContain("subagent_arbitration");
 		await session.dispose();
 	});
@@ -685,6 +811,8 @@ describe("pre-spawn subagent arbitration", () => {
 		expect(event).toMatchObject({
 			status: "failure",
 			final: null,
+			locked: ["agent"],
+			codingRisk: { level: "low", signals: ["bounded-research"] },
 			errorCode: "arbiter_model",
 			errorMessage: expect.stringContaining("<REDACTED:auth_secret>"),
 		});
@@ -696,7 +824,13 @@ describe("pre-spawn subagent arbitration", () => {
 			.find((entry) => entry.type === "custom" && entry.customType === "subagent_arbitration");
 		expect(persisted).toMatchObject({
 			type: "custom",
-			data: { status: "failure", final: null, errorCode: "arbiter_model" },
+			data: {
+				status: "failure",
+				final: null,
+				locked: ["agent"],
+				codingRisk: { level: "low", signals: ["bounded-research"] },
+				errorCode: "arbiter_model",
+			},
 		});
 		expect(JSON.stringify(persisted)).not.toContain("AUTH_SECRET_123");
 		expect(JSON.stringify(sessionManager.buildSessionContext().messages)).not.toContain("subagent_arbitration");
@@ -732,7 +866,7 @@ describe("pre-spawn subagent arbitration", () => {
 
 		await tool.execute(
 			"call",
-			{ agent: "arbiter-a", task: "route to the implementation agent" },
+			{ task: "route to the implementation agent" },
 			new AbortController().signal,
 			() => {},
 			undefined as never,
@@ -859,21 +993,36 @@ describe("pre-spawn subagent arbitration", () => {
 		const params =
 			mode === "parallel"
 				? {
+						model: "provider/worker",
+						thinking: "high" as const,
 						tasks: [
 							{ agent: "arbiter-a", task: "one" },
-							{ agent: "arbiter-a", task: "two" },
+							{ agent: "arbiter-a", task: "two", model: "provider/cheap", thinking: "off" as const },
 						],
 					}
 				: {
+						model: "provider/worker",
+						thinking: "high" as const,
 						chain: [
 							{ agent: "arbiter-a", task: "first", cwd: chainCwds[0] },
-							{ agent: "arbiter-a", task: "use {previous} now", cwd: chainCwds[1] },
+							{
+								agent: "arbiter-a",
+								task: "use {previous} now",
+								cwd: chainCwds[1],
+								model: "provider/cheap",
+								thinking: "off" as const,
+							},
 						],
 					};
 		await tool.execute("call", params, new AbortController().signal, () => {}, undefined as never);
 		await completed;
 
 		expect(requests).toHaveLength(2);
+		expect(requests.map((request) => request.locked)).toEqual([
+			["agent", "model", "thinking"],
+			["agent", "model", "thinking"],
+		]);
+		expect(requests.every((request) => request.codingRisk.level === "medium")).toBe(true);
 		expect(requests[0].agents.find((agent) => agent.name === "arbiter-b")?.modelDefaults).toEqual([
 			"provider/settings-cheap",
 		]);
@@ -887,6 +1036,60 @@ describe("pre-spawn subagent arbitration", () => {
 			expect(requests[1].task).toContain("FIRST_OUTPUT");
 			expect(requests[1].task).not.toContain("{previous}");
 		}
+	});
+
+	test.each([
+		["parallel", "model"],
+		["parallel", "thinking"],
+		["chain", "model"],
+		["chain", "thinking"],
+	] as const)("enforces a per-task-only lock in %s mode: %s", async (mode, field) => {
+		let requestSeen: DispatchArbitrationRequest | undefined;
+		const events: SubagentArbitrationEvent[] = [];
+		let resolveCompleted!: (result: SubagentResult) => void;
+		const completed = new Promise<SubagentResult>((resolve) => {
+			resolveCompleted = resolve;
+		});
+		const tool = createSubagentToolDefinition(tempCwd, {
+			parentProvider: () => "provider",
+			parentModel: () => "worker",
+			modelRegistry: registry,
+			defaultThinkingLevel: () => "high",
+			arbitrate: async (request) => {
+				requestSeen = request;
+				return {
+					enabled: true,
+					ok: true,
+					decision:
+						field === "model"
+							? { ...request.proposed, model: "provider/cheap" }
+							: { ...request.proposed, thinking: "low" },
+					changed: [field],
+				};
+			},
+			onArbitration: (event) => events.push(event),
+			onBackgroundComplete: (_id, result) => resolveCompleted(result),
+		});
+		const item =
+			field === "model"
+				? { agent: "arbiter-a", task: "per-task model lock", model: "provider/worker" }
+				: { agent: "arbiter-a", task: "per-task thinking lock", thinking: "high" as const };
+		const params = mode === "parallel" ? { tasks: [item] } : { chain: [item] };
+
+		await tool.execute("call", params, new AbortController().signal, () => {}, undefined as never);
+		const result = await completed;
+
+		expect(requestSeen?.locked).toEqual(["agent", field]);
+		expect(result).toMatchObject({ exitCode: 1, errorMessage: expect.stringContaining(`explicit ${field}`) });
+		expect(events).toEqual([
+			expect.objectContaining({
+				status: "failure",
+				final: null,
+				locked: ["agent", field],
+				errorCode: "locked_route_changed",
+			}),
+		]);
+		expect(spawn).not.toHaveBeenCalled();
 	});
 
 	test("bounds pending parallel arbitration with the background concurrency gate", async () => {

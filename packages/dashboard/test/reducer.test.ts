@@ -1194,6 +1194,8 @@ describe("applySessionEvent — subagent relay", () => {
 			proposed: { agent: "Explore", model: "provider/frontier", thinking: "high" },
 			final: { agent: "feature-dev", model: "provider/cheap", thinking: "low" },
 			changed: ["agent", "model", "thinking"],
+			locked: ["agent"],
+			codingRisk: { level: "low", signals: ["bounded-research"] },
 		});
 		expect(state.backgroundAgents.bg1).toMatchObject({
 			agentType: "feature-dev",
@@ -1201,6 +1203,8 @@ describe("applySessionEvent — subagent relay", () => {
 				{
 					status: "success",
 					final: { agent: "feature-dev", model: "provider/cheap", thinking: "low" },
+					locked: ["agent"],
+					codingRisk: { level: "low", signals: ["bounded-research"] },
 				},
 			],
 		});
