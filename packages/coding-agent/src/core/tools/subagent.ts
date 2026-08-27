@@ -1219,6 +1219,16 @@ export async function executeSingle(
 	/** Single-model mode (issue 517): the child runs on the parent session's model, ignoring model specs and the dispatch arbiter. */
 	singleModelMode?: boolean,
 ): Promise<SubagentResult> {
+	if (agentName !== undefined && !agentName.trim()) {
+		return {
+			agent: agentName,
+			task,
+			exitCode: 1,
+			output: "",
+			stderr: "",
+			errorMessage: "Explicit agent override must be a non-empty agent type name.",
+		};
+	}
 	let name = agentName || DEFAULT_AGENT;
 	let config = agents.get(name);
 	if (!config) {
@@ -2150,7 +2160,7 @@ const thinkingLevelSchema = Type.Union(
 );
 
 const taskItemSchema = Type.Object({
-	agent: Type.Optional(Type.String({ description: "Agent type name (default: 'Explore')" })),
+	agent: Type.Optional(Type.String({ minLength: 1, description: "Agent type name (default: 'Explore')" })),
 	task: Type.String({ description: "The task prompt for this subagent" }),
 	cwd: Type.Optional(
 		Type.String({
@@ -2169,7 +2179,7 @@ const taskItemSchema = Type.Object({
 });
 
 const subagentSchema = Type.Object({
-	agent: Type.Optional(Type.String({ description: "Agent type name (default: 'Explore')" })),
+	agent: Type.Optional(Type.String({ minLength: 1, description: "Agent type name (default: 'Explore')" })),
 	task: Type.Optional(Type.String({ description: "Task prompt (single mode)", minLength: 1 })),
 	model: Type.Optional(
 		Type.String({

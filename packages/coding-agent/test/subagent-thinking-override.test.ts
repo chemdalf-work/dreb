@@ -186,6 +186,12 @@ describe("subagent thinking schema", () => {
 			false,
 		);
 	});
+
+	test("rejects empty explicit agent names in every mode", () => {
+		expect(Value.Check(subagentToolDefinition.parameters, { task: "single", agent: "" })).toBe(false);
+		expect(Value.Check(subagentToolDefinition.parameters, { tasks: [{ task: "parallel", agent: "" }] })).toBe(false);
+		expect(Value.Check(subagentToolDefinition.parameters, { chain: [{ task: "chain", agent: "" }] })).toBe(false);
+	});
 });
 
 describe("thinking precedence", () => {
