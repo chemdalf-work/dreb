@@ -21,7 +21,7 @@ const STATE_CHANGING_ACTION =
 const BOUNDED_RESEARCH_INTENT =
 	/^\s*(?:please\s+)?(?:find|locate|search|inspect|investigate|research|look up|list|summari[sz]e|explain)\b/i;
 const FOLLOW_ON_MUTATION =
-	/\b(?:and(?:\s+then)?|then)\s+(?:implement|build|add|change|modify|edit|fix|refactor|rewrite|remove|rotate|update|upgrade|migrate|deploy|publish|configure|grant|revoke|create|replace|set|enable|disable|delete|drop|truncate|purge|destroy|wipe)\b/i;
+	/(?:[.;,\n]\s*|\b(?:and(?:\s+then)?|then)\s+)(?:please\s+)?(?:implement|build|add|change|modify|edit|fix|refactor|rewrite|remove|rotate|update|upgrade|migrate|deploy|publish|configure|grant|revoke|create|replace|set|enable|disable|delete|drop|truncate|purge|destroy|wipe)\b/i;
 
 const HIGH_RISK_SURFACES: readonly RiskRule[] = [
 	{ signal: "destructive-operation", pattern: /\b(delete|deletion|drop|truncate|purge|destroy|wipe)\b/i },

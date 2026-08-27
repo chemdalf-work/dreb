@@ -62,10 +62,14 @@ describe("classifyCodingRisk", () => {
 		});
 	});
 
-	test("does not let a research prefix hide an explicit follow-on mutation", () => {
-		expect(
-			classifyCodingRisk({ task: "Investigate OAuth and then configure access control", tools: ["read", "search"] }),
-		).toEqual({ level: "high", signals: ["security-surface"] });
+	test.each([
+		"Investigate OAuth and then configure access control",
+		"Investigate OAuth. Configure access control.",
+		"Research database schema; migrate the database.",
+		"Inspect the auth flow, fix OAuth credentials.",
+		"Inspect OAuth\nconfigure access control",
+	])("does not let a research prefix hide an explicit follow-on mutation: %s", (task) => {
+		expect(classifyCodingRisk({ task, tools: ["read", "search"] }).level).toBe("high");
 	});
 
 	test("deduplicates high-risk signals in stable rule order without exposing task text", () => {
