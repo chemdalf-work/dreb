@@ -26,6 +26,13 @@ describe("classifyCodingRisk", () => {
 		});
 	});
 
+	test.each(["edit", "write"])("the %s tool prevents bounded research from being low risk", (tool) => {
+		expect(classifyCodingRisk({ task: "Investigate the parser", tools: ["read", tool] })).toEqual({
+			level: "medium",
+			signals: ["write-capable-profile"],
+		});
+	});
+
 	test.each([
 		["Fix OAuth credential handling", "security-surface"],
 		["Modify RBAC role assignments", "security-surface"],
@@ -35,6 +42,9 @@ describe("classifyCodingRisk", () => {
 		["Rotate the JWT signing key", "security-surface"],
 		["Create a JWT signing key", "security-surface"],
 		["Configure OAuth access control", "security-surface"],
+		["Run the database migration", "data-migration"],
+		["Apply OAuth credential changes", "security-surface"],
+		["Execute the production deployment", "release-surface"],
 		["Migrate the database schema", "data-migration"],
 		["Fix the concurrency race condition", "concurrency"],
 		["Delete production records", "destructive-operation"],
@@ -70,7 +80,13 @@ describe("classifyCodingRisk", () => {
 		"Inspect OAuth\nconfigure access control",
 		"Investigate OAuth: fix credentials.",
 		"Investigate OAuth — fix credentials.",
+		"Investigate OAuth - fix credentials.",
 		"Investigate OAuth\n- fix credentials.",
+		"Investigate OAuth to fix credentials.",
+		"Research the database schema in order to migrate it.",
+		"Inspect JWT credentials / fix rotation.",
+		"Investigate OAuth\n> Fix credentials.",
+		"Investigate OAuth\n## Fix credentials.",
 	])("does not let a research prefix hide an explicit follow-on mutation: %s", (task) => {
 		expect(classifyCodingRisk({ task, tools: ["read", "search"] }).level).toBe("high");
 	});
