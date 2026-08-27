@@ -17,11 +17,11 @@ interface RiskRule {
 }
 
 const STATE_CHANGING_ACTION =
-	/\b(implement|build|add|change|modify|edit|fix|refactor|rewrite|remove|rotate|update|upgrade|migrate|deploy|publish|configure|grant|revoke|create|replace|set|enable|disable|delete|drop|truncate|purge|destroy|wipe)\b/i;
+	/\b(implement|build|add|apply|change|modify|edit|execute|fix|refactor|rewrite|remove|rotate|run|update|upgrade|migrate|deploy|publish|configure|grant|revoke|create|replace|set|enable|disable|delete|drop|truncate|purge|destroy|wipe)\b/i;
 const BOUNDED_RESEARCH_INTENT =
 	/^\s*(?:please\s+)?(?:find|locate|search|inspect|investigate|research|look up|list|summari[sz]e|explain)\b/i;
 const FOLLOW_ON_MUTATION =
-	/(?:[.;,:—–]\s*|-\s+|\r?\n\s*(?:[-*•]\s*)?|\b(?:and(?:\s+then)?|then)\s+)(?:please\s+)?(?:implement|build|add|change|modify|edit|fix|refactor|rewrite|remove|rotate|update|upgrade|migrate|deploy|publish|configure|grant|revoke|create|replace|set|enable|disable|delete|drop|truncate|purge|destroy|wipe)\b/i;
+	/(?:[.;,:—–]\s*|-\s+|\s+\/\s*|\r?\n\s*(?:[-*•>#]+\s*)?|(?<!\bhow\s)(?<!\bwhere\s)(?<!\bwhen\s)(?<!\bwhat\s)(?<!\bwhy\s)(?<!\bwhether\s)\bto\s+|\b(?:and(?:\s+then)?|then)\s+)(?:please\s+)?(?:implement|build|add|apply|change|modify|edit|execute|fix|refactor|rewrite|remove|rotate|run|update|upgrade|migrate|deploy|publish|configure|grant|revoke|create|replace|set|enable|disable|delete|drop|truncate|purge|destroy|wipe)\b/i;
 
 const HIGH_RISK_SURFACES: readonly RiskRule[] = [
 	{ signal: "destructive-operation", pattern: /\b(delete|deletion|drop|truncate|purge|destroy|wipe)\b/i },
