@@ -224,6 +224,20 @@ describe("DispatchArbiter", () => {
 		expect(options.reasoning).toBe("medium");
 	});
 
+	test("sends non-empty route locks through the real arbiter prompt payload", async () => {
+		complete.mockResolvedValue(response({ agent: "Explore", model: "provider/worker", thinking: "high" }));
+
+		const result = await createArbiter().arbitrate({ ...request, locked: ["model"] });
+
+		expect(result).toMatchObject({ enabled: true, ok: true, changed: [] });
+		const context = complete.mock.calls[0][1];
+		expect(context.systemPrompt).toContain(
+			"Fields listed in locked are explicit caller choices. Return their proposed values unchanged.",
+		);
+		const arbitrationInput = JSON.parse(String(context.messages[0].content).replace(/^ARBITRATION_INPUT\n/, ""));
+		expect(arbitrationInput.locked).toEqual(["model"]);
+	});
+
 	test("retries malformed output once without including raw output in the retry", async () => {
 		complete
 			.mockResolvedValueOnce(response("```json\n{}\n```"))
