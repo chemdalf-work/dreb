@@ -183,7 +183,7 @@ describe("AgentSession.dispose", () => {
 		expect(internals._eventListeners).toEqual([]);
 	});
 
-	it("rejects reload before replacing resources or runtime when shutdown fails", async () => {
+	it("rejects reload before replacing resources or runtime when shutdown fails after preflight", async () => {
 		const session = createSession();
 		const runner = createRunner();
 		const shutdownError = new Error("shutdown failed");
@@ -197,7 +197,7 @@ describe("AgentSession.dispose", () => {
 		await expect(session.reload()).rejects.toBe(shutdownError);
 
 		expect(runner.emit).toHaveBeenCalledOnce();
-		expect(reloadSettings).not.toHaveBeenCalled();
+		expect(reloadSettings).toHaveBeenCalledOnce();
 		expect(reloadResources).not.toHaveBeenCalled();
 		expect(buildRuntime).not.toHaveBeenCalled();
 	});

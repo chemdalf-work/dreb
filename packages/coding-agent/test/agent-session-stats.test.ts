@@ -96,7 +96,7 @@ describe("AgentSession.getSessionStats", () => {
 		}
 	});
 
-	it("estimates current context usage immediately after compaction without stale kept usage", () => {
+	it("estimates current context usage immediately after compaction without stale kept usage", async () => {
 		const { session, sessionManager } = createSession();
 
 		try {

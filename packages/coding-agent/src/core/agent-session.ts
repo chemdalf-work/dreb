@@ -4070,7 +4070,7 @@ export class AgentSession {
 				return { cancelled: true };
 			}
 			if (this._disposalStarted) {
-				return { selectedText, cancelled: true };
+				return { cancelled: true };
 			}
 			skipConversationRestore = result?.skipConversationRestore ?? false;
 		}
@@ -4092,7 +4092,7 @@ export class AgentSession {
 			});
 		}
 		if (this._disposalStarted) {
-			return { selectedText, cancelled: true };
+			return { cancelled: true };
 		}
 
 		// Emit session event to custom tools (with reason "fork")

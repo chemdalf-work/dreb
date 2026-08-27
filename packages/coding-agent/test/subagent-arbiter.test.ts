@@ -1131,7 +1131,6 @@ describe("pre-spawn subagent arbitration", () => {
 			});
 			expect(tool.description).toContain(`max ${expectedLimit} concurrent`);
 
-
 			await tool.execute(
 				"call",
 				{

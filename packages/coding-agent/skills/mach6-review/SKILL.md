@@ -30,6 +30,8 @@ argument-hint: "<pr-number> [code|errors|tests|completeness|simplify]"
 6. Never invoke `ctx_*` directly, arbitrary MCP methods, or a generic MCP client in core.
 7. RTK is rejected due to fidelity, exit-code, and actionable-diagnostic failures.
 
+**Review-stage limit:** each reviewer may receive at most one bounded `context_mode` packet; every reviewer must verify its material claims against source or tests before reporting a finding.
+
 ## Required child handoff
 
 When launching a child, repeat the routing boundary above and provide the exact task, a bounded file set or claim set, required direct verification, validation commands, and completion criteria. The child must use no direct `ctx_*` calls, arbitrary MCP methods, or a generic MCP client in core.

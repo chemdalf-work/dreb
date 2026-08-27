@@ -32,6 +32,8 @@ This skill has two modes:
 6. Never invoke `ctx_*` directly, arbitrary MCP methods, or a generic MCP client in core.
 7. RTK is rejected due to fidelity, exit-code, and actionable-diagnostic failures.
 
+**Implement-stage limit:** execute tests and builds natively; use `context_mode` only to analyze unusually large failure output, then verify every proposed fix with direct source and native reruns.
+
 ## Required child handoff
 
 When launching a child, repeat the routing boundary above and provide the exact task, a bounded file set or claim set, required direct verification, validation commands, and completion criteria. The child must use no direct `ctx_*` calls, arbitrary MCP methods, or a generic MCP client in core.

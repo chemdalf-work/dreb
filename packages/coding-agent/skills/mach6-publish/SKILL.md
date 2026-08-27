@@ -29,6 +29,8 @@ argument-hint: "<pr-number>"
 6. Never invoke `ctx_*` directly, arbitrary MCP methods, or a generic MCP client in core.
 7. RTK is rejected due to fidelity, exit-code, and actionable-diagnostic failures.
 
+**Publish-stage limit:** keep all Git, CI, version, merge, tag, and release evidence native and ordered; do not use `context_mode` in publish steps.
+
 ## Step 1: Set up task tracking
 
 ```
