@@ -184,6 +184,16 @@ describe("DispatchArbiter", () => {
 		const [calledModel, context, options] = complete.mock.calls[0];
 		expect(calledModel).toBe(arbiterModel);
 		expect(context.tools).toBeUndefined();
+		expect(context.systemPrompt).toContain("Prioritize role fit");
+		expect(context.systemPrompt).toContain("Apply coding risk before price");
+		expect(context.systemPrompt).toContain(
+			"for low risk prefer a lean role and the least expensive adequate candidate",
+		);
+		expect(context.systemPrompt).toContain(
+			"for high risk preserve the stronger quality/capability choice and never downgrade merely to save cost",
+		);
+		expect(context.systemPrompt).toContain("pricingPerMillionTokens null means unknown, not free");
+		expect(context.systemPrompt).toContain("Cost optimization is advisory, not a hard budget");
 		expect(context.messages[0].content).toContain("Inspected source files");
 		expect(context.messages[0].content).toContain("Tool read completed: TOOL_OUTPUT_START_");
 		expect(context.messages[0].content).toContain("...[truncated]");
