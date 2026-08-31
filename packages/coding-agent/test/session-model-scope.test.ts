@@ -66,7 +66,7 @@ describe("session resume model scoping", () => {
 			expect(session.model?.provider).toBe(stored.provider);
 			expect(session.model?.id).toBe(stored.id);
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
@@ -76,7 +76,7 @@ describe("session resume model scoping", () => {
 			expect(session.model?.provider).toBe(stored.provider);
 			expect(session.model?.id).toBe(stored.id);
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
@@ -99,7 +99,7 @@ describe("session resume model scoping", () => {
 			expect(result.session.model?.provider).toBe(scoped.provider);
 			expect(result.session.model?.id).toBe(scoped.id);
 		} finally {
-			result.session.dispose();
+			await result.session.dispose();
 		}
 	});
 });

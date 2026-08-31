@@ -119,8 +119,8 @@ describe("AgentSession K3 auto context tier", () => {
 		});
 	});
 
-	afterEach(() => {
-		session.dispose();
+	afterEach(async () => {
+		await session.dispose();
 		vi.useRealTimers();
 		vi.restoreAllMocks();
 		if (tempDir && existsSync(tempDir)) {

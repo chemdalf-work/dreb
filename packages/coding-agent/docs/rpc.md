@@ -314,7 +314,7 @@ Response:
 
 #### get_daily_cost
 
-Get the same-day aggregate cost across all session files. The RPC process scans once on first call so the first response is current, then returns the cached value (refreshed periodically by the tracker).
+Get the same-local-day aggregate cost across all main and descendant subagent session files. Child chains are grouped without double counting. The RPC process scans once on first call so the first response is current, then returns the cached value (refreshed periodically by the tracker).
 
 ```json
 {"type": "get_daily_cost"}
@@ -1994,7 +1994,7 @@ Lifecycle, pre-spawn routing, and live-observability events for background subag
 }
 ```
 
-When the global Dispatch Arbiter is enabled, `subagent_arbitration` fires after the requested route is made concrete and before child spawn/events. It appears for changed and unchanged successful decisions, and for failures that prevent spawn. Chain records include `step`; failures have `final: null` and bounded host-generated `errorCode`/`errorMessage`.
+When the global Dispatch Arbiter is enabled, `subagent_arbitration` fires after the requested route is made concrete and before child spawn/events. It appears for changed and unchanged successful decisions, and for failures that prevent spawn. `locked` lists explicit per-invocation route fields that cannot be changed. `codingRisk` contains the deterministic host-generated `low`, `medium`, or `high` classification and fixed signal labels used by the cost-aware policy. Chain records include `step`; failures have `final: null` and bounded host-generated `errorCode`/`errorMessage`.
 
 ```json
 {
@@ -2002,8 +2002,10 @@ When the global Dispatch Arbiter is enabled, `subagent_arbitration` fires after 
   "agentId": "a1b2c3d4e5f6",
   "status": "success",
   "proposed": {"agent": "Explore", "model": "provider/frontier", "thinking": "high"},
-  "final": {"agent": "feature-dev", "model": "provider/worker", "thinking": "medium"},
-  "changed": ["agent", "model", "thinking"]
+  "final": {"agent": "Explore", "model": "provider/worker", "thinking": "medium"},
+  "changed": ["model", "thinking"],
+  "locked": ["agent"],
+  "codingRisk": {"level": "low", "signals": ["bounded-research"]}
 }
 ```
 

@@ -2413,11 +2413,7 @@ export async function runRpcMode(session: AgentSession, modelFallbackMessage?: s
 
 	async function shutdown(): Promise<never> {
 		cancelPendingRpcExtensionRequests(pendingExtensionRequests);
-
-		const currentRunner = session.extensionRunner;
-		if (currentRunner?.hasHandlers("session_shutdown")) {
-			await currentRunner.emit({ type: "session_shutdown" });
-		}
+		await session.dispose();
 
 		dailyCostTracker?.dispose();
 		detachInput();
@@ -2475,10 +2471,11 @@ export async function runRpcMode(session: AgentSession, modelFallbackMessage?: s
 	const onInputEnd = () => {
 		void shutdown();
 	};
-	process.stdin.on("end", onInputEnd);
-	process.stdin.on("error", () => {
+	const onInputError = () => {
 		void shutdown();
-	});
+	};
+	process.stdin.on("end", onInputEnd);
+	process.stdin.on("error", onInputError);
 
 	detachInput = (() => {
 		const detachJsonl = attachJsonlLineReader(process.stdin, (line) => {
@@ -2487,6 +2484,7 @@ export async function runRpcMode(session: AgentSession, modelFallbackMessage?: s
 		return () => {
 			detachJsonl();
 			process.stdin.off("end", onInputEnd);
+			process.stdin.off("error", onInputError);
 		};
 	})();
 

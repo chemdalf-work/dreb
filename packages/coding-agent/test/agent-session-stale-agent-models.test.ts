@@ -49,7 +49,7 @@ function createSessionWithSettings(settingsManager: SettingsManager) {
 }
 
 describe("warnStaleAgentModelKeys", () => {
-	it("warns when a configured agent key does not match any discovered agent", () => {
+	it("warns when a configured agent key does not match any discovered agent", async () => {
 		const settingsManager = SettingsManager.inMemory();
 		settingsManager.setAgentModelsForAgent("NoSuchAgent", ["anthropic/sonnet"]);
 
@@ -67,11 +67,11 @@ describe("warnStaleAgentModelKeys", () => {
 
 			warnSpy.mockRestore();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("does not warn for a valid discovered agent key (case-sensitive match)", () => {
+	it("does not warn for a valid discovered agent key (case-sensitive match)", async () => {
 		// "Explore" is a package-bundled agent — discoverAgentTypes keys it with
 		// exactly this casing, which is the same lookup getAgentModelsForAgent uses.
 		const discovered = discoverAgentTypes(process.cwd());
@@ -90,11 +90,11 @@ describe("warnStaleAgentModelKeys", () => {
 
 			warnSpy.mockRestore();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("flags a key with wrong casing as stale (case-sensitive)", () => {
+	it("flags a key with wrong casing as stale (case-sensitive)", async () => {
 		// "explore" (lowercase) is NOT how discoverAgentTypes keys the agent, so
 		// it would be silently ignored at resolution and must be flagged.
 		const discovered = discoverAgentTypes(process.cwd());
@@ -114,11 +114,11 @@ describe("warnStaleAgentModelKeys", () => {
 
 			warnSpy.mockRestore();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("lists multiple stale keys together", () => {
+	it("lists multiple stale keys together", async () => {
 		const settingsManager = SettingsManager.inMemory();
 		settingsManager.setAgentModelsForAgent("OldName", ["anthropic/sonnet"]);
 		settingsManager.setAgentModelsForAgent("AnotherGone", ["anthropic/sonnet"]);
@@ -136,11 +136,11 @@ describe("warnStaleAgentModelKeys", () => {
 
 			warnSpy.mockRestore();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
-	it("does not warn when no agentModels are configured", () => {
+	it("does not warn when no agentModels are configured", async () => {
 		const settingsManager = SettingsManager.inMemory();
 
 		const session = createSessionWithSettings(settingsManager);
@@ -153,7 +153,7 @@ describe("warnStaleAgentModelKeys", () => {
 
 			warnSpy.mockRestore();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 });

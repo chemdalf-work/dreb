@@ -1,6 +1,7 @@
 import type { AssistantMessage, ImageContent } from "@dreb/ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { log } from "../src/core/logger.js";
+import * as outputGuard from "../src/core/output-guard.js";
 import { runPrintMode } from "../src/modes/print-mode.js";
 
 type EmitEvent = { type: string };
@@ -23,6 +24,7 @@ type FakeSession = {
 	navigateTree: ReturnType<typeof vi.fn>;
 	switchSession: ReturnType<typeof vi.fn>;
 	reload: ReturnType<typeof vi.fn>;
+	dispose: ReturnType<typeof vi.fn>;
 };
 
 function createAssistantMessage(options?: {
@@ -71,6 +73,7 @@ function createSession(assistantMessage: AssistantMessage): FakeSession {
 		navigateTree: vi.fn(async () => ({ cancelled: false })),
 		switchSession: vi.fn(async () => true),
 		reload: vi.fn(async () => {}),
+		dispose: vi.fn(async () => {}),
 	};
 }
 
@@ -79,7 +82,7 @@ afterEach(() => {
 });
 
 describe("runPrintMode", () => {
-	it("emits session_shutdown in text mode", async () => {
+	it("disposes the session in text mode", async () => {
 		const session = createSession(createAssistantMessage({ text: "done" }));
 		const images: ImageContent[] = [{ type: "image", mimeType: "image/png", data: "abc" }];
 
@@ -91,11 +94,10 @@ describe("runPrintMode", () => {
 
 		expect(exitCode).toBe(0);
 		expect(session.prompt).toHaveBeenCalledWith("Say done", { images });
-		expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
-		expect(session.extensionRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown" });
+		expect(session.dispose).toHaveBeenCalledTimes(1);
 	});
 
-	it("emits session_shutdown in json mode", async () => {
+	it("disposes the session in json mode", async () => {
 		const session = createSession(createAssistantMessage({ text: "done" }));
 
 		const exitCode = await runPrintMode(session as unknown as Parameters<typeof runPrintMode>[0], {
@@ -105,11 +107,10 @@ describe("runPrintMode", () => {
 
 		expect(exitCode).toBe(0);
 		expect(session.prompt).toHaveBeenCalledWith("hello");
-		expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
-		expect(session.extensionRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown" });
+		expect(session.dispose).toHaveBeenCalledTimes(1);
 	});
 
-	it("emits session_shutdown and returns non-zero on assistant error", async () => {
+	it("disposes the session and returns non-zero on assistant error", async () => {
 		const session = createSession(createAssistantMessage({ stopReason: "error", errorMessage: "provider failure" }));
 		const errorSpy = vi.spyOn(log, "error").mockImplementation(() => {});
 
@@ -119,7 +120,33 @@ describe("runPrintMode", () => {
 
 		expect(exitCode).toBe(1);
 		expect(errorSpy).toHaveBeenCalledWith("provider failure");
-		expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
-		expect(session.extensionRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown" });
+		expect(session.dispose).toHaveBeenCalledTimes(1);
+	});
+
+	it("waits for JSON-mode disposal before flushing stdout or returning", async () => {
+		const session = createSession(createAssistantMessage({ text: "done" }));
+		let finishDispose: () => void;
+		const disposed = new Promise<void>((resolve) => {
+			finishDispose = resolve;
+		});
+		session.dispose.mockImplementation(() => disposed);
+		const flush = vi.spyOn(outputGuard, "flushRawStdout").mockResolvedValue(undefined);
+		let settled = false;
+
+		const running = runPrintMode(session as unknown as Parameters<typeof runPrintMode>[0], {
+			mode: "json",
+			messages: ["hello"],
+		}).then((exitCode) => {
+			settled = true;
+			return exitCode;
+		});
+
+		await vi.waitFor(() => expect(session.dispose).toHaveBeenCalledOnce());
+		expect(flush).not.toHaveBeenCalled();
+		expect(settled).toBe(false);
+
+		finishDispose!();
+		await expect(running).resolves.toBe(0);
+		expect(flush).toHaveBeenCalledOnce();
 	});
 });

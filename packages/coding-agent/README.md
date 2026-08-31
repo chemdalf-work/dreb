@@ -4,7 +4,7 @@ Claude Code is a great product. dreb isn't trying to compete on features — it'
 
 Concretely, dreb ships *without* things Claude Code has — and that's intentional:
 
-- **No MCP.** Build CLI tools with READMEs (see [Skills](#skills)), or build an extension that adds MCP support.
+- **No generic MCP client in the core.** Build CLI tools with READMEs (see [Skills](#skills)), or build an extension that adds MCP support.
 - **No permission popups.** Run in a container, or build your own confirmation flow with [extensions](#extensions).
 - **No plan mode.** Write plans to files, or build it with extensions, or install a package.
 - **No background bash in the main agent.** The main agent runs commands synchronously. Role-matched parallel work can use the optional `subagent` tool — each subagent runs as an independent process with its own tools.
@@ -142,7 +142,7 @@ The interface from top to bottom:
 - **Startup header** - Shows shortcuts (`/hotkeys` for all), loaded AGENTS.md files, prompt templates, skills, and extensions
 - **Messages** - Your messages, assistant responses, tool calls and results, notifications, errors, and extension UI
 - **Editor** - Where you type; border color indicates thinking level
-- **Footer** - Working directory, session name, total token/cache usage, cost, context usage, current model, and rolling tokens-per-second (median TPS with long-term delta)
+- **Footer** - Working directory, session name, main token/cache usage, explicit main/descendant/today costs, an always-expanded hierarchical per-child usage breakdown, context usage, current model, and rolling tokens-per-second (median TPS with long-term delta)
 
 The editor can be temporarily replaced by other UI, like built-in `/settings` or custom UI from extensions (e.g., a Q&A tool that lets the user answer model questions in a structured format). [Extensions](#extensions) can also replace the editor, add widgets above/below it, a status line, custom footer, or overlays.
 
@@ -411,11 +411,11 @@ Set `backgroundAgents.maxConcurrentSubagents` in `/settings`, dashboard Settings
 
 **Per-agent model overrides:** The model used by each agent type can be overridden via the `agentModels.models` setting (a map of agent name → ordered fallback list) without copying or editing the agent definition `.md` files. Configure it in `settings.json` or via `/settings` → **Agent Models**. Resolution order: per-invocation `model` override → `agentModels` setting → agent definition `model` → parent session model. See [docs/agent-models.md](docs/agent-models.md).
 
-**Optional Dispatch Arbiter:** A global-only `subagentArbiter` setting can enable a fully headless, direct model call after the proposal above resolves but before each child process spawns. It uses the validated routing guide, live explicit model scope, and bounded title-setter-style parent activity including useful tool outputs; existing secret scrubbing applies before inference. It may change only the existing agent type, exact scoped provider/model, and supported thinking level. It has no tools, cannot rewrite the task/cwd or agent definitions, and fails closed on configuration, guide, scope, inference, output, or validation errors. It runs once per single/parallel child and after `{previous}` substitution for every chain step. Interactive `/settings` and dashboard Settings both expose enable/disable, exact model selection, thinking, guide path, and loud readiness/validation feedback. Safe typed changed/unchanged/failure records are persisted outside parent model context and relayed to the TUI, JSON/RPC, and dashboard. See [Dispatch Arbiter](docs/agent-models.md#dispatch-arbiter) and [settings](docs/settings.md#dispatch-arbiter).
+**Optional Dispatch Arbiter:** A global-only `subagentArbiter` setting can enable a fully headless, direct model call after the proposal above resolves but before each child process spawns. It uses the validated routing guide, live explicit model scope, bounded title-setter-style parent activity including useful tool outputs, deterministic host-side coding-risk classification, derived lean/full tool profiles, and candidate price/capability metadata; existing secret scrubbing applies before inference. It may change only non-explicit agent, exact scoped provider/model, and supported thinking fields: per-call values are locked and host-enforced. Low-risk work favors the least expensive adequate lean route, while high-risk work keeps capability and quality ahead of price. Zero-only pricing is treated as unknown, and this is soft optimization rather than a hard spending cap. The arbiter has no tools, cannot rewrite the task/cwd or agent definitions, and fails closed on configuration, guide, scope, inference, output, or validation errors. It runs once per single/parallel child and after `{previous}` substitution for every chain step. Interactive `/settings` and dashboard Settings both expose enable/disable, exact model selection, thinking, guide path, and loud readiness/validation feedback. Safe typed changed/unchanged/failure records are persisted outside parent model context and relayed to the TUI, JSON/RPC, and dashboard. See [Dispatch Arbiter](docs/agent-models.md#dispatch-arbiter) and [settings](docs/settings.md#dispatch-arbiter).
 
 **Model identity in system prompt:** The parent session's running model is exposed in its own system prompt as `You are running on: provider/id`. This lets the model make self-aware routing decisions (e.g. delegate vision tasks to a multimodal subagent, or use a differently-architected model as a critic). The line updates automatically on mid-session model switches.
 
-**Session and event metadata:** Each child process records its agent type in the session JSONL header (`agentType` field), providing an audit trail of which agent definition executed the work. Child `agent_start`, subagent results, and `background_agent_end` also expose the canonical resolved `provider/model` and effective thinking level, including defaults used when no override was supplied. Chain completion events expose ordered per-step metadata because steps may use different models or thinking levels. Enabled arbiter attempts add a separate `subagent_arbitration` event with proposed/final routes, changed fields, status, optional chain step, and safe host error metadata; raw prompts, responses, and reasoning are never included.
+**Session and event metadata:** Each child process records its agent type in the session JSONL header (`agentType` field), providing an audit trail of which agent definition executed the work. Child `agent_start`, subagent results, and `background_agent_end` also expose the canonical resolved `provider/model` and effective thinking level, including defaults used when no override was supplied. Chain completion events expose ordered per-step metadata because steps may use different models or thinking levels. Enabled arbiter attempts add a separate `subagent_arbitration` event with proposed/final routes, changed and locked fields, coding-risk assessment, status, optional chain step, and safe host error metadata; raw prompts, responses, and reasoning are never included.
 
 **Background-agent guardrail:** Background subagents run asynchronously and return control to you while they work. To stop the parent agent from spinning ahead of results, a guardrail pauses it after `backgroundAgents.parentTurnLimit` turns (default 3) while subagents are still running. When this happens, dreb surfaces a friendly, non-error notification in the TUI and Telegram — explaining that background agents are still working and the parent paused intentionally, and that it resumes when they report back or when you send a message to steer it. This is a frontend/session event, not a model-context steer, so it can't go stale. Set `backgroundAgents.parentTurnGuardrail` to `false` to let the parent run unbounded while subagents work, or raise `parentTurnLimit` to relax the guardrail. See [settings](docs/settings.md#background-agents).
 
@@ -529,6 +529,18 @@ Bundle and share extensions, skills, prompts, and themes via npm or git.
 
 > **Note:** Third-party packages can include extensions (arbitrary code) and skills (model instructions). Skim what you're installing, same as any other dependency.
 
+### Optional context-efficient analysis
+
+[`dreb-context-mode`](https://github.com/chemdalf-work/dreb-context-mode) is a separately maintained extension package, not a generic MCP client in dreb's core. Install it once:
+
+```bash
+dreb install git:github.com/chemdalf-work/dreb-context-mode
+```
+
+Later main sessions and subagents discover it automatically; no repeated skill invocation or direct `ctx_*` call is required. Its `context_mode` guidance is advisory rather than universal deterministic interception: start discovery with `search`, keep small or exact evidence native, use derived large analysis only where appropriate, and directly verify material claims. Failure produces a bounded visible diagnostic followed by native continuation, never a silent fallback or partial protocol success.
+
+The package is external code and not an OS sandbox. Its process has the dreb user's filesystem, network, executable, and other OS privileges. Indexed data persists only in package-owned dreb local storage; consult the [package documentation](https://github.com/chemdalf-work/dreb-context-mode) for project isolation, retention, removal, and abandoned-directory pruning. RTK is not integrated because its fidelity, exit-code, and actionable-diagnostic failures make automatic interception unsafe.
+
 ```bash
 dreb install npm:@foo/my-tools
 dreb install npm:@foo/my-tools@1.2.3      # pinned version
@@ -584,7 +596,10 @@ const { session } = await createAgentSession({
 });
 
 await session.prompt("What files are in the current directory?");
+await session.dispose();
 ```
+
+Always `await session.dispose()` when an SDK session is no longer needed. It awaits extension shutdown handlers before releasing session resources, then rejects if any handler failed.
 
 See [docs/sdk.md](docs/sdk.md) and [examples/sdk/](examples/sdk/).
 

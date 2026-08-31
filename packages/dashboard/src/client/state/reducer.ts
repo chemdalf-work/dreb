@@ -868,6 +868,8 @@ export function applySessionEvent(state: SessionViewState, event: any): void {
 					proposed: event.proposed as SubagentArbitrationDto["proposed"],
 					final: (event.final as SubagentArbitrationDto["final"]) ?? null,
 					changed: (event.changed as SubagentArbitrationDto["changed"]) ?? [],
+					locked: event.locked as SubagentArbitrationDto["locked"],
+					codingRisk: event.codingRisk as SubagentArbitrationDto["codingRisk"],
 					step: event.step as number | undefined,
 					errorCode: event.errorCode as string | undefined,
 					errorMessage: event.errorMessage as string | undefined,

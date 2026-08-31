@@ -15,6 +15,7 @@ import { buildInitialMessage } from "./cli/initial-message.js";
 import { listModels } from "./cli/list-models.js";
 import { selectSession } from "./cli/session-picker.js";
 import { APP_NAME, getAgentDir, getModelsPath, loadProvidersEnv, VERSION } from "./config.js";
+import type { AgentSession } from "./core/agent-session.js";
 import { AuthStorage } from "./core/auth-storage.js";
 import { exportFromFile } from "./core/export-html/index.js";
 import type { LoadExtensionsResult } from "./core/extensions/index.js";
@@ -70,6 +71,117 @@ function reportSettingsErrors(settingsManager: SettingsManager, context: string)
 function isTruthyEnvFlag(value: string | undefined): boolean {
 	if (!value) return false;
 	return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
+}
+
+type ShutdownSignal = "SIGINT" | "SIGTERM";
+
+/** Maximum time that CLI signal handling may wait for graceful session cleanup. */
+export const SIGNAL_CLEANUP_TIMEOUT_MS = 5_000;
+
+type SessionSignalCleanupOptions = {
+	afterDispose?: () => void | Promise<void>;
+	exit?: (code: number) => void;
+	/** Used by the installed signal handlers to suppress a stale first-signal exit. */
+	shouldExit?: () => boolean;
+};
+
+function signalExitCode(signal: ShutdownSignal): number {
+	return signal === "SIGINT" ? 130 : 143;
+}
+
+export function createSessionSignalCleanup(
+	session: Pick<AgentSession, "dispose">,
+	{ afterDispose, exit = process.exit, shouldExit = () => true }: SessionSignalCleanupOptions = {},
+): (signal: ShutdownSignal) => Promise<void> {
+	let cleanupPromise: Promise<void> | undefined;
+	let afterDisposePromise: Promise<void> | undefined;
+
+	const runAfterDispose = (signal: ShutdownSignal): Promise<void> => {
+		afterDisposePromise ??= (() => {
+			try {
+				return Promise.resolve(afterDispose?.()).catch((error) => {
+					const message = error instanceof Error ? error.message : String(error);
+					log.error(`Failed to finish cleanup after ${signal}: ${message}`);
+				});
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				log.error(`Failed to finish cleanup after ${signal}: ${message}`);
+				return Promise.resolve();
+			}
+		})();
+		return afterDisposePromise;
+	};
+
+	return (signal) => {
+		cleanupPromise ??= (async () => {
+			let timeout: ReturnType<typeof setTimeout> | undefined;
+			const disposal = (async () => {
+				try {
+					await session.dispose();
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					log.error(`Failed to dispose session after ${signal}: ${message}`);
+				}
+			})();
+			const cleanupWork = disposal.then(() => runAfterDispose(signal));
+			const completedBeforeDeadline = await Promise.race([
+				cleanupWork.then(() => true),
+				new Promise<false>((resolve) => {
+					timeout = setTimeout(() => resolve(false), SIGNAL_CLEANUP_TIMEOUT_MS);
+				}),
+			]);
+			if (timeout) clearTimeout(timeout);
+
+			if (!completedBeforeDeadline) {
+				log.error(
+					`Timed out after ${SIGNAL_CLEANUP_TIMEOUT_MS}ms waiting for graceful cleanup after ${signal}; restoring the frontend before exit.`,
+				);
+				// Invoke restoration before exiting, but do not let another stuck cleanup block signal exit.
+				void runAfterDispose(signal);
+				if (shouldExit()) exit(signalExitCode(signal));
+				return;
+			}
+
+			await runAfterDispose(signal);
+			if (shouldExit()) exit(signalExitCode(signal));
+		})();
+		return cleanupPromise;
+	};
+}
+
+export function installSessionSignalCleanup(
+	session: Pick<AgentSession, "dispose">,
+	options: SessionSignalCleanupOptions = {},
+): () => void {
+	let signalReceived = false;
+	let superseded = false;
+	const cleanup = createSessionSignalCleanup(session, {
+		...options,
+		shouldExit: () => !superseded && (options.shouldExit?.() ?? true),
+	});
+	let removed = false;
+	const remove = () => {
+		if (removed) return;
+		removed = true;
+		process.off("SIGINT", onSigint);
+		process.off("SIGTERM", onSigterm);
+	};
+	const onSignal = (signal: ShutdownSignal) => {
+		if (signalReceived) {
+			superseded = true;
+			remove();
+			(options.exit ?? process.exit)(signalExitCode(signal));
+			return;
+		}
+		signalReceived = true;
+		void cleanup(signal).finally(remove);
+	};
+	const onSigint = () => onSignal("SIGINT");
+	const onSigterm = () => onSignal("SIGTERM");
+
+	process.on("SIGINT", onSigint);
+	process.on("SIGTERM", onSigterm);
+	return remove;
 }
 
 type PackageCommand = "install" | "remove" | "update" | "list";
@@ -927,6 +1039,8 @@ export async function main(args: string[]) {
 		log.error(chalk.yellow("\nSet an API key environment variable:"));
 		log.error("  ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, etc.");
 		log.error(chalk.yellow(`\nOr create ${getModelsPath()}`));
+		await session.dispose();
+		stopThemeWatcher();
 		process.exit(1);
 	}
 
@@ -955,8 +1069,16 @@ export async function main(args: string[]) {
 	}
 
 	if (mode === "rpc") {
+		const removeSignalCleanup = installSessionSignalCleanup(session);
 		printTimings();
-		await runRpcMode(session, modelFallbackMessage);
+		try {
+			await runRpcMode(session, modelFallbackMessage);
+		} catch (error) {
+			await session.dispose();
+			throw error;
+		} finally {
+			removeSignalCleanup();
+		}
 	} else if (isInteractive) {
 		if (scopedModels.length > 0 && (parsed.verbose || !settingsManager.getQuietStartup())) {
 			const modelList = scopedModels
@@ -976,35 +1098,80 @@ export async function main(args: string[]) {
 			initialMessages: parsed.messages,
 			verbose: parsed.verbose,
 		});
+		let frontendCleanup: Promise<void> | undefined;
+		const cleanupInteractiveFrontend = (): Promise<void> => {
+			frontendCleanup ??= Promise.resolve().then(() => {
+				try {
+					interactiveMode.stop();
+				} finally {
+					stopThemeWatcher();
+				}
+			});
+			return frontendCleanup;
+		};
+		let interactiveCleanup: Promise<void> | undefined;
+		const disposeInteractive = (): Promise<void> => {
+			interactiveCleanup ??= (async () => {
+				try {
+					await session.dispose();
+				} finally {
+					await cleanupInteractiveFrontend();
+				}
+			})();
+			return interactiveCleanup;
+		};
+		const removeSignalCleanup = installSessionSignalCleanup(session, {
+			afterDispose: cleanupInteractiveFrontend,
+		});
+
 		if (startupBenchmark) {
-			await interactiveMode.init();
-			time("interactiveMode.init");
-			printTimings();
-			interactiveMode.stop();
-			stopThemeWatcher();
-			if (process.stdout.writableLength > 0) {
-				await new Promise<void>((resolve) => process.stdout.once("drain", resolve));
-			}
-			if (process.stderr.writableLength > 0) {
-				await new Promise<void>((resolve) => process.stderr.once("drain", resolve));
+			try {
+				await interactiveMode.init();
+				time("interactiveMode.init");
+				printTimings();
+			} finally {
+				try {
+					await disposeInteractive();
+				} finally {
+					removeSignalCleanup();
+				}
+				if (process.stdout.writableLength > 0) {
+					await new Promise<void>((resolve) => process.stdout.once("drain", resolve));
+				}
+				if (process.stderr.writableLength > 0) {
+					await new Promise<void>((resolve) => process.stderr.once("drain", resolve));
+				}
 			}
 			return;
 		}
 
 		printTimings();
-		await interactiveMode.run();
+		try {
+			await interactiveMode.run();
+		} finally {
+			try {
+				await disposeInteractive();
+			} finally {
+				removeSignalCleanup();
+			}
+		}
 	} else {
+		const removeSignalCleanup = installSessionSignalCleanup(session);
 		printTimings();
-		const exitCode = await runPrintMode(session, {
-			mode,
-			messages: parsed.messages,
-			initialMessage,
-			initialImages,
-		});
-		stopThemeWatcher();
-		restoreStdout();
-		if (exitCode !== 0) {
-			process.exitCode = exitCode;
+		try {
+			const exitCode = await runPrintMode(session, {
+				mode,
+				messages: parsed.messages,
+				initialMessage,
+				initialImages,
+			});
+			stopThemeWatcher();
+			restoreStdout();
+			if (exitCode !== 0) {
+				process.exitCode = exitCode;
+			}
+		} finally {
+			removeSignalCleanup();
 		}
 		return;
 	}

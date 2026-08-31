@@ -165,7 +165,7 @@ beforeEach(() => {
 	);
 });
 
-afterEach(() => {
+afterEach(async () => {
 	rmSync(tempCwd, { recursive: true, force: true });
 	vi.restoreAllMocks();
 });
@@ -185,6 +185,12 @@ describe("subagent thinking schema", () => {
 		expect(Value.Check(subagentToolDefinition.parameters, { tasks: [{ task: "work", thinking: "extreme" }] })).toBe(
 			false,
 		);
+	});
+
+	test("rejects empty explicit agent names in every mode", () => {
+		expect(Value.Check(subagentToolDefinition.parameters, { task: "single", agent: "" })).toBe(false);
+		expect(Value.Check(subagentToolDefinition.parameters, { tasks: [{ task: "parallel", agent: "" }] })).toBe(false);
+		expect(Value.Check(subagentToolDefinition.parameters, { chain: [{ task: "chain", agent: "" }] })).toBe(false);
 	});
 });
 
@@ -493,7 +499,7 @@ describe("parallel and chain inheritance", () => {
 				thinking: "low",
 			});
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
@@ -555,7 +561,7 @@ describe("parallel and chain inheritance", () => {
 				],
 			});
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 

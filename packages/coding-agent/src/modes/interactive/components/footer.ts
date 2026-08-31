@@ -111,17 +111,12 @@ export class FooterComponent implements Component {
 		if (totalCacheRead) tokenParts.push(`R${formatTokens(totalCacheRead)}`);
 		if (totalCacheWrite) tokenParts.push(`W${formatTokens(totalCacheWrite)}`);
 
-		// Show cost with "(sub)" indicator if using OAuth subscription
-		let costStr = "";
+		// Keep main, descendant, and all-session daily spend explicit at all times.
+		const sessionFile = this.session.sessionManager.getSessionFile();
+		const childSummary = this.footerData.getSessionCostSummary(sessionFile);
 		const usingSubscription = state.model ? this.session.modelRegistry.isUsingOAuth(state.model) : false;
-		if (totalCost || usingSubscription) {
-			costStr = `$${totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
-			// Append daily total when there's cross-session spend
-			const dailyCost = this.footerData.getDailyCost();
-			if (dailyCost > totalCost) {
-				costStr += `, today: $${dailyCost.toFixed(2)}`;
-			}
-		}
+		const subscriptionIndicator = usingSubscription ? " (sub)" : "";
+		const costStr = `main $${totalCost.toFixed(3)}${subscriptionIndicator} · children $${childSummary.children.cost.toFixed(3)} · today $${this.footerData.getDailyCost().toFixed(2)}`;
 
 		// Colorize context percentage based on usage
 		let contextPercentStr: string;
@@ -141,7 +136,6 @@ export class FooterComponent implements Component {
 		// Join sections with · separator
 		const sections: string[] = [];
 		if (tokenParts.length > 0) sections.push(tokenParts.join(" "));
-		if (costStr) sections.push(costStr);
 		sections.push(contextPercentStr);
 
 		let statsLeft = sections.join(" · ");
@@ -232,7 +226,26 @@ export class FooterComponent implements Component {
 		const dimRemainder = theme.fg("dim", remainder);
 
 		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
-		const lines = [pwdLine, dimStatsLeft + dimRemainder];
+		const costLine = truncateToWidth(theme.fg("dim", costStr), width, theme.fg("dim", "..."));
+		const lines = [pwdLine, dimStatsLeft + dimRemainder, costLine];
+
+		// Descendants stay expanded in the footer, including completed children recovered from disk.
+		for (const child of childSummary.childSessions) {
+			const tokenUsage = [
+				child.input ? `↑${formatTokens(child.input)}` : "",
+				child.output ? `↓${formatTokens(child.output)}` : "",
+				child.cacheRead ? `R${formatTokens(child.cacheRead)}` : "",
+				child.cacheWrite ? `W${formatTokens(child.cacheWrite)}` : "",
+			]
+				.filter(Boolean)
+				.join(" ");
+			const identity = child.agentTypes.join("→") || "agent";
+			const model = child.provider && child.model ? ` ${child.provider}/${child.model}` : "";
+			const indent = "  ".repeat(Math.max(0, child.depth - 1));
+			const usage = tokenUsage ? ` ${tokenUsage}` : "";
+			const childLine = `${indent}↳ ${identity} ${child.id.slice(0, 8)}${usage} $${child.cost.toFixed(3)}${model}`;
+			lines.push(truncateToWidth(theme.fg("dim", childLine), width, theme.fg("dim", "...")));
+		}
 
 		// Add extension statuses on a single line, sorted by key alphabetically
 		const extensionStatuses = this.footerData.getExtensionStatuses();

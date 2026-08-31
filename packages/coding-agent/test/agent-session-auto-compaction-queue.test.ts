@@ -90,8 +90,8 @@ describe("AgentSession auto-compaction queue resume", () => {
 		});
 	});
 
-	afterEach(() => {
-		session.dispose();
+	afterEach(async () => {
+		await session.dispose();
 		vi.useRealTimers();
 		vi.restoreAllMocks();
 		if (tempDir && existsSync(tempDir)) {
@@ -542,5 +542,21 @@ describe("AgentSession auto-compaction queue resume", () => {
 
 		// Should NOT compact because the only usage data is from a kept pre-compaction message
 		expect(runAutoCompactionSpy).not.toHaveBeenCalled();
+	});
+
+	it("settles disposal when an auto_compaction_start subscriber throws", async () => {
+		const runAutoCompaction = (
+			session as unknown as {
+				_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<void>;
+			}
+		)._runAutoCompaction.bind(session);
+		session.subscribe((event) => {
+			if (event.type === "auto_compaction_start") {
+				throw new Error("start subscriber failed");
+			}
+		});
+
+		await expect(runAutoCompaction("threshold", false)).resolves.toBeUndefined();
+		await expect(session.dispose()).resolves.toBeUndefined();
 	});
 });

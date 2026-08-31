@@ -69,7 +69,7 @@ function response(value: unknown): AssistantMessage {
 
 const arbiterModel = model("provider", "router");
 const workerModel = model("provider", "worker");
-const cheapModel = model("other", "cheap", false);
+const cheapModel = { ...model("other", "cheap", false), cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
 const allModels = [arbiterModel, workerModel, cheapModel];
 
 let tempDir: string;
@@ -82,12 +82,21 @@ const request: DispatchArbitrationRequest = {
 	task: "Implement the feature without changing this task",
 	cwd: "/tmp/project",
 	proposed: { agent: "Explore", model: "provider/worker", thinking: "high" },
+	locked: [],
+	codingRisk: { level: "medium", signals: ["implementation"] },
 	agents: [
-		{ name: "Explore", description: "factual research", tools: ["read", "grep"], modelDefaults: [] },
+		{
+			name: "Explore",
+			description: "factual research",
+			tools: ["read", "grep"],
+			profile: "lean",
+			modelDefaults: [],
+		},
 		{
 			name: "feature-dev",
 			description: "implementation",
 			tools: ["read", "edit", "write"],
+			profile: "full",
 			modelDefaults: ["provider/worker"],
 		},
 	],
@@ -175,13 +184,58 @@ describe("DispatchArbiter", () => {
 		const [calledModel, context, options] = complete.mock.calls[0];
 		expect(calledModel).toBe(arbiterModel);
 		expect(context.tools).toBeUndefined();
+		expect(context.systemPrompt).toContain("Prioritize role fit");
+		expect(context.systemPrompt).toContain("Apply coding risk before price");
+		expect(context.systemPrompt).toContain(
+			"for low risk prefer a lean role and the least expensive adequate candidate",
+		);
+		expect(context.systemPrompt).toContain(
+			"for high risk preserve the stronger quality/capability choice and never downgrade merely to save cost",
+		);
+		expect(context.systemPrompt).toContain("pricingPerMillionTokens null means unknown, not free");
+		expect(context.systemPrompt).toContain("Cost optimization is advisory, not a hard budget");
 		expect(context.messages[0].content).toContain("Inspected source files");
 		expect(context.messages[0].content).toContain("Tool read completed: TOOL_OUTPUT_START_");
 		expect(context.messages[0].content).toContain("...[truncated]");
+		expect(context.messages[0].content).toContain('"codingRisk":{"level":"medium","signals":["implementation"]}');
+		expect(context.messages[0].content).toContain('"profile":"lean"');
+		const arbitrationInput = JSON.parse(String(context.messages[0].content).replace(/^ARBITRATION_INPUT\n/, ""));
+		expect(arbitrationInput.candidateModels).toEqual(
+			expect.arrayContaining([
+				{
+					id: "provider/worker",
+					pricingPerMillionTokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+					contextWindow: 100_000,
+					reasoning: true,
+					input: ["text"],
+				},
+				{
+					id: "other/cheap",
+					pricingPerMillionTokens: null,
+					contextWindow: 100_000,
+					reasoning: false,
+					input: ["text"],
+				},
+			]),
+		);
 		expect(context.messages[0].content).not.toContain("TOOL_OUTPUT_END");
 		expect(context.messages[0].content).not.toContain("sk-123456789012345678901234567890");
 		expect(options.apiKey).toBe("api-key");
 		expect(options.reasoning).toBe("medium");
+	});
+
+	test("sends non-empty route locks through the real arbiter prompt payload", async () => {
+		complete.mockResolvedValue(response({ agent: "Explore", model: "provider/worker", thinking: "high" }));
+
+		const result = await createArbiter().arbitrate({ ...request, locked: ["model"] });
+
+		expect(result).toMatchObject({ enabled: true, ok: true, changed: [] });
+		const context = complete.mock.calls[0][1];
+		expect(context.systemPrompt).toContain(
+			"Fields listed in locked are explicit caller choices. Return their proposed values unchanged.",
+		);
+		const arbitrationInput = JSON.parse(String(context.messages[0].content).replace(/^ARBITRATION_INPUT\n/, ""));
+		expect(arbitrationInput.locked).toEqual(["model"]);
 	});
 
 	test("retries malformed output once without including raw output in the retry", async () => {
@@ -274,6 +328,16 @@ describe("DispatchArbiter", () => {
 		expect(result).toMatchObject({ enabled: true, ok: false, code });
 	});
 
+	test.each([
+		["agent", { agent: "feature-dev", model: "provider/worker", thinking: "high" }],
+		["model", { agent: "Explore", model: "other/cheap", thinking: "off" }],
+		["thinking", { agent: "Explore", model: "provider/worker", thinking: "medium" }],
+	] as const)("rejects changes to explicitly locked %s", async (field, decision) => {
+		complete.mockResolvedValue(response(decision));
+		const result = await createArbiter().arbitrate({ ...request, locked: [field] });
+		expect(result).toMatchObject({ enabled: true, ok: false, code: "locked_route_changed" });
+	});
+
 	test("rejects an oversized aggregate package before provider inference", async () => {
 		const oversizedRequest: DispatchArbitrationRequest = {
 			...request,
@@ -281,6 +345,7 @@ describe("DispatchArbiter", () => {
 				name: `agent-${index}`,
 				description: "x".repeat(1_000),
 				tools: ["read", "grep"],
+				profile: "lean",
 				modelDefaults: ["provider/worker"],
 			})),
 		};

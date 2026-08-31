@@ -2,11 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { ExtensionContext } from "../src/core/extensions/types.js";
 import { createSubagentToolDefinition, getBackgroundAgents } from "../src/core/tools/subagent.js";
 
-/**
- * Tests for background parallel mode — covering skipped-task paths (invalid relative
- * escape cwd) and the acceptance of absolute cwd values.
- */
-describe("subagent background parallel — cwd handling", () => {
+/** Tests single and parallel background cwd overrides. */
+describe("subagent background — cwd handling", () => {
 	const cwd = process.cwd();
 	const dummyCtx = {} as ExtensionContext;
 
@@ -16,6 +13,44 @@ describe("subagent background parallel — cwd handling", () => {
 			onBackgroundComplete: vi.fn(),
 		});
 	}
+
+	it("exposes cwd for single mode", () => {
+		const schema = createTool().parameters as { properties: Record<string, unknown>; required?: string[] };
+
+		expect(schema.properties.cwd).toBeDefined();
+		expect(schema.required ?? []).not.toContain("cwd");
+	});
+
+	it("applies an absolute cwd to a single background task", async () => {
+		const tool = createTool();
+		const before = new Set(getBackgroundAgents().map((agent) => agent.agentId));
+		const result = await tool.execute(
+			"call-single-cwd",
+			{ task: "single task with cwd", cwd: "/tmp" },
+			undefined,
+			undefined,
+			dummyCtx,
+		);
+
+		const launched = getBackgroundAgents().find((agent) => !before.has(agent.agentId));
+		expect(result.details).toEqual({ mode: "single", agentCount: 1 });
+		expect(launched?.cwd).toBe("/tmp");
+	});
+
+	it("rejects a relative cwd that escapes the parent in single mode", async () => {
+		const tool = createTool();
+		const result = await tool.execute(
+			"call-single-escape",
+			{ task: "single task with invalid cwd", cwd: "../escape" },
+			undefined,
+			undefined,
+			dummyCtx,
+		);
+		const text = result.content[0].type === "text" ? result.content[0].text : "";
+
+		expect(text).toContain("resolves outside parent cwd");
+		expect(result.details).toEqual({ mode: "single", agentCount: 0 });
+	});
 
 	it("should accept absolute cwd values and launch tasks", async () => {
 		const tool = createTool();

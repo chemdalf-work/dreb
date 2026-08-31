@@ -48,6 +48,7 @@ function createSession(options: {
 		sessionManager: {
 			getEntries: () => entries,
 			getSessionName: () => options.sessionName,
+			getSessionFile: () => "/tmp/parent.jsonl",
 		},
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
 		modelRegistry: {
@@ -69,12 +70,20 @@ function createSession(options: {
 	return session as unknown as AgentSession;
 }
 
-function createFooterData(providerCount: number, dailyCost = 0): ReadonlyFooterDataProvider {
+function createFooterData(
+	providerCount: number,
+	dailyCost = 0,
+	sessionSummary: ReturnType<ReadonlyFooterDataProvider["getSessionCostSummary"]> = {
+		children: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: 0 },
+		childSessions: [],
+	},
+): ReadonlyFooterDataProvider {
 	const provider = {
 		getGitBranch: () => "main",
 		getExtensionStatuses: () => new Map<string, string>(),
 		getAvailableProviderCount: () => providerCount,
 		getDailyCost: () => dailyCost,
+		getSessionCostSummary: () => sessionSummary,
 		onBranchChange: (callback: () => void) => {
 			void callback;
 			return () => {};
@@ -120,11 +129,11 @@ describe("FooterComponent width handling", () => {
 			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 		}
 		// The stats line should contain the daily cost
-		const rawStats = lines[1];
+		const rawStats = lines[2];
 		expect(rawStats).toContain("today");
 	});
 
-	it("hides daily cost when it equals session cost", () => {
+	it("always labels main, children, and daily cost totals", () => {
 		const width = 80;
 		const session = createSession({
 			sessionName: "",
@@ -136,12 +145,13 @@ describe("FooterComponent width handling", () => {
 				cost: { total: 0.5 },
 			},
 		});
-		// Daily cost == session cost — should not show "today"
 		const footer = new FooterComponent(session, createFooterData(1, 0.5));
 
 		const lines = footer.render(width);
-		const rawStats = lines[1];
-		expect(rawStats).not.toContain("today");
+		const rawStats = lines[2];
+		expect(rawStats).toContain("main $0.500");
+		expect(rawStats).toContain("children $0.000");
+		expect(rawStats).toContain("today $0.50");
 	});
 
 	it("keeps stats line within width for wide model and provider names", () => {
@@ -368,5 +378,63 @@ describe("FooterComponent width handling", () => {
 		const lines = footer.render(width);
 		const statsLine = lines[1];
 		expect(statsLine).not.toContain("tok/s");
+	});
+
+	it("keeps an expanded hierarchical usage line for every child", () => {
+		const width = 120;
+		const session = createSession({
+			sessionName: "test",
+			usage: {
+				input: 1000,
+				output: 500,
+				cacheRead: 0,
+				cacheWrite: 0,
+				cost: { total: 0.5 },
+			},
+		});
+		const footer = new FooterComponent(
+			session,
+			createFooterData(1, 4.25, {
+				children: { input: 3000, output: 750, cacheRead: 2000, cacheWrite: 0, totalTokens: 5750, cost: 3.75 },
+				childSessions: [
+					{
+						id: "child-one-id",
+						agentTypes: ["feature-dev"],
+						provider: "openai",
+						model: "worker",
+						startedAt: 1,
+						depth: 1,
+						sessionFiles: ["/tmp/child-one.jsonl"],
+						input: 2000,
+						output: 500,
+						cacheRead: 2000,
+						cacheWrite: 0,
+						totalTokens: 4500,
+						cost: 2.5,
+					},
+					{
+						id: "grandchild-id",
+						agentTypes: ["test-reviewer"],
+						startedAt: 2,
+						depth: 2,
+						sessionFiles: ["/tmp/grandchild.jsonl"],
+						input: 1000,
+						output: 250,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 1250,
+						cost: 1.25,
+					},
+				],
+			}),
+		);
+
+		const lines = footer.render(width);
+		expect(lines).toHaveLength(5);
+		expect(lines[2]).toContain("children $3.750");
+		expect(lines[3]).toContain("feature-dev child-on");
+		expect(lines[3]).toContain("openai/worker");
+		expect(lines[4]).toContain("test-reviewer grandchi");
+		for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 	});
 });

@@ -123,10 +123,13 @@ interface AgentSession {
   warnInSession(message: string, options?: { informational?: boolean }): void;
   warnResourceDiagnostics(resourceLoader: ResourceLoader): void;
   
-  // Cleanup
-  dispose(): void;
+  // Cleanup. Awaits session_shutdown handlers before releasing resources,
+  // then rejects if any handler failed. Safe to call concurrently or more than once.
+  dispose(): Promise<void>;
 }
 ```
+
+Always close SDK-created sessions with `await session.dispose()` (usually in a `finally` block). This awaits extension `session_shutdown` handlers before agent listeners and other session resources are released, then rejects if any handler failed.
 
 ### Prompting and Message Queueing
 
