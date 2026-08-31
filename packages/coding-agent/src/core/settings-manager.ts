@@ -10,6 +10,7 @@ import { expandPath } from "./tools/path-utils.js";
 
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
+	continueAfterAutoCompaction?: boolean; // default: false
 	reserveTokens?: number; // default: 16384
 	keepRecentTokens?: number; // default: 20000
 }
@@ -165,9 +166,14 @@ export interface Settings {
 
 export interface TabTitleSettings {
 	enabled?: boolean; // default: true — auto-generate terminal tab title from session task
+	/** Exact canonical provider/model used for title generation; absent preserves Explore-agent routing. */
+	model?: string;
 	triggerAfter?: number; // default: 9 — number of tool calls before generating title
 	maxTitleLength?: number; // default: 60 — soft target length hint for generated titles (hard-capped at 300)
 }
+
+/** Partial tab-title update; `model: null` removes the pinned model, restoring Explore-agent routing. */
+export type TabTitleSettingsUpdate = Omit<TabTitleSettings, "model"> & { model?: string | null };
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
 function deepMergeSettings(base: Settings, overrides: Settings): Settings {
@@ -776,6 +782,19 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getContinueAfterAutoCompaction(): boolean {
+		return this.settings.compaction?.continueAfterAutoCompaction ?? false;
+	}
+
+	setContinueAfterAutoCompaction(enabled: boolean): void {
+		if (!this.globalSettings.compaction) {
+			this.globalSettings.compaction = {};
+		}
+		this.globalSettings.compaction.continueAfterAutoCompaction = enabled;
+		this.markModified("compaction", "continueAfterAutoCompaction");
+		this.save();
+	}
+
 	/**
 	 * Read the global-only lazy-context policy. File-backed managers re-read this small
 	 * policy on each decision so independently running main/subagent processes observe
@@ -925,9 +944,15 @@ export class SettingsManager {
 		return this.settings.compaction?.keepRecentTokens ?? 20000;
 	}
 
-	getCompactionSettings(): { enabled: boolean; reserveTokens: number; keepRecentTokens: number } {
+	getCompactionSettings(): {
+		enabled: boolean;
+		continueAfterAutoCompaction: boolean;
+		reserveTokens: number;
+		keepRecentTokens: number;
+	} {
 		return {
 			enabled: this.getCompactionEnabled(),
+			continueAfterAutoCompaction: this.getContinueAfterAutoCompaction(),
 			reserveTokens: this.getCompactionReserveTokens(),
 			keepRecentTokens: this.getCompactionKeepRecentTokens(),
 		};
@@ -1443,6 +1468,25 @@ export class SettingsManager {
 	}
 
 	getTabTitleSettings(): TabTitleSettings | undefined {
-		return this.settings.tabTitle;
+		return this.settings.tabTitle ? structuredClone(this.settings.tabTitle) : undefined;
+	}
+
+	setGlobalTabTitleSettings(update: TabTitleSettingsUpdate): void {
+		if (!this.globalSettings.tabTitle) {
+			this.globalSettings.tabTitle = {};
+		}
+		for (const [key, value] of Object.entries(update) as [keyof TabTitleSettingsUpdate, unknown][]) {
+			if (value === undefined) continue;
+			if (value === null) {
+				// Explicit clear: remove the key in memory and mark it modified so the
+				// nested persistence merge drops it from the file (JSON omits undefined).
+				delete (this.globalSettings.tabTitle as Record<keyof TabTitleSettingsUpdate, unknown>)[key];
+				this.markModified("tabTitle", key);
+				continue;
+			}
+			(this.globalSettings.tabTitle as Record<keyof TabTitleSettingsUpdate, unknown>)[key] = value;
+			this.markModified("tabTitle", key);
+		}
+		this.save();
 	}
 }

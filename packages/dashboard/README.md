@@ -69,10 +69,10 @@ Open `http://127.0.0.1:5343`.
   matching safe index links.
 - **Settings** — persistent defaults (provider-grouped model dropdown,
   thinking, queue modes, image handling, skill commands, transport,
-  hide-thinking, compaction/retry, and maximum concurrent subagents), a scoped-models editor, per-agent model
+  hide-thinking, compaction/retry, opt-in continuation after every successful automatic compaction, and maximum concurrent subagents), automatic tab-title enable/model controls, a scoped-models editor, per-agent model
   fallback editor, and the global-only nested-context policy: an auditable trusted-roots list with
   revoke and simple add-by-path controls, plus a prominent expert trust-all
-  warning. The Files view remains the primary trust-grant flow. Most defaults
+  warning. The Files view remains the primary trust-grant flow. The auto-compaction continuation toggle is off by default, may keep unattended model turns and costs running indefinitely, and never affects manual `/compact`. Most defaults
   seed new sessions; opening Settings flushes pending writes and reloads durable
   global + project settings so external edits appear, while read/parse/write
   failures are shown instead of stale values. Maximum concurrent subagents defaults to 4; `0` starts new parents without the subagent tool and adds explicit self-execution guidance. Trust changes are observed by
@@ -81,7 +81,9 @@ Open `http://127.0.0.1:5343`.
   transcript image display mode, and notification permission), an appearance section with a curated-theme gallery
   (entropist.ca / Dim / Solarized / Gruvbox / Caves of Qud / Van Gogh /
   Okabe-Ito / Paul Tol — the last two colorblind-safe — live preview cards,
-  system/light/dark mode selector, saved per browser), current pairing code,
+  system/light/dark mode selector, and Theme default / IBM Plex Mono /
+  JetBrains Mono / Fira Code / Iosevka / OpenDyslexic / Atkinson Hyperlegible
+  font selector, saved per browser), current pairing code,
   the 1–3650 day lifetime used by future pairings (180 days by default), and
   paired-device expiry/unpair management.
 - **Pairing** — remote first-login rotating-code flow.
@@ -366,12 +368,20 @@ Browser (SolidJS, hash-routed SPA)
   Solarized, Gruvbox, Caves of Qud, Van Gogh, and the colorblind-safe Okabe-Ito
   and Paul Tol palettes), each with light and dark palettes, plus a
   system/light/dark mode.
-  A settings theme gallery renders live preview cards; selections persist per
-  browser in `localStorage` (a pristine entropist.ca + system install leaves no
-  keys and matches the `tokens.css` baseline exactly). Most themes use IBM Plex Mono;
-  Gruvbox uses self-hosted JetBrains Mono (OFL, in `src/client/assets/fonts/`),
-  lazy-loaded only when active. No `light-dark()` (iOS Safari 16.4 floor); a
-  synchronous `index.html` bootstrap prevents a wrong-theme flash. The static
+  A settings theme gallery renders live preview cards beside mode and font
+  selectors; selections persist per browser in `localStorage` (a pristine
+  entropist.ca + system + Theme default install leaves no keys and matches the
+  `tokens.css` baseline exactly). Theme default keeps each theme's built-in
+  family: most use Google-hosted IBM Plex Mono, while Gruvbox uses the bundled
+  self-hosted JetBrains Mono (OFL, in `src/client/assets/fonts/`). An explicit
+  IBM Plex Mono, JetBrains Mono, Fira Code, Iosevka, OpenDyslexic, or Atkinson
+  Hyperlegible selection overrides any theme and is reflected in previews. The
+  self-hosted families — JetBrains Mono, Fira Code, Iosevka, the bundled
+  dyslexia-friendly OpenDyslexic, and the low-vision-friendly Atkinson
+  Hyperlegible (all OFL, same directory) — are
+  lazy-loaded only when active typography uses them. No `light-dark()` (iOS
+  Safari 16.4 floor); a synchronous `index.html` bootstrap
+  prevents a wrong-appearance flash. The static
   `manifest.webmanifest` keeps white (default-light) launch colors as the
   fallback, while the live `theme-color` meta follows the active appearance.
 

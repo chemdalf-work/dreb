@@ -3953,6 +3953,7 @@ export class InteractiveMode {
 			const selector = new SettingsSelectorComponent(
 				{
 					autoCompact: this.session.autoCompactionEnabled,
+					continueAfterAutoCompaction: this.settingsManager.getContinueAfterAutoCompaction(),
 					showImages: this.settingsManager.getShowImages(),
 					autoResizeImages: this.settingsManager.getImageAutoResize(),
 					blockImages: this.settingsManager.getBlockImages(),
@@ -3984,6 +3985,9 @@ export class InteractiveMode {
 					onAutoCompactChange: (enabled) => {
 						this.session.setAutoCompactionEnabled(enabled);
 						this.footer.setAutoCompactEnabled(enabled);
+					},
+					onContinueAfterAutoCompactionChange: (enabled) => {
+						this.settingsManager.setContinueAfterAutoCompaction(enabled);
 					},
 					onAutoLoadNestedContextChange: (enabled) => {
 						this.settingsManager.setAutoLoadNestedContext(enabled);

@@ -58,6 +58,7 @@ describe("getSettingsForRpc", () => {
 			steeringMode: "one-at-a-time",
 			followUpMode: "one-at-a-time",
 			compactionEnabled: true,
+			continueAfterAutoCompaction: false,
 			retryEnabled: true,
 			maxConcurrentSubagents: 4,
 			imageAutoResize: true,
@@ -70,6 +71,7 @@ describe("getSettingsForRpc", () => {
 			hideThinkingBlock: false,
 			agentModels: {},
 			subagentArbiter: undefined,
+			tabTitle: undefined,
 			enabledModels: undefined,
 			resolvedScopedModels: [],
 			scopeWarnings: [],
@@ -85,7 +87,7 @@ describe("getSettingsForRpc", () => {
 			defaultThinkingLevel: "high",
 			steeringMode: "all",
 			followUpMode: "all",
-			compaction: { enabled: false },
+			compaction: { enabled: false, continueAfterAutoCompaction: true },
 			retry: { enabled: false },
 			backgroundAgents: { maxConcurrentSubagents: 1 },
 			images: { autoResize: false, blockImages: true },
@@ -95,6 +97,12 @@ describe("getSettingsForRpc", () => {
 			hideThinkingBlock: true,
 			agentModels: { models: { Explore: ["anthropic/sonnet", "openai/gpt-5"] } },
 			subagentArbiter: { enabled: true, model: "anthropic/claude-sonnet-4-5", thinking: "high" },
+			tabTitle: {
+				enabled: true,
+				model: "anthropic/claude-sonnet-4-5",
+				triggerAfter: 5,
+				maxTitleLength: 80,
+			},
 		});
 
 		expect(getSettingsForRpc(manager)).toEqual({
@@ -104,6 +112,7 @@ describe("getSettingsForRpc", () => {
 			steeringMode: "all",
 			followUpMode: "all",
 			compactionEnabled: false,
+			continueAfterAutoCompaction: true,
 			retryEnabled: false,
 			maxConcurrentSubagents: 1,
 			imageAutoResize: false,
@@ -116,6 +125,12 @@ describe("getSettingsForRpc", () => {
 			hideThinkingBlock: true,
 			agentModels: { Explore: ["anthropic/sonnet", "openai/gpt-5"] },
 			subagentArbiter: { enabled: true, model: "anthropic/claude-sonnet-4-5", thinking: "high" },
+			tabTitle: {
+				enabled: true,
+				model: "anthropic/claude-sonnet-4-5",
+				triggerAfter: 5,
+				maxTitleLength: 80,
+			},
 			enabledModels: undefined,
 			resolvedScopedModels: [],
 			scopeWarnings: [],
@@ -449,6 +464,7 @@ describe("setSettingsForRpc validation", () => {
 
 	it.each([
 		"compactionEnabled",
+		"continueAfterAutoCompaction",
 		"retryEnabled",
 		"imageAutoResize",
 		"blockImages",
@@ -587,6 +603,35 @@ describe("setSettingsForRpc validation", () => {
 			subagentArbiter: { enabled: false, extra: true } as never,
 		});
 		expect(invalidKey).toMatchObject({ ok: false, error: expect.stringContaining("Unknown subagentArbiter") });
+	});
+
+	it("validates tab title updates atomically", async () => {
+		const manager = SettingsManager.inMemory({
+			tabTitle: { enabled: true, triggerAfter: 9, maxTitleLength: 60 },
+			retry: { enabled: true },
+		});
+		const registry = stubRegistry([anthropicSonnet]);
+		const invalidUpdates = [
+			{ tabTitle: [] },
+			{ tabTitle: {} },
+			{ tabTitle: { enabled: "yes" } },
+			{ tabTitle: { triggerAfter: 0 } },
+			{ tabTitle: { maxTitleLength: 1.5 } },
+			{ tabTitle: { model: "claude-sonnet-4-5" } },
+			{ tabTitle: { model: "openai/missing" } },
+			{ tabTitle: { enabled: false, extra: true } },
+			{ tabTitle: { model: null, maxTitleLength: 0 } },
+		] as const;
+
+		for (const update of invalidUpdates) {
+			const result = await setSettingsForRpc(manager, registry, {
+				retryEnabled: false,
+				tabTitle: update.tabTitle as never,
+			});
+			expect(result.ok).toBe(false);
+		}
+		expect(manager.getRetryEnabled()).toBe(true);
+		expect(manager.getTabTitleSettings()).toEqual({ enabled: true, triggerAfter: 9, maxTitleLength: 60 });
 	});
 
 	it("always permits explicit disablement with malformed retained fields", async () => {
@@ -817,6 +862,84 @@ describe("setSettingsForRpc writes", () => {
 		expect(manager.getGlobalSubagentArbiterSettings()).toBeUndefined();
 	});
 
+	it("persists partial tab title updates without losing sibling settings", async () => {
+		const titleModel = { provider: "openrouter", id: "vendor/title-model" };
+		const manager = SettingsManager.inMemory({
+			tabTitle: { enabled: true, triggerAfter: 7, maxTitleLength: 90 },
+		});
+
+		const selected = await setSettingsForRpc(manager, stubRegistry([titleModel]), {
+			tabTitle: { model: "openrouter/vendor/title-model" },
+		});
+		expect(selected).toMatchObject({
+			ok: true,
+			settings: {
+				tabTitle: {
+					enabled: true,
+					model: "openrouter/vendor/title-model",
+					triggerAfter: 7,
+					maxTitleLength: 90,
+				},
+			},
+		});
+
+		const disabled = await setSettingsForRpc(manager, stubRegistry([titleModel]), {
+			tabTitle: { enabled: false },
+		});
+		expect(disabled).toMatchObject({
+			ok: true,
+			settings: {
+				tabTitle: {
+					enabled: false,
+					model: "openrouter/vendor/title-model",
+					triggerAfter: 7,
+					maxTitleLength: 90,
+				},
+			},
+		});
+	});
+
+	it("clears a pinned tab title model with model: null without losing sibling settings", async () => {
+		const manager = SettingsManager.inMemory({
+			tabTitle: { enabled: true, model: "openrouter/vendor/title-model", triggerAfter: 7, maxTitleLength: 90 },
+		});
+
+		const cleared = await setSettingsForRpc(manager, stubRegistry([]), {
+			tabTitle: { model: null },
+		});
+		expect(cleared.ok).toBe(true);
+		if (!cleared.ok) throw new Error("unreachable");
+		expect(cleared.settings.tabTitle).toEqual({ enabled: true, triggerAfter: 7, maxTitleLength: 90 });
+		expect(manager.getTabTitleSettings()).toEqual({ enabled: true, triggerAfter: 7, maxTitleLength: 90 });
+	});
+
+	it("removes a cleared tab title model from the global settings file", async () => {
+		const dir = await createTempDir();
+		const agentDir = join(dir, "agent");
+		const projectDir = join(dir, "project");
+		mkdirSync(agentDir, { recursive: true });
+		mkdirSync(projectDir, { recursive: true });
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ tabTitle: { enabled: true, model: "anthropic/claude-sonnet-4-5", triggerAfter: 6 } }),
+			"utf8",
+		);
+
+		const manager = SettingsManager.create(projectDir, agentDir);
+		const result = await setSettingsForRpc(manager, stubRegistry([anthropicSonnet]), {
+			tabTitle: { model: null },
+		});
+		expect(result.ok).toBe(true);
+
+		// The handler flushes, so the file no longer pins the model.
+		const raw = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8"));
+		expect(raw.tabTitle).toEqual({ enabled: true, triggerAfter: 6 });
+
+		// A fresh manager over the same dirs (fresh runtime) observes the cleared model.
+		const fresh = SettingsManager.create(projectDir, agentDir);
+		expect(fresh.getTabTitleSettings()).toEqual({ enabled: true, triggerAfter: 6 });
+	});
+
 	it("expands home-directory trusted folders before persisting canonical roots", async () => {
 		const manager = SettingsManager.inMemory();
 		const result = await setSettingsForRpc(manager, stubRegistry([]), { trustedContextFolders: ["~"] });
@@ -856,6 +979,7 @@ describe("setSettingsForRpc writes", () => {
 			steeringMode: "all",
 			followUpMode: "all",
 			compactionEnabled: false,
+			continueAfterAutoCompaction: true,
 			retryEnabled: false,
 			maxConcurrentSubagents: 0,
 			imageAutoResize: false,
@@ -877,6 +1001,7 @@ describe("setSettingsForRpc writes", () => {
 			steeringMode: "all",
 			followUpMode: "all",
 			compactionEnabled: false,
+			continueAfterAutoCompaction: true,
 			retryEnabled: false,
 			maxConcurrentSubagents: 0,
 			imageAutoResize: false,
@@ -889,6 +1014,7 @@ describe("setSettingsForRpc writes", () => {
 			hideThinkingBlock: true,
 			agentModels: { Explore: ["anthropic/sonnet", "openai/gpt-5"] },
 			subagentArbiter: undefined,
+			tabTitle: undefined,
 			enabledModels: undefined,
 			resolvedScopedModels: [],
 			scopeWarnings: [],
@@ -965,6 +1091,7 @@ describe("setSettingsForRpc writes", () => {
 			defaultProvider: "anthropic",
 			defaultModel: "claude-sonnet-4-5",
 			defaultThinkingLevel: "medium",
+			continueAfterAutoCompaction: true,
 			retryEnabled: false,
 			imageAutoResize: false,
 			blockImages: true,
@@ -974,6 +1101,12 @@ describe("setSettingsForRpc writes", () => {
 			transport: "websocket",
 			hideThinkingBlock: true,
 			agentModels: { Explore: ["anthropic/sonnet"] },
+			tabTitle: {
+				enabled: true,
+				model: "anthropic/claude-sonnet-4-5",
+				triggerAfter: 6,
+				maxTitleLength: 72,
+			},
 		});
 		expect(result.ok).toBe(true);
 
@@ -982,6 +1115,7 @@ describe("setSettingsForRpc writes", () => {
 		expect(raw.defaultProvider).toBe("anthropic");
 		expect(raw.defaultModel).toBe("claude-sonnet-4-5");
 		expect(raw.defaultThinkingLevel).toBe("medium");
+		expect(raw.compaction.continueAfterAutoCompaction).toBe(true);
 		expect(raw.retry.enabled).toBe(false);
 		expect(raw.images.autoResize).toBe(false);
 		expect(raw.images.blockImages).toBe(true);
@@ -991,6 +1125,12 @@ describe("setSettingsForRpc writes", () => {
 		expect(raw.transport).toBe("websocket");
 		expect(raw.hideThinkingBlock).toBe(true);
 		expect(raw.agentModels.models.Explore).toEqual(["anthropic/sonnet"]);
+		expect(raw.tabTitle).toEqual({
+			enabled: true,
+			model: "anthropic/claude-sonnet-4-5",
+			triggerAfter: 6,
+			maxTitleLength: 72,
+		});
 
 		// A fresh manager over the same dirs (fresh runtime) reads the same state.
 		const fresh = SettingsManager.create(projectDir, agentDir);
@@ -1672,6 +1812,7 @@ describe("RpcClient settings methods", () => {
 		steeringMode: "one-at-a-time",
 		followUpMode: "one-at-a-time",
 		compactionEnabled: true,
+		continueAfterAutoCompaction: false,
 		retryEnabled: true,
 		maxConcurrentSubagents: 4,
 		imageAutoResize: true,

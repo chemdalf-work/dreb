@@ -14,7 +14,7 @@ import type { DispatchArbitrationRecord } from "../../core/dispatch-arbiter.js";
 import type { ContextUsage } from "../../core/extensions/types.js";
 import type { ModelPerformanceSummary } from "../../core/performance-tracker.js";
 import type { SessionEntry } from "../../core/session-manager.js";
-import type { SubagentArbiterSettings } from "../../core/settings-manager.js";
+import type { SubagentArbiterSettings, TabTitleSettings, TabTitleSettingsUpdate } from "../../core/settings-manager.js";
 import type { SourceInfo } from "../../core/source-info.js";
 
 // ============================================================================
@@ -599,6 +599,8 @@ export interface RpcSettingsSnapshot {
 	followUpMode: "all" | "one-at-a-time";
 	/** Whether automatic context compaction is enabled */
 	compactionEnabled: boolean;
+	/** Whether every successful automatic compaction starts another model turn */
+	continueAfterAutoCompaction: boolean;
 	/** Whether automatic retry on transient errors is enabled */
 	retryEnabled: boolean;
 	/** Maximum child agents a new parent session may run concurrently; zero disables the tool */
@@ -623,6 +625,8 @@ export interface RpcSettingsSnapshot {
 	agentModels?: Record<string, string[]>;
 	/** Global-only fail-closed Dispatch Arbiter configuration. */
 	subagentArbiter?: SubagentArbiterSettings;
+	/** Effective automatic tab-title configuration. */
+	tabTitle?: TabTitleSettings;
 	/** Raw effective persisted model patterns. Absent means the future-inclusive all-model scope. */
 	enabledModels?: string[];
 	/** Effective patterns resolved by coding-agent core in model-cycling order. */
@@ -678,6 +682,7 @@ export interface RpcSettingsUpdate {
 	steeringMode?: "all" | "one-at-a-time";
 	followUpMode?: "all" | "one-at-a-time";
 	compactionEnabled?: boolean;
+	continueAfterAutoCompaction?: boolean;
 	retryEnabled?: boolean;
 	maxConcurrentSubagents?: number;
 	imageAutoResize?: boolean;
@@ -693,6 +698,8 @@ export interface RpcSettingsUpdate {
 	enabledModels?: string[] | null;
 	/** Replaces the complete global-only arbiter configuration. */
 	subagentArbiter?: SubagentArbiterSettings | null;
+	/** Partial global automatic tab-title configuration update. `model: null` removes the pinned model, restoring Explore-agent routing. */
+	tabTitle?: TabTitleSettingsUpdate;
 }
 
 // ============================================================================
