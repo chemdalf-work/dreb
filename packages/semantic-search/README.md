@@ -106,7 +106,7 @@ SearchEngine.isAvailable();         // check for node:sqlite
 
 ## Dependency Graph
 
-`dependencyGraph()` traverses the file-import relationships already stored by the search index. It performs deterministic breadth-first traversal, supports dependencies, dependents, or both directions, and is bounded to three hops and 100 results. Structural-only calls skip embedding generation; a later semantic search fills missing vectors on demand.
+`dependencyGraph()` traverses the file-import relationships already stored by the search index. It performs deterministic breadth-first traversal, supports dependencies, dependents, or both directions, and is bounded to three hops and 100 results. In `both` mode, a mutual import is returned once with the `imports_and_imported_by` relationship. Structural-only calls skip embedding generation; a later semantic search fills missing vectors on demand.
 
 This graph is deliberately narrower than a call graph. It is derived from static imports and may omit dynamic imports, reflection, generated code, framework wiring, and unresolved package aliases. Treat it as navigation evidence and verify runtime claims in source and tests.
 

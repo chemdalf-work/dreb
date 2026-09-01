@@ -62,6 +62,34 @@ describe("queryDependencyGraph", () => {
 		expect(result.nodes.every((node) => node.relationship === "imported_by")).toBe(true);
 	});
 
+	it("preserves both directions for mutual imports", () => {
+		const rootFile = addFile(db, "src/root.ts");
+		const peer = addFile(db, "src/peer.ts");
+		db.insertImport(rootFile, "src/peer");
+		db.insertImport(peer, "src/root");
+
+		expect(queryDependencyGraph(db, "src/root.ts", { direction: "both" }).nodes).toEqual([
+			{
+				filePath: "src/peer.ts",
+				depth: 1,
+				via: "src/root.ts",
+				relationship: "imports_and_imported_by",
+			},
+		]);
+	});
+
+	it("does not infer dependents through ambiguous path aliases", () => {
+		const fileModule = addFile(db, "src/foo.ts");
+		addFile(db, "src/foo/index.ts");
+		const importer = addFile(db, "src/bar.ts");
+		db.insertImport(fileModule, "src/bar");
+		db.insertImport(importer, "src/foo");
+
+		expect(queryDependencyGraph(db, "src/foo.ts", { direction: "both" }).nodes).toEqual([
+			{ filePath: "src/bar.ts", depth: 1, via: "src/foo.ts", relationship: "imports" },
+		]);
+	});
+
 	it("caps output and reports truncation", () => {
 		const rootFile = addFile(db, "src/root.ts");
 		for (const name of ["a", "b", "c"]) {

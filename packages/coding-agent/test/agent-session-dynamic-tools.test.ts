@@ -8,6 +8,7 @@ import { DefaultResourceLoader } from "../src/core/resource-loader.js";
 import { createAgentSession } from "../src/core/sdk.js";
 import { SessionManager } from "../src/core/session-manager.js";
 import { SettingsManager } from "../src/core/settings-manager.js";
+import { createRepoGraphTool } from "../src/core/tools/search.js";
 
 describe("AgentSession dynamic tool registration", () => {
 	let tempDir: string;
@@ -139,7 +140,26 @@ describe("AgentSession dynamic tool registration", () => {
 		});
 
 		expect(session.getActiveToolNames()).not.toContain("subagent");
+		expect(session.getActiveToolNames()).toContain("repo_graph");
+		expect(session.systemPrompt).toContain("- repo_graph: Bounded repository file dependency traversal");
 		expect(session.systemPrompt).not.toContain("The user launched dreb without the subagent tool");
+		session.dispose();
+	});
+
+	it("deduplicates repo_graph when it is also selected explicitly", async () => {
+		const settingsManager = SettingsManager.inMemory();
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: findModel("anthropic", "sonnet")!,
+			settingsManager,
+			sessionManager: SessionManager.inMemory(),
+			tools: [createRepoGraphTool(tempDir)],
+		});
+
+		expect(session.getActiveToolNames().filter((name) => name === "repo_graph")).toHaveLength(1);
+		expect(session.agent.state.tools.filter((tool) => tool.name === "repo_graph")).toHaveLength(1);
+		expect(session.systemPrompt.match(/^- repo_graph:/gm)).toHaveLength(1);
 		session.dispose();
 	});
 
@@ -160,9 +180,11 @@ describe("AgentSession dynamic tool registration", () => {
 
 		expect(session.getActiveToolNames()).toContain("ask_user");
 		expect(session.getActiveToolNames()).toContain("watch_github_ci");
+		expect(session.getActiveToolNames()).toContain("repo_graph");
 		expect(session.systemPrompt).toContain(
 			"- watch_github_ci: Watch GitHub pull-request CI until checks pass or fail",
 		);
+		expect(session.systemPrompt).toContain("- repo_graph: Bounded repository file dependency traversal");
 		expect(session.extensionRunner).toBeDefined();
 		expect(session.extensionRunner?.hasUI()).toBe(false);
 

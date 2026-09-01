@@ -19,6 +19,15 @@ function fixture(): string {
 	return root;
 }
 
+function mutualImportFixture(): string {
+	const root = mkdtempSync(path.join(tmpdir(), "dreb-repo-graph-tool-cycle-"));
+	roots.push(root);
+	mkdirSync(path.join(root, "src"), { recursive: true });
+	writeFileSync(path.join(root, "src", "a.ts"), 'import "./b";\n');
+	writeFileSync(path.join(root, "src", "b.ts"), 'import "./a";\n');
+	return root;
+}
+
 async function execute(tool: ReturnType<typeof createRepoGraphToolDefinition>, params: Record<string, unknown>) {
 	return tool.execute("call-1", params as any, undefined, undefined, {} as any);
 }
@@ -60,6 +69,18 @@ describe("createRepoGraphToolDefinition", () => {
 		const text = result.content[0]?.type === "text" ? result.content[0].text : "";
 		expect(text).toContain("src/route.ts");
 		expect(text).toContain("[imported_by]");
+	});
+
+	it("renders mutual imports once with both relationships", async () => {
+		const root = mutualImportFixture();
+		const result = await execute(createRepoGraphToolDefinition(root), {
+			file: "src/a.ts",
+			direction: "both",
+		});
+		const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+		expect(text).toContain("[imports_and_imported_by] src/b.ts");
+		expect(text.match(/src\/b\.ts/g)).toHaveLength(1);
+		expect(result.details).toMatchObject({ resultCount: 1, truncated: false });
 	});
 
 	it("fails loudly for a file outside the index", async () => {

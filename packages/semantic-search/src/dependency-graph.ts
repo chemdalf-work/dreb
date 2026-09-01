@@ -12,7 +12,7 @@ export interface DependencyGraphNode {
 	filePath: string;
 	depth: number;
 	via: string;
-	relationship: "imports" | "imported_by";
+	relationship: "imports" | "imported_by" | "imports_and_imported_by";
 }
 
 export interface DependencyGraphResult {
@@ -49,25 +49,36 @@ export function queryDependencyGraph(
 	while (queue.length > 0) {
 		const current = queue.shift()!;
 		if (current.depth >= maxDepth) continue;
-		const neighbors: Array<{ id: number; relationship: DependencyGraphNode["relationship"] }> = [];
+		const neighborRelationships = new Map<number, DependencyGraphNode["relationship"]>();
+		const addNeighbor = (id: number, relationship: "imports" | "imported_by") => {
+			const existing = neighborRelationships.get(id);
+			neighborRelationships.set(
+				id,
+				existing && existing !== relationship ? "imports_and_imported_by" : relationship,
+			);
+		};
 		if (direction === "dependencies" || direction === "both") {
 			for (const targetPath of db.getImportsFrom(current.id)) {
 				const targetId = resolvePath(targetPath, aliases);
-				if (targetId !== undefined) neighbors.push({ id: targetId, relationship: "imports" });
+				if (targetId !== undefined) addNeighbor(targetId, "imports");
 			}
 		}
 		if (direction === "dependents" || direction === "both") {
 			const currentPath = byId.get(current.id)?.filePath;
 			if (currentPath) {
-				const importerIds = new Set<number>();
+				const candidateImporterIds = new Set<number>();
 				for (const alias of pathAliases(currentPath)) {
-					for (const importerId of db.getImportersOf(alias)) importerIds.add(importerId);
+					for (const importerId of db.getImportersOf(alias)) candidateImporterIds.add(importerId);
 				}
-				for (const importerId of importerIds) {
-					neighbors.push({ id: importerId, relationship: "imported_by" });
+				for (const importerId of candidateImporterIds) {
+					const resolvesToCurrent = db
+						.getImportsFrom(importerId)
+						.some((importedPath) => resolvePath(importedPath, aliases) === current.id);
+					if (resolvesToCurrent) addNeighbor(importerId, "imported_by");
 				}
 			}
 		}
+		const neighbors = [...neighborRelationships].map(([id, relationship]) => ({ id, relationship }));
 		neighbors.sort((a, b) => (byId.get(a.id)?.filePath ?? "").localeCompare(byId.get(b.id)?.filePath ?? ""));
 
 		for (const neighbor of neighbors) {

@@ -3316,6 +3316,7 @@ export class AgentSession {
 					"wait",
 					"watch_github_ci",
 					"search",
+					"repo_graph",
 					"ask_user",
 					"skill",
 					"tasks_update",
