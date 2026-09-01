@@ -964,6 +964,15 @@ describe("allTools / allToolDefinitions", () => {
 		expect(tools.search).toBeDefined();
 	});
 
+	it("includes repo_graph in both registries unconditionally", () => {
+		expect("repo_graph" in allTools).toBe(true);
+		expect("repo_graph" in allToolDefinitions).toBe(true);
+		expect(allTools.repo_graph.name).toBe("repo_graph");
+		expect(typeof allTools.repo_graph.execute).toBe("function");
+		expect(createAllToolDefinitions("/tmp").repo_graph).toBeDefined();
+		expect(createAllTools("/tmp").repo_graph).toBeDefined();
+	});
+
 	it("includes watch_github_ci in both registries unconditionally", () => {
 		expect("watch_github_ci" in allTools).toBe(true);
 		expect("watch_github_ci" in allToolDefinitions).toBe(true);

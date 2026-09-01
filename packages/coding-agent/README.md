@@ -442,6 +442,12 @@ The `search` tool provides natural language queries over the codebase using embe
 
 **Ranking:** Uses POEM (Pareto-Optimal Embedding-based Multiranking) with 6 metrics: FTS5 BM25, vector cosine similarity, path match, symbol match, import graph proximity, and git recency. Short identifier queries bias toward exact text matches; long natural language queries bias toward vector similarity.
 
+### Repository dependency graph
+
+The `repo_graph` tool exposes bounded traversal of the same index's static file-import relationships. Supply a repository-relative `file`, optional `direction` (`dependencies`, `dependents`, or `both`), `depth` (1–3), `limit` (1–100), `searchDir`, and `rebuild`. Results are breadth-first and identify the preceding file for each relationship. Structural-only graph queries do not generate embeddings; a later semantic search fills missing vectors on demand.
+
+This is navigation evidence, not a call graph or runtime proof. Dynamic imports, reflection, generated code, framework wiring, and unresolved aliases may be absent. Verify behavior in source and tests.
+
 **Storage:** Project index at `.dreb/index/`, memory files indexed alongside code. Add `**/.dreb/` to your project's `.gitignore`. Works offline after the initial model download.
 
 **Requirements:** Node.js 22+ (uses built-in `node:sqlite`). On older Node versions the tool is silently unavailable — no crash, it simply doesn't register. Zero native addons — uses `web-tree-sitter` (WASM) and `@huggingface/transformers` (WASM).

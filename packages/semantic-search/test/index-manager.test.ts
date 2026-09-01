@@ -452,6 +452,36 @@ describe("IndexManager", () => {
 			expect(imports).toContain("src/b");
 		});
 
+		it("stores side-effect, re-export, and multiline TypeScript import edges", async () => {
+			createFixtureProject(projectDir, {
+				"src/a.ts": [
+					'import "./setup";',
+					'export { value } from "./value";',
+					'export * from "./barrel";',
+					'export * as utilities from "./utilities";',
+					"import {",
+					"  helper,",
+					'} from "./helper";',
+				].join("\n"),
+				"src/setup.ts": "export {};",
+				"src/value.ts": "export const value = 1;",
+				"src/barrel.ts": "export {};",
+				"src/utilities.ts": "export {};",
+				"src/helper.ts": "export const helper = true;",
+			});
+
+			await manager.buildIndex();
+			const fileA = manager.getDb().getFile("src/a.ts");
+			expect(fileA).not.toBeNull();
+			expect(manager.getDb().getImportsFrom(fileA!.id).sort()).toEqual([
+				"src/barrel",
+				"src/helper",
+				"src/setup",
+				"src/utilities",
+				"src/value",
+			]);
+		});
+
 		it("stores Python relative import edges during buildIndex", async () => {
 			createFixtureProject(projectDir, {
 				"pkg/main.py": ["from .utils import helper", "", "helper()"].join("\n"),

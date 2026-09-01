@@ -9,6 +9,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { SearchDatabase } from "./db.js";
+import { type DependencyGraphOptions, type DependencyGraphResult, queryDependencyGraph } from "./dependency-graph.js";
 import { Embedder } from "./embedder.js";
 import { IndexManager } from "./index-manager.js";
 import { computeBm25Scores } from "./metrics/bm25.js";
@@ -200,6 +201,23 @@ export class SearchEngine {
 			}
 
 			return results;
+		});
+	}
+
+	/**
+	 * Traverse the repository's indexed file-import graph.
+	 *
+	 * This updates structural index data but deliberately skips embedding work.
+	 * A later semantic search generates any missing vectors on demand.
+	 */
+	async dependencyGraph(
+		filePath: string,
+		options?: DependencyGraphOptions & { onProgress?: IndexProgressCallback },
+	): Promise<DependencyGraphResult> {
+		return this.enqueue(async () => {
+			const indexManager = this.getIndexManager();
+			await indexManager.buildIndex(options?.onProgress, { embed: false });
+			return queryDependencyGraph(indexManager.getDb(), filePath, options);
 		});
 	}
 

@@ -83,6 +83,7 @@ export class IndexManager {
 	 */
 	async buildIndex(
 		onProgress?: IndexProgressCallback,
+		options: { embed?: boolean } = {},
 	): Promise<{ added: number; updated: number; removed: number; failed: number }> {
 		const db = this.getDb();
 		const config = this.config;
@@ -203,8 +204,9 @@ export class IndexManager {
 			}
 		}
 
-		// Phase 5: Embed new chunks
-		if (allNewChunkIds.length > 0) {
+		// Phase 5: Embed new chunks unless the caller only needs structural data.
+		// A later semantic search fills any missing embeddings via ensureEmbeddings().
+		if (allNewChunkIds.length > 0 && options.embed !== false) {
 			await this.embedChunks(db, allNewChunkIds, onProgress);
 		}
 
@@ -284,15 +286,22 @@ function extractImports(content: string, filePath: string, fileType: string): st
 	const dir = path.dirname(filePath);
 
 	if (fileType === "typescript" || fileType === "tsx" || fileType === "javascript") {
-		// ES6 imports: import ... from '...'
-		// require(): require('...')
-		const importRe = /(?:import\s+.*?\s+from\s+|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]/g;
-		for (const match of content.matchAll(importRe)) {
-			const target = match[1];
-			if (target.startsWith(".")) {
-				imports.push(resolveImportPath(dir, target));
+		// Static imports (including side effects and multiline forms), re-exports,
+		// dynamic import(), and CommonJS require().
+		const importPatterns = [
+			/\bimport\s+(?:type\s+)?[^;]*?\s+from\s+['"]([^'"]+)['"]/g,
+			/\bimport\s*['"]([^'"]+)['"]/g,
+			/\bexport\s+(?:type\s+)?(?:\*(?:\s+as\s+[\w$]+)?|\{[^;]*?\})\s+from\s+['"]([^'"]+)['"]/g,
+			/\b(?:import|require)\s*\(\s*['"]([^'"]+)['"]/g,
+		];
+		const targets = new Set<string>();
+		for (const pattern of importPatterns) {
+			for (const match of content.matchAll(pattern)) {
+				const target = match[1];
+				if (target.startsWith(".")) targets.add(resolveImportPath(dir, target));
 			}
 		}
+		imports.push(...targets);
 	} else if (fileType === "python") {
 		// from . import X, from .module import X
 		const fromRe = /from\s+(\.\S*)\s+import/g;

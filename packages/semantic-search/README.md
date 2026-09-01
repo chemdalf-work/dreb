@@ -1,6 +1,6 @@
 # @dreb/semantic-search
 
-Semantic codebase search engine with embedding-based ranking and an MCP server. Extracts and indexes code using tree-sitter for AST-aware chunking and a transformer embedding model ([all-MiniLM-L6-v2](https://huggingface.co/Xenova/all-MiniLM-L6-v2)), then ranks results using 6-signal fusion via POEM.
+Semantic codebase search engine with embedding-based ranking, a bounded file-dependency graph, and an MCP server. Extracts and indexes code using tree-sitter for AST-aware chunking and a transformer embedding model ([all-MiniLM-L6-v2](https://huggingface.co/Xenova/all-MiniLM-L6-v2)), then ranks results using 6-signal fusion via POEM.
 
 ## Requirements
 
@@ -92,11 +92,23 @@ const results = await engine.search("where is auth handled", {
   onProgress: (phase, current, total) => console.log(`${phase}: ${current}/${total}`),
 });
 
+const dependencies = await engine.dependencyGraph("src/auth/middleware.ts", {
+  direction: "both", // dependencies, dependents, or both
+  depth: 2,          // bounded to 1-3 hops
+  limit: 30,         // bounded to 1-100 related files
+});
+
 const stats = engine.getStats();    // { files, chunks } | null
 await engine.resetIndex();          // delete index, next search rebuilds
 await engine.close();               // dispose resources
 SearchEngine.isAvailable();         // check for node:sqlite
 ```
+
+## Dependency Graph
+
+`dependencyGraph()` traverses the file-import relationships already stored by the search index. It performs deterministic breadth-first traversal, supports dependencies, dependents, or both directions, and is bounded to three hops and 100 results. Structural-only calls skip embedding generation; a later semantic search fills missing vectors on demand.
+
+This graph is deliberately narrower than a call graph. It is derived from static imports and may omit dynamic imports, reflection, generated code, framework wiring, and unresolved package aliases. Treat it as navigation evidence and verify runtime claims in source and tests.
 
 ## What Gets Indexed
 

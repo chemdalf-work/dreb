@@ -9,7 +9,8 @@ import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { AgentTool } from "@dreb/agent-core";
-import { formatResults, SearchEngine } from "@dreb/semantic-search";
+import { StringEnum } from "@dreb/ai";
+import { type DependencyDirection, formatResults, SearchEngine } from "@dreb/semantic-search";
 import { Text } from "@dreb/tui";
 import { type Static, Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.js";
@@ -42,6 +43,25 @@ const searchSchema = Type.Object({
 
 export type SearchToolInput = Static<typeof searchSchema>;
 
+const repoGraphSchema = Type.Object({
+	file: Type.String({ description: "Indexed repository-relative file path to inspect" }),
+	direction: Type.Optional(
+		StringEnum(["dependencies", "dependents", "both"] as const, {
+			description: "Traverse imports, importers, or both (default: both)",
+		}),
+	),
+	depth: Type.Optional(Type.Integer({ minimum: 1, maximum: 3, description: "Traversal depth (default: 1)" })),
+	limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, description: "Maximum related files (default: 30)" })),
+	searchDir: Type.Optional(
+		Type.String({
+			description: "Repository root to index instead of cwd",
+		}),
+	),
+	rebuild: Type.Optional(Type.Boolean({ description: "Force a clean index rebuild before traversal" })),
+});
+
+export type RepoGraphToolInput = Static<typeof repoGraphSchema>;
+
 // ============================================================================
 // Details
 // ============================================================================
@@ -50,6 +70,13 @@ export interface SearchToolDetails {
 	resultCount: number;
 	indexBuilt: boolean;
 	indexStats?: { files: number; chunks: number };
+}
+
+export interface RepoGraphToolDetails {
+	root?: string;
+	resultCount: number;
+	truncated: boolean;
+	indexBuilt: boolean;
 }
 
 function normalizeLineEndings(text: string): string {
@@ -255,10 +282,84 @@ export function createSearchToolDefinition(cwd: string): ToolDefinition<typeof s
 	};
 }
 
+export function createRepoGraphToolDefinition(
+	cwd: string,
+): ToolDefinition<typeof repoGraphSchema, RepoGraphToolDetails> {
+	return {
+		name: "repo_graph",
+		label: "repo graph",
+		description:
+			"Traverse the repository's indexed file-import graph. Use for bounded dependency, dependent, and impact-neighborhood questions; use search for semantic discovery and source/tests for runtime proof.",
+		promptSnippet: "Bounded repository file dependency traversal using the existing local search index",
+		promptGuidelines: [
+			"Use `repo_graph` after locating a relevant file when import/dependent relationships matter. Keep depth small and verify runtime claims in source or tests.",
+			"This is a static file-import graph, not a call graph. Dynamic imports, reflection, generated code, and runtime wiring may be absent.",
+		],
+		parameters: repoGraphSchema,
+		async execute(_toolCallId, params, signal, onUpdate) {
+			if (signal?.aborted) throw new Error("Operation aborted");
+			if (!isSearchAvailable()) {
+				return {
+					content: [{ type: "text", text: "Repository graph requires Node.js 22+ (for built-in SQLite)." }],
+					details: { resultCount: 0, truncated: false, indexBuilt: false },
+				};
+			}
+
+			const projectRoot = params.searchDir ? resolveToCwd(params.searchDir, cwd) : cwd;
+			if (!existsSync(projectRoot) || !statSync(projectRoot).isDirectory()) {
+				return {
+					content: [{ type: "text", text: `searchDir does not exist or is not a directory: ${projectRoot}` }],
+					details: { resultCount: 0, truncated: false, indexBuilt: false },
+				};
+			}
+
+			const engine = getSearchEngine(projectRoot);
+			if (params.rebuild) await engine.resetIndex();
+			let indexBuilt = false;
+			const result = await engine.dependencyGraph(params.file, {
+				direction: params.direction as DependencyDirection | undefined,
+				depth: params.depth,
+				limit: params.limit,
+				onProgress: (phase, current, total) => {
+					indexBuilt = true;
+					onUpdate?.({
+						content: [{ type: "text", text: `${phase}: ${current}/${total}` }],
+						details: { resultCount: 0, truncated: false, indexBuilt: true },
+					});
+				},
+			});
+			const lines = result.nodes.map(
+				(node) => `- depth ${node.depth} [${node.relationship}] ${node.filePath} (via ${node.via})`,
+			);
+			const text = [
+				`Dependency graph for ${result.root}`,
+				...(lines.length > 0 ? lines : ["No related indexed files found."]),
+				...(result.truncated ? ["[Results truncated at the requested limit.]"] : []),
+				"Static import evidence only; verify runtime behavior in source and tests.",
+			].join("\n");
+			return {
+				content: [{ type: "text", text }],
+				details: {
+					root: result.root,
+					resultCount: result.nodes.length,
+					truncated: result.truncated,
+					indexBuilt,
+				},
+			};
+		},
+	};
+}
+
 export function createSearchTool(cwd: string): AgentTool<typeof searchSchema> {
 	return wrapToolDefinition(createSearchToolDefinition(cwd));
 }
 
-/** Default search tool using process.cwd() for backwards compatibility. */
+export function createRepoGraphTool(cwd: string): AgentTool<typeof repoGraphSchema> {
+	return wrapToolDefinition(createRepoGraphToolDefinition(cwd));
+}
+
+/** Default search and repository graph tools using process.cwd() for backwards compatibility. */
 export const searchToolDefinition = createSearchToolDefinition(process.cwd());
 export const searchTool = createSearchTool(process.cwd());
+export const repoGraphToolDefinition = createRepoGraphToolDefinition(process.cwd());
+export const repoGraphTool = createRepoGraphTool(process.cwd());
