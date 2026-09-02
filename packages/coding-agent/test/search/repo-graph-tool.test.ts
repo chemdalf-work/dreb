@@ -1,8 +1,13 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createRepoGraphToolDefinition } from "../../src/core/tools/search.js";
+import {
+	createRepoGraphToolDefinition,
+	prepareRepoGraphIndex,
+	resolveDefaultSearchDir,
+} from "../../src/core/tools/search.js";
 
 const roots: string[] = [];
 
@@ -81,6 +86,44 @@ describe("createRepoGraphToolDefinition", () => {
 		expect(text).toContain("[imports_and_imported_by] src/b.ts");
 		expect(text.match(/src\/b\.ts/g)).toHaveLength(1);
 		expect(result.details).toMatchObject({ resultCount: 1, truncated: false });
+	});
+
+	it("prepares the graph at the Git root when launched from a nested directory", async () => {
+		const root = fixture();
+		execFileSync("git", ["init", "-q"], { cwd: root });
+		const nested = path.join(root, "src", "nested");
+		mkdirSync(nested);
+
+		const prepared = await prepareRepoGraphIndex(nested);
+
+		expect(prepared?.projectRoot).toBe(realpathSync(root));
+		await expect(resolveDefaultSearchDir(nested)).resolves.toBe(prepared?.projectRoot);
+		expect(prepared?.indexStats?.files).toBeGreaterThanOrEqual(3);
+		expect(prepared?.failed).toBe(0);
+		expect(existsSync(path.join(root, ".dreb", "index", "search.db"))).toBe(true);
+		expect(existsSync(path.join(nested, ".dreb", "index", "search.db"))).toBe(false);
+
+		const result = await execute(createRepoGraphToolDefinition(nested), {
+			file: "src/api.ts",
+			direction: "dependencies",
+		});
+		const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+		expect(text).toContain("src/service.ts");
+	});
+
+	it("does not create an index outside a Git repository", async () => {
+		const root = fixture();
+
+		await expect(prepareRepoGraphIndex(root)).resolves.toBeNull();
+		expect(existsSync(path.join(root, ".dreb", "index"))).toBe(false);
+	});
+
+	it("rejects an arbitrary .git marker that Git does not recognize", async () => {
+		const root = fixture();
+		mkdirSync(path.join(root, ".git"));
+
+		await expect(prepareRepoGraphIndex(root)).resolves.toBeNull();
+		expect(existsSync(path.join(root, ".dreb", "index"))).toBe(false);
 	});
 
 	it("fails loudly for a file outside the index", async () => {

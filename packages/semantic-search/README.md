@@ -92,6 +92,7 @@ const results = await engine.search("where is auth handled", {
   onProgress: (phase, current, total) => console.log(`${phase}: ${current}/${total}`),
 });
 
+await engine.prepareDependencyGraph(); // build/update structure without embeddings
 const dependencies = await engine.dependencyGraph("src/auth/middleware.ts", {
   direction: "both", // dependencies, dependents, or both
   depth: 2,          // bounded to 1-3 hops
@@ -106,7 +107,7 @@ SearchEngine.isAvailable();         // check for node:sqlite
 
 ## Dependency Graph
 
-`dependencyGraph()` traverses the file-import relationships already stored by the search index. It performs deterministic breadth-first traversal, supports dependencies, dependents, or both directions, and is bounded to three hops and 100 results. In `both` mode, a mutual import is returned once with the `imports_and_imported_by` relationship. Structural-only calls skip embedding generation; a later semantic search fills missing vectors on demand.
+`prepareDependencyGraph()` builds or incrementally refreshes structural index data without generating embeddings. The dreb coding-agent calls it automatically when a top-level CLI process starts in a Git repository. `dependencyGraph()` updates that same index before traversing its file-import relationships. Traversal is deterministic and breadth-first, supports dependencies, dependents, or both directions, and is bounded to three hops and 100 results. In `both` mode, a mutual import is returned once with the `imports_and_imported_by` relationship. A later semantic search fills missing vectors on demand.
 
 This graph is deliberately narrower than a call graph. It is derived from static imports and may omit dynamic imports, reflection, generated code, framework wiring, and unresolved package aliases. Treat it as navigation evidence and verify runtime claims in source and tests.
 

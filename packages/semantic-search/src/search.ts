@@ -19,7 +19,14 @@ import { computePathMatchScores } from "./metrics/path-match.js";
 import { computeSymbolMatchScores } from "./metrics/symbol-match.js";
 import { poemRank } from "./poem.js";
 import { classifyQuery } from "./query-classifier.js";
-import type { IndexConfig, IndexProgressCallback, MetricScores, SearchResult, StoredChunk } from "./types.js";
+import type {
+	IndexBuildResult,
+	IndexConfig,
+	IndexProgressCallback,
+	MetricScores,
+	SearchResult,
+	StoredChunk,
+} from "./types.js";
 import { topKSimilar } from "./vector-store.js";
 
 // ============================================================================
@@ -201,6 +208,17 @@ export class SearchEngine {
 			}
 
 			return results;
+		});
+	}
+
+	/**
+	 * Build or incrementally update structural index data without generating embeddings.
+	 * This can prepare the file-import graph before the first graph query.
+	 */
+	async prepareDependencyGraph(onProgress?: IndexProgressCallback): Promise<IndexBuildResult> {
+		return this.enqueue(async () => {
+			const indexManager = this.getIndexManager();
+			return indexManager.buildIndex(onProgress, { embed: false });
 		});
 	}
 

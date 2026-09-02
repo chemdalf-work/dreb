@@ -198,6 +198,31 @@ describe("IndexManager", () => {
 			expect(db.getChunkCount()).toBeGreaterThan(0);
 		});
 
+		it("does not duplicate chunks when two structural builds start concurrently", async () => {
+			createFixtureProject(projectDir, {
+				"src/index.ts": "export function alpha() { return 1; }\nexport function beta() { return 2; }\n",
+			});
+			const secondManager = new IndexManager(config);
+
+			try {
+				await Promise.all([
+					manager.buildIndex(undefined, { embed: false }),
+					secondManager.buildIndex(undefined, { embed: false }),
+				]);
+
+				const chunks = manager.getDb().getAllChunks();
+				const signatures = new Set(
+					chunks.map((chunk) =>
+						[chunk.filePath, chunk.startLine, chunk.endLine, chunk.kind, chunk.name, chunk.content].join(":"),
+					),
+				);
+				expect(chunks.length).toBeGreaterThan(0);
+				expect(signatures.size).toBe(chunks.length);
+			} finally {
+				secondManager.close();
+			}
+		});
+
 		it("returns all zeros on second build with no changes", async () => {
 			createFixtureProject(projectDir, {
 				"stable.md": "# Stable\n\nUnchanging content.",

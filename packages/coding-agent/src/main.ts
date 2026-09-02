@@ -28,8 +28,10 @@ import { DefaultResourceLoader } from "./core/resource-loader.js";
 import { type CreateAgentSessionOptions, createAgentSession } from "./core/sdk.js";
 import { type SessionInfo, SessionManager } from "./core/session-manager.js";
 import { SettingsManager } from "./core/settings-manager.js";
+import { writeRawStderr } from "./core/stderr-guard.js";
 import { printTimings, resetTimings, time } from "./core/timings.js";
 import { allTools } from "./core/tools/index.js";
+import { prepareRepoGraphIndex } from "./core/tools/search.js";
 import { runMigrations, showDeprecationWarnings } from "./migrations.js";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.js";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.js";
@@ -918,6 +920,32 @@ export async function main(args: string[]) {
 		}
 		authStorage.setRuntimeApiKey(sessionOptions.model.provider, parsed.apiKey);
 	}
+
+	// Prepare the repository graph once in each top-level CLI process. Subagents
+	// share the same on-disk index and skip redundant startup scans.
+	if (!parsed.agentType) {
+		let announcedGraphPreparation = false;
+		try {
+			const result = await prepareRepoGraphIndex(cwd, (phase, current) => {
+				if (phase === "scanning" && current === 0) {
+					announcedGraphPreparation = true;
+					writeRawStderr(`${chalk.dim("Preparing repository graph...")}\n`);
+				}
+			});
+			if (result && announcedGraphPreparation) {
+				writeRawStderr(`${chalk.dim(`Repository graph ready (${result.indexStats?.files ?? 0} files).`)}\n`);
+			}
+			if (result && result.failed > 0) {
+				log.warn(
+					chalk.yellow(`Warning: repository graph startup indexing skipped ${result.failed} unreadable file(s).`),
+				);
+			}
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			log.warn(chalk.yellow(`Warning: repository graph startup indexing failed: ${message}`));
+		}
+	}
+	time("prepareRepoGraphIndex");
 
 	const { session, modelFallbackMessage } = await createAgentSession(sessionOptions);
 	time("createAgentSession");

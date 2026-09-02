@@ -5,20 +5,35 @@
  * Supports incremental updates via mtime comparison.
  */
 
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { chunkFile } from "./chunker.js";
 import type { SearchDatabase } from "./db.js";
 import { isSqliteAvailable, SearchDatabase as SearchDatabaseClass } from "./db.js";
 import type { Embedder } from "./embedder.js";
 import { type ScannedFile, scanProject } from "./scanner.js";
-import type { IndexConfig, IndexedFile, IndexProgressCallback } from "./types.js";
+import type { IndexBuildResult, IndexConfig, IndexedFile, IndexProgressCallback } from "./types.js";
 
 // ============================================================================
 // Constants
 // ============================================================================
 
 const DB_FILENAME = "search.db";
+const BUILD_LOCK_DIRNAME = ".build-lock";
+const BUILD_LOCK_RETRY_MS = 50;
+const BUILD_LOCK_TIMEOUT_MS = 30_000;
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+}
+
+function isDatabaseError(error: unknown): boolean {
+	const code = (error as NodeJS.ErrnoException | undefined)?.code;
+	if (typeof code === "string" && code.includes("SQLITE")) return true;
+	const message = error instanceof Error ? error.message : String(error);
+	return /database is locked|database or disk is full|constraint failed|cannot start a transaction/i.test(message);
+}
 
 // ============================================================================
 // Index Manager
@@ -73,6 +88,60 @@ export class IndexManager {
 		return this.db;
 	}
 
+	private isBuildLockStale(lockDir: string): boolean {
+		try {
+			const owner = readFileSync(path.join(lockDir, "owner"), "utf8").trim();
+			const pid = Number.parseInt(owner.split(":", 1)[0] ?? "", 10);
+			if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+			try {
+				process.kill(pid, 0);
+				return false;
+			} catch (error) {
+				return (error as NodeJS.ErrnoException).code === "ESRCH";
+			}
+		} catch {
+			return false;
+		}
+	}
+
+	private async acquireBuildLock(): Promise<() => void> {
+		mkdirSync(this.config.indexDir, { recursive: true });
+		const lockDir = path.join(this.config.indexDir, BUILD_LOCK_DIRNAME);
+		const token = `${process.pid}:${randomUUID()}`;
+		const deadline = Date.now() + BUILD_LOCK_TIMEOUT_MS;
+
+		while (true) {
+			try {
+				mkdirSync(lockDir);
+				try {
+					writeFileSync(path.join(lockDir, "owner"), token, "utf8");
+				} catch (error) {
+					rmSync(lockDir, { recursive: true, force: true });
+					throw error;
+				}
+				return () => {
+					try {
+						if (readFileSync(path.join(lockDir, "owner"), "utf8").trim() === token) {
+							rmSync(lockDir, { recursive: true, force: true });
+						}
+					} catch {
+						// The lock was already removed or replaced; do not remove another owner's lock.
+					}
+				};
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+				if (this.isBuildLockStale(lockDir)) {
+					rmSync(lockDir, { recursive: true, force: true });
+					continue;
+				}
+				if (Date.now() >= deadline) {
+					throw new Error(`Timed out waiting for repository index lock: ${lockDir}`);
+				}
+				await delay(BUILD_LOCK_RETRY_MS);
+			}
+		}
+	}
+
 	/**
 	 * Build or incrementally update the index.
 	 *
@@ -81,10 +150,19 @@ export class IndexManager {
 	 * 3. Re-chunk and re-embed only changed/new files
 	 * 4. Remove deleted files
 	 */
-	async buildIndex(
+	async buildIndex(onProgress?: IndexProgressCallback, options: { embed?: boolean } = {}): Promise<IndexBuildResult> {
+		const releaseLock = await this.acquireBuildLock();
+		try {
+			return await this.buildIndexUnlocked(onProgress, options);
+		} finally {
+			releaseLock();
+		}
+	}
+
+	private async buildIndexUnlocked(
 		onProgress?: IndexProgressCallback,
 		options: { embed?: boolean } = {},
-	): Promise<{ added: number; updated: number; removed: number; failed: number }> {
+	): Promise<IndexBuildResult> {
 		const db = this.getDb();
 		const config = this.config;
 
@@ -157,16 +235,13 @@ export class IndexManager {
 				const chunks = await chunkFile(content, scanned.filePath, scanned.fileType);
 				const imports = extractImports(content, scanned.filePath, scanned.fileType);
 
-				// All DB mutations in a single transaction — atomic per file
+				// All DB mutations in a single transaction — atomic per file.
+				// Always clear by the upserted ID: another process may have inserted
+				// this file after our initial snapshot classified it as new.
 				db.transaction(() => {
 					const fileId = db.upsertFile(scanned.filePath, scanned.mtime, scanned.fileType);
-
-					// Delete old chunks (for updates)
-					const existingFile = existingByPath.get(scanned.filePath);
-					if (existingFile) {
-						db.deleteChunksForFile(existingFile.id);
-						db.deleteImportsForFile(existingFile.id);
-					}
+					db.deleteChunksForFile(fileId);
+					db.deleteImportsForFile(fileId);
 
 					// Insert chunks and symbols
 					for (const chunk of chunks) {
@@ -193,13 +268,10 @@ export class IndexManager {
 					}
 				});
 			} catch (err: unknown) {
-				// Re-throw DB-level errors (SQLITE_FULL, disk full, etc.) — these
-				// indicate infrastructure problems, not per-file issues.
-				const message = err instanceof Error ? err.message : String(err);
-				if (message.includes("SQLITE")) {
-					throw err;
-				}
-				// Skip files that fail to process (permissions, encoding issues, etc.)
+				// Re-throw database/infrastructure errors. Only source-file failures
+				// are counted as skipped files so callers do not receive a misleading
+				// partial-success result for a broken index.
+				if (isDatabaseError(err)) throw err;
 				failed++;
 			}
 		}

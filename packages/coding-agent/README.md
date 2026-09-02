@@ -431,9 +431,9 @@ The separate `wait` tool is an immediate no-op used when explicitly told to wait
 
 The `search` tool provides natural language queries over the codebase using embeddings and full-text search. It supports identifier queries (e.g., `AuthMiddleware`), natural language (e.g., `where is rate limiting handled`), and path queries (e.g., `src/auth/`).
 
-**Parameters:** `query` (required), `searchDir` (directory to index and search — each unique value gets its own independent index; defaults to cwd, but should be set explicitly in Telegram sessions where cwd is `~/`), `restrictToDir` (filter results to files under this subdirectory within the already-built index — does not affect which files are indexed), `limit` (max results, default 20), `rebuild` (force a clean re-index when results look stale or corrupt).
+**Parameters:** `query` (required), `searchDir` (directory to index and search — each unique value gets its own independent index; defaults to the enclosing Git root, or cwd outside Git; set it explicitly in Telegram sessions where cwd is `~/`), `restrictToDir` (filter results to files under this subdirectory within the already-built index — does not affect which files are indexed), `limit` (max results, default 20), `rebuild` (force a clean re-index when results look stale or corrupt).
 
-**How it works:** The first query builds a project index (typically 10–60s, longer for very large repos). Subsequent queries use the cached index, with incremental re-indexing for changed files (mtime-based). Each unique `searchDir` gets its own independent index.
+**How it works:** When a top-level dreb process starts in a Git repository, it builds or incrementally refreshes the structural project index without generating embeddings. The first semantic query adds any missing embeddings; subsequent queries reuse the cached index and refresh changed files by mtime. Each explicit `searchDir` gets its own independent index.
 
 **Indexing pipeline:**
 - AST-aware code chunking via tree-sitter (TypeScript, JavaScript, Python, Go, Rust, Java, C, C++, GDScript) — extracts functions, classes, methods, and exports as individual chunks
@@ -444,7 +444,7 @@ The `search` tool provides natural language queries over the codebase using embe
 
 ### Repository dependency graph
 
-The `repo_graph` tool exposes bounded traversal of the same index's static file-import relationships. Supply a repository-relative `file`, optional `direction` (`dependencies`, `dependents`, or `both`), `depth` (1–3), `limit` (1–100), `searchDir`, and `rebuild`. Results are breadth-first and identify the preceding file for each relationship; mutual imports in `both` mode are labeled `imports_and_imported_by`. Structural-only graph queries do not generate embeddings; a later semantic search fills missing vectors on demand.
+The `repo_graph` tool exposes bounded traversal of the same index's static file-import relationships. Before a top-level dreb session starts in a Git repository, Dreb automatically prepares this structural index and reports startup progress on stderr; subagents reuse the on-disk index instead of repeating the scan. Supply a repository-relative `file`, optional `direction` (`dependencies`, `dependents`, or `both`), `depth` (1–3), `limit` (1–100), `searchDir`, and `rebuild`. Without an explicit `searchDir`, traversal uses the enclosing Git root. Results are breadth-first and identify the preceding file for each relationship; mutual imports in `both` mode are labeled `imports_and_imported_by`. Structural indexing does not generate embeddings; a later semantic search fills missing vectors on demand.
 
 This is navigation evidence, not a call graph or runtime proof. Dynamic imports, reflection, generated code, framework wiring, and unresolved aliases may be absent. Verify behavior in source and tests.
 

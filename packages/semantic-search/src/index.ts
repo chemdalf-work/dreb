@@ -37,6 +37,7 @@ export type {
 	ChunkKind,
 	FileType,
 	ImportEdge,
+	IndexBuildResult,
 	IndexConfig,
 	IndexedFile,
 	IndexProgressCallback,
