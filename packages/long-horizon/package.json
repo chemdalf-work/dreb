@@ -1,0 +1,49 @@
+{
+	"name": "@dreb/long-horizon",
+	"version": "2.64.1",
+	"description": "Durable unattended long-horizon supervisor for dreb",
+	"license": "MIT",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"bin": {
+		"dreb-long-horizon": "./dist/cli.js"
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js",
+		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
+		"test": "vitest --run",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"dependencies": {
+		"@dreb/ai": "*",
+		"@dreb/coding-agent": "*"
+	},
+	"devDependencies": {
+		"@types/node": "^24.3.0",
+		"typescript": "^5.9.2",
+		"vitest": "^4.1.8"
+	},
+	"engines": {
+		"node": "22.x"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/aebrer/dreb.git",
+		"directory": "packages/long-horizon"
+	}
+}

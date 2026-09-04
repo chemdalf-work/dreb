@@ -595,7 +595,7 @@ describe("Context overflow error handling", () => {
 	// =============================================================================
 
 	let lmStudioRunning = false;
-	if (!process.env.DREB_NO_LOCAL_LLM) {
+	if (process.env.DREB_SKIP_LIVE_API !== "1" && !process.env.DREB_NO_LOCAL_LLM) {
 		try {
 			execSync("curl -s --max-time 1 http://localhost:1234/v1/models > /dev/null", { stdio: "ignore" });
 			lmStudioRunning = true;
@@ -604,7 +604,7 @@ describe("Context overflow error handling", () => {
 		}
 	}
 
-	describe.skipIf(!lmStudioRunning)("LM Studio (local)", () => {
+	describe.skipIf(process.env.DREB_SKIP_LIVE_API === "1" || !lmStudioRunning)("LM Studio (local)", () => {
 		it("should detect overflow via isContextOverflow", async () => {
 			const model: Model<"openai-completions"> = {
 				id: "local-model",
@@ -632,14 +632,16 @@ describe("Context overflow error handling", () => {
 	// =============================================================================
 
 	let llamaCppRunning = false;
-	try {
-		execSync("curl -s --max-time 1 http://localhost:8081/health > /dev/null", { stdio: "ignore" });
-		llamaCppRunning = true;
-	} catch {
-		llamaCppRunning = false;
+	if (process.env.DREB_SKIP_LIVE_API !== "1") {
+		try {
+			execSync("curl -s --max-time 1 http://localhost:8081/health > /dev/null", { stdio: "ignore" });
+			llamaCppRunning = true;
+		} catch {
+			llamaCppRunning = false;
+		}
 	}
 
-	describe.skipIf(!llamaCppRunning)("llama.cpp (local)", () => {
+	describe.skipIf(process.env.DREB_SKIP_LIVE_API === "1" || !llamaCppRunning)("llama.cpp (local)", () => {
 		it("should detect overflow via isContextOverflow", async () => {
 			// Using small context (4096) to match server --ctx-size setting
 			const model: Model<"openai-completions"> = {

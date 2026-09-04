@@ -4,6 +4,8 @@
 
 The SDK provides programmatic access to dreb's agent capabilities. Use it to embed dreb in other applications, build custom interfaces, or integrate with automated workflows.
 
+`createAgentSession()` owns one conversation lifecycle. Awaited `prompt()` completion, `agent.waitForIdle()`, `getContextUsage()`, persisted `SessionManager` files, and parent-linked `newSession()` provide the primitives for a host to coordinate work, but coding-agent core does not persist or autonomously drive a multi-session goal. Use the standalone [`@dreb/long-horizon`](../../long-horizon/) package when you need durable planning/execution rounds, crash recovery, safe context rollover, resource limits, command authorization, and evidence-gated completion.
+
 **Example use cases:**
 - Build a custom UI (web, desktop, mobile)
 - Integrate agent capabilities into existing applications
