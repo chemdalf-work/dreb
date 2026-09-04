@@ -19,6 +19,7 @@ export default defineConfig({
 			"packages/agent",
 			"packages/coding-agent",
 			"packages/semantic-search",
+			"packages/long-horizon",
 			"packages/telegram",
 			"packages/dashboard",
 		],
