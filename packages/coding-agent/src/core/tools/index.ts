@@ -69,9 +69,15 @@ export {
 	readToolDefinition,
 } from "./read.js";
 export {
+	createRepoGraphTool,
+	createRepoGraphToolDefinition,
 	createSearchTool,
 	createSearchToolDefinition,
 	isSearchAvailable,
+	type RepoGraphToolDetails,
+	type RepoGraphToolInput,
+	repoGraphTool,
+	repoGraphToolDefinition,
 	type SearchToolDetails,
 	type SearchToolInput,
 	searchTool,
@@ -197,7 +203,16 @@ import {
 	readTool,
 	readToolDefinition,
 } from "./read.js";
-import { createSearchTool, createSearchToolDefinition, searchTool, searchToolDefinition } from "./search.js";
+import {
+	createRepoGraphTool,
+	createRepoGraphToolDefinition,
+	createSearchTool,
+	createSearchToolDefinition,
+	repoGraphTool,
+	repoGraphToolDefinition,
+	searchTool,
+	searchToolDefinition,
+} from "./search.js";
 import { createSkillTool, createSkillToolDefinition, type SkillToolOptions } from "./skill.js";
 import {
 	createSubagentTool,
@@ -257,6 +272,7 @@ export const allTools = {
 	wait: waitTool,
 	watch_github_ci: watchGithubCiTool,
 	search: searchTool,
+	repo_graph: repoGraphTool,
 	ask_user: askUserTool,
 };
 
@@ -275,6 +291,7 @@ export const allToolDefinitions = {
 	wait: waitToolDefinition,
 	watch_github_ci: watchGithubCiToolDefinition,
 	search: searchToolDefinition,
+	repo_graph: repoGraphToolDefinition,
 	ask_user: askUserToolDefinition,
 };
 
@@ -323,6 +340,7 @@ export function createAllToolDefinitions(cwd: string, options?: ToolsOptions): R
 		wait: createWaitToolDefinition({ getRunningAgents: getRunningBackgroundAgents }),
 		watch_github_ci: createWatchGithubCiToolDefinition(cwd),
 		search: createSearchToolDefinition(cwd),
+		repo_graph: createRepoGraphToolDefinition(cwd),
 		ask_user: createAskUserToolDefinition(),
 	};
 	if (options?.skill) {
@@ -366,6 +384,7 @@ export function createAllTools(cwd: string, options?: ToolsOptions): Record<Tool
 		wait: wrapToolDefinition(createWaitToolDefinition({ getRunningAgents: getRunningBackgroundAgents })),
 		watch_github_ci: createWatchGithubCiTool(cwd),
 		search: createSearchTool(cwd),
+		repo_graph: createRepoGraphTool(cwd),
 		ask_user: wrapToolDefinition(createAskUserToolDefinition()),
 	};
 	if (options?.skill) {

@@ -68,7 +68,7 @@ export interface CreateAgentSessionOptions {
 	/** Models available for cycling (Ctrl+P in interactive mode) */
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
 
-	/** Built-in tools to use. Default: all standard tools [read, bash, edit, write, grep, find, ls, web_search, web_fetch, subagent, wait, watch_github_ci, ask_user]. `skill`, `tasks_update`, and `search` are always active regardless of this setting. */
+	/** Built-in tools to use. Default: all standard tools [read, bash, edit, write, grep, find, ls, web_search, web_fetch, subagent, wait, watch_github_ci, ask_user]. `skill`, `tasks_update`, `search`, and `repo_graph` are always active regardless of this setting. */
 	tools?: Tool[];
 	/** Custom tools to register (in addition to built-in tools). */
 	customTools?: ToolDefinition[];
@@ -269,8 +269,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	// suggest_next is only auto-activated when tools aren't explicitly specified — subagent
 	// child processes pass --tools which excludes suggest_next (it would end the turn mid-work).
 	const alwaysActiveBuiltins = options.tools
-		? ["skill", "tasks_update", "search"]
-		: ["skill", "tasks_update", "search", "suggest_next"];
+		? ["skill", "tasks_update", "search", "repo_graph"]
+		: ["skill", "tasks_update", "search", "repo_graph", "suggest_next"];
 	const defaultActiveToolNames: ToolName[] = [
 		"read",
 		"bash",

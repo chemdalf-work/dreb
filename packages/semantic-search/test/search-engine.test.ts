@@ -10,11 +10,13 @@ import type { MetricScores } from "../src/types.js";
 // Tracks initialize() calls so concurrency tests can verify single-initialization.
 let mockInitializeCallCount = 0;
 let mockInitializeFailNext = false;
+let mockEmbedDocumentsCallCount = 0;
 let mockDisposeCallCount = 0;
 
 function resetMockEmbedder(): void {
 	mockInitializeCallCount = 0;
 	mockInitializeFailNext = false;
+	mockEmbedDocumentsCallCount = 0;
 	mockDisposeCallCount = 0;
 }
 
@@ -31,6 +33,7 @@ vi.mock("../src/embedder.js", () => ({
 			return new Float32Array(384);
 		}
 		async embedDocuments(texts: string[]) {
+			mockEmbedDocumentsCallCount++;
 			return texts.map(() => new Float32Array(384));
 		}
 		dispose() {
@@ -109,6 +112,31 @@ function createFixtureProject(dir: string): void {
 // ============================================================================
 // Tests
 // ============================================================================
+
+describe("SearchEngine.prepareDependencyGraph()", () => {
+	it("builds structural data without embeddings and lets search hydrate them later", async () => {
+		const projectDir = mkdtempSync(path.join(tmpdir(), "dreb-search-structural-"));
+		createFixtureProject(projectDir);
+		resetMockEmbedder();
+		const engine = new SearchEngine(projectDir);
+
+		try {
+			const buildResult = await engine.prepareDependencyGraph();
+			expect(buildResult.added).toBe(Object.keys(FIXTURE_FILES).length);
+			expect(engine.getStats()?.files).toBe(Object.keys(FIXTURE_FILES).length);
+			expect(mockInitializeCallCount).toBe(0);
+			expect(mockEmbedDocumentsCallCount).toBe(0);
+
+			const results = await engine.search("AuthMiddleware");
+			expect(results.length).toBeGreaterThan(0);
+			expect(mockInitializeCallCount).toBe(1);
+			expect(mockEmbedDocumentsCallCount).toBeGreaterThan(0);
+		} finally {
+			await engine.close();
+			rmSync(projectDir, { recursive: true, force: true });
+		}
+	});
+});
 
 describe("SearchEngine.search()", () => {
 	let tmpDir: string;

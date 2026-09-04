@@ -82,6 +82,14 @@ export interface IndexConfig {
 	modelName: string;
 }
 
+/** Summary of files changed by an index build or incremental refresh. */
+export interface IndexBuildResult {
+	added: number;
+	updated: number;
+	removed: number;
+	failed: number;
+}
+
 /** Stored metadata for a file in the index. */
 export interface IndexedFile {
 	id: number;

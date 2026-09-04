@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,7 +22,16 @@ const mocks = vi.hoisted(() => ({
 	}),
 	runPrintMode: vi.fn(async () => 0),
 	selectSession: vi.fn(),
+	prepareRepoGraphIndex: vi.fn(async () => null),
 }));
+
+vi.mock("../src/core/tools/search.js", async (importOriginal) => {
+	const actual = (await importOriginal()) as Record<string, unknown>;
+	return {
+		...actual,
+		prepareRepoGraphIndex: mocks.prepareRepoGraphIndex,
+	};
+});
 
 vi.mock("../src/core/sdk.js", async (importOriginal) => {
 	const actual = (await importOriginal()) as Record<string, unknown>;
@@ -89,6 +98,7 @@ describe("sessionDir precedence", () => {
 		mocks.createAgentSession.mockClear();
 		mocks.runPrintMode.mockClear();
 		mocks.selectSession.mockReset();
+		mocks.prepareRepoGraphIndex.mockClear();
 
 		tempDir = join(tmpdir(), `dreb-session-dir-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		agentDir = join(tempDir, "agent");
@@ -107,6 +117,7 @@ describe("sessionDir precedence", () => {
 	});
 
 	afterEach(() => {
+		vi.restoreAllMocks();
 		process.chdir(originalCwd);
 		process.exitCode = originalExitCode;
 		Object.defineProperty(process.stdin, "isTTY", { value: originalIsTTY, configurable: true });
@@ -125,6 +136,49 @@ describe("sessionDir precedence", () => {
 		await main(["--print", "test prompt"]);
 
 		expect(mocks.state.capturedSessionDir).toBe("./settings-sessions");
+		expect(mocks.prepareRepoGraphIndex).toHaveBeenCalledOnce();
+		expect(mocks.prepareRepoGraphIndex).toHaveBeenCalledWith(realpathSync(projectDir), expect.any(Function));
+		expect(mocks.runPrintMode).toHaveBeenCalledOnce();
+	}, 15_000);
+
+	it("skips startup graph preparation for sessionless subagent child processes", async () => {
+		const { main } = await import("../src/main.js");
+		await main(["--print", "--no-session", "--agent-type", "Explore", "test prompt"]);
+
+		expect(mocks.prepareRepoGraphIndex).not.toHaveBeenCalled();
+		expect(mocks.runPrintMode).toHaveBeenCalledOnce();
+	}, 15_000);
+
+	it("warns and continues when startup graph preparation fails", async () => {
+		const { log } = await import("../src/core/logger.js");
+		const warnSpy = vi.spyOn(log, "warn").mockImplementation(() => {});
+		mocks.prepareRepoGraphIndex.mockRejectedValueOnce(new Error("disk full"));
+
+		const { main } = await import("../src/main.js");
+		await main(["--print", "test prompt"]);
+
+		await vi.waitFor(() => {
+			expect(warnSpy).toHaveBeenCalledWith(
+				expect.stringContaining("repository graph startup indexing failed: disk full"),
+			);
+		});
+		expect(mocks.runPrintMode).toHaveBeenCalledOnce();
+		warnSpy.mockRestore();
+	}, 15_000);
+
+	it("warns when startup graph preparation skips files", async () => {
+		const { log } = await import("../src/core/logger.js");
+		const warnSpy = vi.spyOn(log, "warn").mockImplementation(() => {});
+		mocks.prepareRepoGraphIndex.mockResolvedValueOnce({ failed: 2 } as any);
+
+		const { main } = await import("../src/main.js");
+		await main(["--print", "test prompt"]);
+
+		await vi.waitFor(() => {
+			expect(warnSpy).toHaveBeenCalledWith(
+				expect.stringContaining("repository graph startup indexing skipped 2 unreadable file(s)"),
+			);
+		});
 		expect(mocks.runPrintMode).toHaveBeenCalledOnce();
 	}, 15_000);
 

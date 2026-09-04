@@ -229,7 +229,7 @@ ${chalk.bold("Options:")}
   --no-tools                     Disable all standard built-in tools
   --tools <tools>                Comma-separated list of standard tools to enable (default: all)
                                  Available: read, bash, edit, write, grep, find, ls, web_search, web_fetch, subagent, wait, watch_github_ci, ask_user
-                                 Always active: search, skill, tasks_update
+                                 Always active: search, repo_graph, skill, tasks_update
   --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh, max
   --extension, -e <path>         Load an extension file (can be used multiple times)
   --no-extensions, -ne           Disable extension discovery (explicit -e paths still work)
@@ -342,6 +342,7 @@ ${chalk.bold("Standard Tools (default: all):")}
 
 ${chalk.bold("Always-active Tools:")}
   search       - Semantic codebase search using natural language
+  repo_graph   - Traverse bounded static file-import relationships
   skill        - Invoke a progressively loaded workflow
   tasks_update - Track visible session tasks
 `);

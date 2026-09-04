@@ -5,6 +5,14 @@ export { chunkFile } from "./chunker.js";
 
 // Database
 export { isSqliteAvailable, SearchDatabase } from "./db.js";
+export type {
+	DependencyDirection,
+	DependencyGraphNode,
+	DependencyGraphOptions,
+	DependencyGraphResult,
+} from "./dependency-graph.js";
+// Dependency graph
+export { queryDependencyGraph } from "./dependency-graph.js";
 export type { EmbedderOptions } from "./embedder.js";
 
 // Embedder
@@ -29,6 +37,7 @@ export type {
 	ChunkKind,
 	FileType,
 	ImportEdge,
+	IndexBuildResult,
 	IndexConfig,
 	IndexedFile,
 	IndexProgressCallback,

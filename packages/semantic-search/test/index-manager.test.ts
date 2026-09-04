@@ -198,6 +198,31 @@ describe("IndexManager", () => {
 			expect(db.getChunkCount()).toBeGreaterThan(0);
 		});
 
+		it("does not duplicate chunks when two structural builds start concurrently", async () => {
+			createFixtureProject(projectDir, {
+				"src/index.ts": "export function alpha() { return 1; }\nexport function beta() { return 2; }\n",
+			});
+			const secondManager = new IndexManager(config);
+
+			try {
+				await Promise.all([
+					manager.buildIndex(undefined, { embed: false }),
+					secondManager.buildIndex(undefined, { embed: false }),
+				]);
+
+				const chunks = manager.getDb().getAllChunks();
+				const signatures = new Set(
+					chunks.map((chunk) =>
+						[chunk.filePath, chunk.startLine, chunk.endLine, chunk.kind, chunk.name, chunk.content].join(":"),
+					),
+				);
+				expect(chunks.length).toBeGreaterThan(0);
+				expect(signatures.size).toBe(chunks.length);
+			} finally {
+				secondManager.close();
+			}
+		});
+
 		it("returns all zeros on second build with no changes", async () => {
 			createFixtureProject(projectDir, {
 				"stable.md": "# Stable\n\nUnchanging content.",
@@ -450,6 +475,36 @@ describe("IndexManager", () => {
 			const imports = db.getImportsFrom(fileA!.id);
 			// resolveImportPath joins dir + target: "src" + "./b" → "src/b"
 			expect(imports).toContain("src/b");
+		});
+
+		it("stores side-effect, re-export, and multiline TypeScript import edges", async () => {
+			createFixtureProject(projectDir, {
+				"src/a.ts": [
+					'import "./setup";',
+					'export { value } from "./value";',
+					'export * from "./barrel";',
+					'export * as utilities from "./utilities";',
+					"import {",
+					"  helper,",
+					'} from "./helper";',
+				].join("\n"),
+				"src/setup.ts": "export {};",
+				"src/value.ts": "export const value = 1;",
+				"src/barrel.ts": "export {};",
+				"src/utilities.ts": "export {};",
+				"src/helper.ts": "export const helper = true;",
+			});
+
+			await manager.buildIndex();
+			const fileA = manager.getDb().getFile("src/a.ts");
+			expect(fileA).not.toBeNull();
+			expect(manager.getDb().getImportsFrom(fileA!.id).sort()).toEqual([
+				"src/barrel",
+				"src/helper",
+				"src/setup",
+				"src/utilities",
+				"src/value",
+			]);
 		});
 
 		it("stores Python relative import edges during buildIndex", async () => {

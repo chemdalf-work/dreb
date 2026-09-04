@@ -9,6 +9,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { SearchDatabase } from "./db.js";
+import { type DependencyGraphOptions, type DependencyGraphResult, queryDependencyGraph } from "./dependency-graph.js";
 import { Embedder } from "./embedder.js";
 import { IndexManager } from "./index-manager.js";
 import { computeBm25Scores } from "./metrics/bm25.js";
@@ -18,7 +19,14 @@ import { computePathMatchScores } from "./metrics/path-match.js";
 import { computeSymbolMatchScores } from "./metrics/symbol-match.js";
 import { poemRank } from "./poem.js";
 import { classifyQuery } from "./query-classifier.js";
-import type { IndexConfig, IndexProgressCallback, MetricScores, SearchResult, StoredChunk } from "./types.js";
+import type {
+	IndexBuildResult,
+	IndexConfig,
+	IndexProgressCallback,
+	MetricScores,
+	SearchResult,
+	StoredChunk,
+} from "./types.js";
 import { topKSimilar } from "./vector-store.js";
 
 // ============================================================================
@@ -200,6 +208,34 @@ export class SearchEngine {
 			}
 
 			return results;
+		});
+	}
+
+	/**
+	 * Build or incrementally update structural index data without generating embeddings.
+	 * This can prepare the file-import graph before the first graph query.
+	 */
+	async prepareDependencyGraph(onProgress?: IndexProgressCallback): Promise<IndexBuildResult> {
+		return this.enqueue(async () => {
+			const indexManager = this.getIndexManager();
+			return indexManager.buildIndex(onProgress, { embed: false });
+		});
+	}
+
+	/**
+	 * Traverse the repository's indexed file-import graph.
+	 *
+	 * This updates structural index data but deliberately skips embedding work.
+	 * A later semantic search generates any missing vectors on demand.
+	 */
+	async dependencyGraph(
+		filePath: string,
+		options?: DependencyGraphOptions & { onProgress?: IndexProgressCallback },
+	): Promise<DependencyGraphResult> {
+		return this.enqueue(async () => {
+			const indexManager = this.getIndexManager();
+			await indexManager.buildIndex(options?.onProgress, { embed: false });
+			return queryDependencyGraph(indexManager.getDb(), filePath, options);
 		});
 	}
 
