@@ -158,6 +158,8 @@ export type JournalEventData =
 	| { type: "effect_abandoned"; effectId: string; kind: EffectKind; reason: string }
 	| {
 			type: "round_completed";
+			effectId: string;
+			artifact: string;
 			round: number;
 			report: TerraRoundReport;
 			failureSignature?: string;

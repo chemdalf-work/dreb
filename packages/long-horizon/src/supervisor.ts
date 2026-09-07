@@ -32,6 +32,7 @@ export interface LongHorizonSupervisorOptions {
 }
 
 interface ModelEffect<T> {
+	effectId: string;
 	value: T;
 	result: PromptResult;
 	artifact: string;
@@ -102,8 +103,10 @@ export class LongHorizonSupervisor {
 	}
 
 	private loadLastReport(): TerraRoundReport | undefined {
-		const path = this.latestArtifact("round");
-		return path ? this.store.readArtifact<{ value: TerraRoundReport }>(path).value : undefined;
+		for (const record of this.store.readRecords().toReversed()) {
+			if (record.event.type === "round_completed") return record.event.report;
+		}
+		return undefined;
 	}
 
 	private loadLastAdvice(): SolAdvice | undefined {
@@ -173,6 +176,7 @@ export class LongHorizonSupervisor {
 		session: HostedSession,
 		prompt: string,
 		parse: (text: string, result: PromptResult) => T,
+		deferCompletion = false,
 	): Promise<ModelEffect<T>> {
 		const effectId = randomUUID();
 		this.store.append({ type: "effect_intent", effectId, kind, sessionId: session.reference.id });
@@ -203,12 +207,12 @@ export class LongHorizonSupervisor {
 				error: (error as Error).message,
 				result,
 			});
-			this.store.append({ type: "effect_completed", effectId, kind, artifact });
+			if (!deferCompletion) this.store.append({ type: "effect_completed", effectId, kind, artifact });
 			throw error;
 		}
 		const artifact = this.store.writeArtifact(kind, effectId, { value, result });
-		this.store.append({ type: "effect_completed", effectId, kind, artifact });
-		return { value, result, artifact };
+		if (!deferCompletion) this.store.append({ type: "effect_completed", effectId, kind, artifact });
+		return { effectId, value, result, artifact };
 	}
 
 	private block(reason: string): void {
@@ -531,17 +535,19 @@ export class LongHorizonSupervisor {
 		let previous = this.loadLastReport();
 		state = this.store.replay();
 		const activeReference = state.sessions.find((session) => session.id === state.activeSessionId);
-		if (activeReference && existsSync(activeReference.file)) {
-			try {
-				this.active = await this.openExecutor(activeReference);
-			} catch (error) {
-				this.block(`could not reopen executor session ${activeReference.id}: ${(error as Error).message}`);
-				return this.status();
+		if (state.phase !== "handoff") {
+			if (activeReference && existsSync(activeReference.file)) {
+				try {
+					this.active = await this.openExecutor(activeReference);
+				} catch (error) {
+					this.block(`could not reopen executor session ${activeReference.id}: ${(error as Error).message}`);
+					return this.status();
+				}
+			} else {
+				// A registered session with no file never received an assistant turn, so it is
+				// safe to replace without duplicating a model round.
+				this.active = await this.createSession("executor", activeReference?.parentFile);
 			}
-		} else {
-			// A registered session with no file never received an assistant turn, so it is
-			// safe to replace without duplicating a model round.
-			this.active = await this.createSession("executor", activeReference?.parentFile);
 		}
 
 		let nextPrompt: string;
@@ -551,13 +557,26 @@ export class LongHorizonSupervisor {
 				this.block("handoff phase has no durable handoff artifact");
 				return this.status();
 			}
-			if (!this.active.reference.parentFile) {
-				this.active.dispose();
-				const parent = state.sessions.find((session) => session.id === handoff.fromSessionId);
-				if (!parent) {
-					this.block("handoff parent session is missing");
+			const parent = state.sessions.find((session) => session.id === handoff.fromSessionId);
+			if (!parent) {
+				this.block("handoff parent session is missing");
+				return this.status();
+			}
+			const registeredChild = activeReference?.id === parent.id ? undefined : activeReference;
+			if (registeredChild && registeredChild.parentFile !== parent.file) {
+				this.block("active handoff session does not descend from the persisted parent");
+				return this.status();
+			}
+			if (registeredChild && existsSync(registeredChild.file)) {
+				try {
+					this.active = await this.openExecutor(registeredChild);
+				} catch (error) {
+					this.block(`could not reopen executor session ${registeredChild.id}: ${(error as Error).message}`);
 					return this.status();
 				}
+			} else {
+				// Whether the exhausted parent already has a parent is irrelevant: a
+				// handoff always resumes in a child of handoff.fromSessionId.
 				this.active = await this.createSession("executor", parent.file);
 			}
 			this.store.append({
@@ -641,8 +660,12 @@ export class LongHorizonSupervisor {
 
 				let effect: ModelEffect<TerraRoundReport>;
 				try {
-					effect = await this.modelEffect("round", this.active!, nextPrompt, (text, result) =>
-						parseTerraReport(text, [...result.toolEvidence, ...result.commandEvidence]),
+					effect = await this.modelEffect(
+						"round",
+						this.active!,
+						nextPrompt,
+						(text, result) => parseTerraReport(text, [...result.toolEvidence, ...result.commandEvidence]),
+						true,
 					);
 				} catch (error) {
 					if (!this.applyControl()) this.block(`executor round failed validation: ${(error as Error).message}`);
@@ -663,6 +686,8 @@ export class LongHorizonSupervisor {
 						: undefined;
 				this.store.append({
 					type: "round_completed",
+					effectId: effect.effectId,
+					artifact: effect.artifact,
 					round: beforeRound.rounds + 1,
 					report,
 					failureSignature,

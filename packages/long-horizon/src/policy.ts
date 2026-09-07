@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, lstatSync, readlinkSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { createReadStream, existsSync, lstatSync, readlinkSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { Type } from "@dreb/ai";
 import {
 	createEditTool,
@@ -325,8 +326,87 @@ type RoleTool =
 	| ReturnType<typeof createEditTool>
 	| ReturnType<typeof createWriteTool>;
 
+function isContained(root: string, candidate: string): boolean {
+	const path = relative(root, candidate);
+	return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
+}
+
+function normalizeToolPath(requestedPath: string): string {
+	let normalized = requestedPath;
+	if (
+		normalized.length >= 2 &&
+		((normalized.startsWith('"') && normalized.endsWith('"')) ||
+			(normalized.startsWith("'") && normalized.endsWith("'")))
+	) {
+		normalized = normalized.slice(1, -1);
+	}
+	if (normalized.startsWith("@")) normalized = normalized.slice(1);
+	normalized = normalized.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ");
+	if (normalized === "~") return homedir();
+	if (normalized.startsWith("~/")) return `${homedir()}${normalized.slice(1)}`;
+	return normalized;
+}
+
+function assertResolvedWorkspacePath(cwd: string, candidate: string): void {
+	const lexicalRoot = resolve(cwd);
+	if (!isContained(lexicalRoot, candidate)) throw new Error("file tool path escapes configured workspace");
+
+	const realRoot = realpathSync(lexicalRoot);
+	let existing = candidate;
+	while (true) {
+		try {
+			lstatSync(existing);
+			break;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			const parent = dirname(existing);
+			if (parent === existing) throw new Error("file tool path has no existing workspace ancestor");
+			existing = parent;
+		}
+	}
+	let realExisting: string;
+	try {
+		realExisting = realpathSync(existing);
+	} catch {
+		throw new Error("file tool path contains an unresolved symbolic link");
+	}
+	if (!isContained(realRoot, realExisting)) throw new Error("file tool path escapes configured workspace via symlink");
+}
+
+/** Validate both lexical traversal and existing symlink ancestors before a stock file tool runs. */
+export function assertWorkspacePath(cwd: string, requestedPath: string): void {
+	assertResolvedWorkspacePath(cwd, resolve(cwd, normalizeToolPath(requestedPath || ".")));
+}
+
+function assertReadWorkspacePath(cwd: string, requestedPath: string): void {
+	const requested = resolve(cwd, normalizeToolPath(requestedPath));
+	const nfd = requested.normalize("NFD");
+	const candidates = [
+		requested,
+		requested.replace(/ (AM|PM)\./g, "\u202F$1."),
+		nfd,
+		requested.replace(/'/g, "\u2019"),
+		nfd.replace(/'/g, "\u2019"),
+	];
+	assertResolvedWorkspacePath(cwd, candidates.find((candidate) => existsSync(candidate)) ?? requested);
+}
+
+function confineRoleTool<T extends RoleTool>(tool: T, cwd: string): T {
+	const execute = tool.execute.bind(tool);
+	return {
+		...tool,
+		execute: (async (toolCallId: string, params: { path?: string }, signal?: AbortSignal, onUpdate?: unknown) => {
+			if (tool.name === "read") assertReadWorkspacePath(cwd, params.path ?? ".");
+			else assertWorkspacePath(cwd, params.path ?? ".");
+			return execute(toolCallId, params as never, signal, onUpdate as never);
+		}) as T["execute"],
+	};
+}
+
 export function roleToolSurface(role: SessionRole, cwd: string): RoleTool[] {
-	const readOnly: RoleTool[] = [createReadTool(cwd), createGrepTool(cwd), createFindTool(cwd), createLsTool(cwd)];
+	const readOnly: RoleTool[] = [createReadTool(cwd), createGrepTool(cwd), createFindTool(cwd), createLsTool(cwd)].map(
+		(tool) => confineRoleTool(tool, cwd),
+	);
 	if (role !== "executor") return readOnly;
-	return [...readOnly, createEditTool(cwd), createWriteTool(cwd)];
+	return [...readOnly, confineRoleTool(createEditTool(cwd), cwd), confineRoleTool(createWriteTool(cwd), cwd)];
 }

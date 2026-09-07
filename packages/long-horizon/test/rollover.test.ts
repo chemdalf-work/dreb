@@ -61,9 +61,15 @@ describe("safe-edge rollover", () => {
 		const roundId = "round-recovery";
 		store.append({ type: "effect_intent", effectId: roundId, kind: "round", sessionId: "old" });
 		const roundArtifact = store.writeArtifact("round", roundId, { value: prior });
-		store.append({ type: "effect_completed", effectId: roundId, kind: "round", artifact: roundArtifact });
 		store.append({ type: "context_observed", sessionId: "old", tokens: 301_000, contextWindow: 400_000 });
-		store.append({ type: "round_completed", round: 1, report: prior, verificationSucceeded: false });
+		store.append({
+			type: "round_completed",
+			effectId: roundId,
+			artifact: roundArtifact,
+			round: 1,
+			report: prior,
+			verificationSucceeded: false,
+		});
 
 		const sessions = new FakeSessionHost({ executor: [promptResult(report("complete"))] });
 		const commandRunner = async (command: string, cwd: string) =>
@@ -72,6 +78,81 @@ describe("safe-edge rollover", () => {
 		expect(status.phase).toBe("completed");
 		expect(sessions.created[0].parentFile).toBe(oldFile);
 		expect(sessions.prompts[0].text).toContain("validated durable handoff");
+	});
+
+	it("creates the next child after a crash during a later-generation handoff", async () => {
+		const config = testConfig();
+		const store = RunStore.create(config);
+		store.append({ type: "phase_changed", from: "created", to: "planning", reason: "start" });
+		store.append({ type: "effect_intent", effectId: "plan-later", kind: "plan" });
+		const planArtifact = store.writeArtifact("plan", "plan-later", { value: parseSolPlan(PLAN) });
+		store.append({ type: "effect_completed", effectId: "plan-later", kind: "plan", artifact: planArtifact });
+		store.append({ type: "phase_changed", from: "planning", to: "executing", reason: "planned" });
+		const firstFile = `${store.sessionsDir}/executor-a.jsonl`;
+		const secondFile = `${store.sessionsDir}/executor-b.jsonl`;
+		writeFileSync(firstFile, "first generation\n");
+		writeFileSync(secondFile, "second generation\n");
+		store.append({
+			type: "session_registered",
+			session: {
+				id: "executor-a",
+				role: "executor",
+				file: firstFile,
+				provider: "test",
+				modelId: "terra",
+				thinkingLevel: "high",
+				createdAt: new Date().toISOString(),
+			},
+		});
+		store.append({
+			type: "session_registered",
+			session: {
+				id: "executor-b",
+				role: "executor",
+				file: secondFile,
+				parentFile: firstFile,
+				provider: "test",
+				modelId: "terra",
+				thinkingLevel: "high",
+				createdAt: new Date().toISOString(),
+			},
+		});
+		store.append({ type: "phase_changed", from: "executing", to: "handoff", reason: "safe-edge rollover" });
+		store.append({ type: "effect_intent", effectId: "handoff-b", kind: "handoff", sessionId: "executor-b" });
+		const handoffArtifact = store.writeArtifact("handoff", "handoff-b", {
+			schemaVersion: 1,
+			fromSessionId: "executor-b",
+			workUnitId: "unit",
+			strategyId: "strategy-a",
+			summary: "second generation reached the safe edge",
+			nextAction: "continue in a third generation",
+			evidenceIds: [],
+			createdAt: new Date().toISOString(),
+		});
+		store.append({
+			type: "effect_completed",
+			effectId: "handoff-b",
+			kind: "handoff",
+			artifact: handoffArtifact,
+		});
+
+		const sessions = new FakeSessionHost({ executor: [promptResult(report("complete"))] });
+		const commandRunner = async (command: string, cwd: string) =>
+			commandEvidence(command, await getWorkspaceIdentity(cwd));
+		const status = await new LongHorizonSupervisor(RunStore.open(store.runDir), {
+			sessionHost: sessions,
+			commandRunner,
+		}).run();
+		expect(status.phase).toBe("completed");
+		expect(status.handoffs).toBe(2);
+		expect(sessions.created).toHaveLength(1);
+		expect(sessions.created[0].parentFile).toBe(secondFile);
+		expect(sessions.prompts).toEqual([
+			expect.objectContaining({
+				sessionId: sessions.created[0].id,
+				text: expect.stringContaining("validated durable handoff"),
+			}),
+		]);
 	});
 
 	it("uses the soft band for wrap-up without interrupting or replacing the current session", async () => {

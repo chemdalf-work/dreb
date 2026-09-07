@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { parseTerraReport } from "../src/reports.js";
 import { RunStore } from "../src/run-store.js";
 import { selectNextAction } from "../src/state-machine.js";
-import { testConfig } from "./helpers.js";
+import { report, testConfig } from "./helpers.js";
 
 describe("state machine", () => {
 	it("enforces transitions and control precedence", () => {
@@ -22,6 +23,25 @@ describe("state machine", () => {
 		expect(() => store.append({ type: "effect_completed", effectId: "b", kind: "plan" })).toThrow(/matching intent/);
 		store.acknowledgePendingEffect("operator inspected workspace");
 		expect(store.replay().pendingEffect).toBeUndefined();
+	});
+
+	it("commits a round effect and its accounting in one journal transition", () => {
+		const store = RunStore.create(testConfig());
+		store.append({ type: "effect_intent", effectId: "round-a", kind: "round" });
+		const artifact = store.writeArtifact("round", "round-a", { value: parseTerraReport(report("progress"), []) });
+		expect(() => store.append({ type: "effect_completed", effectId: "round-a", kind: "round", artifact })).toThrow(
+			/must commit through round_completed/,
+		);
+		const state = store.append({
+			type: "round_completed",
+			effectId: "round-a",
+			artifact,
+			round: 1,
+			report: parseTerraReport(report("progress"), []),
+			verificationSucceeded: false,
+		});
+		expect(state.pendingEffect).toBeUndefined();
+		expect(state.rounds).toBe(1);
 	});
 
 	it("applies budget limits before ordinary execution", () => {
