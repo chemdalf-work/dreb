@@ -18,6 +18,12 @@ describe("LongHorizonSupervisor", () => {
 		expect(status.phase).toBe("completed");
 		expect(sessions.created.map((session) => session.role)).toEqual(["planner", "executor"]);
 		expect(status.rounds).toBe(1);
+		const records = supervisor.store.readRecords();
+		const committedRound = records.find((record) => record.event.type === "round_completed");
+		expect(committedRound?.event).toMatchObject({ type: "round_completed", round: 1 });
+		expect(records.some((record) => record.event.type === "effect_completed" && record.event.kind === "round")).toBe(
+			false,
+		);
 	});
 
 	it("fails before planning when the workspace identity is unavailable", async () => {

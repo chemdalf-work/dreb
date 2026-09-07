@@ -1,5 +1,5 @@
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	assertCommandAuthorized,
@@ -26,6 +26,56 @@ describe("tool policy", () => {
 			"edit",
 			"write",
 		]);
+	});
+
+	it("rejects absolute paths outside the configured workspace for every role file tool", async () => {
+		const config = testConfig();
+		const outside = join(dirname(config.cwd), "outside.txt");
+		writeFileSync(outside, "secret\n");
+		for (const role of ["planner", "executor"] as const) {
+			for (const tool of roleToolSurface(role, config.cwd)) {
+				const params =
+					tool.name === "grep"
+						? { pattern: "secret", path: outside }
+						: tool.name === "find"
+							? { pattern: "*", path: outside }
+							: tool.name === "edit"
+								? { path: outside, oldText: "secret", newText: "changed" }
+								: tool.name === "write"
+									? { path: outside, content: "changed" }
+									: { path: outside };
+				await expect(tool.execute("call", params as never)).rejects.toThrow(/escapes configured workspace/);
+			}
+		}
+		const read = roleToolSurface("planner", config.cwd).find((tool) => tool.name === "read");
+		if (!read) throw new Error("missing read tool");
+		for (const disguised of [`@${outside}`, `"${outside}"`]) {
+			await expect(read.execute("call", { path: disguised } as never)).rejects.toThrow(
+				/escapes configured workspace/,
+			);
+		}
+	});
+
+	it("rejects read fallback to an external symlink with a normalized filename", async () => {
+		const config = testConfig();
+		const outside = join(dirname(config.cwd), "outside-secret.txt");
+		writeFileSync(outside, "secret\n");
+		symlinkSync(outside, join(config.cwd, "owner’s-secret.txt"));
+		const read = roleToolSurface("planner", config.cwd).find((tool) => tool.name === "read");
+		if (!read) throw new Error("missing read tool");
+		await expect(read.execute("call", { path: "owner's-secret.txt" } as never)).rejects.toThrow(/symlink/);
+	});
+
+	it("rejects writes through a workspace symlink to an outside directory", async () => {
+		const config = testConfig();
+		const outsideDir = dirname(config.cwd);
+		const link = join(config.cwd, "escape");
+		symlinkSync(outsideDir, link, "dir");
+		const target = join(link, "created-outside.txt");
+		const write = roleToolSurface("executor", config.cwd).find((tool) => tool.name === "write");
+		if (!write) throw new Error("missing write tool");
+		await expect(write.execute("call", { path: target, content: "escaped" } as never)).rejects.toThrow(/symlink/);
+		expect(existsSync(join(outsideDir, "created-outside.txt"))).toBe(false);
 	});
 
 	it("default-denies commands outside the exact allowlist and hazardous categories", () => {

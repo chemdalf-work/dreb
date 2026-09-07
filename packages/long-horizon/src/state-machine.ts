@@ -107,12 +107,19 @@ export function applyJournalRecord(
 				throw new Error(`effect resolution without matching intent: ${event.effectId}`);
 			}
 			if (previous.pendingEffect.kind !== event.kind) throw new Error(`effect kind mismatch: ${event.effectId}`);
+			if (event.type === "effect_completed" && event.kind === "round") {
+				throw new Error("round effects must commit through round_completed");
+			}
 			next.pendingEffect = undefined;
 			if (event.type === "effect_abandoned") next.blockedReason = event.reason;
 			break;
 		case "round_completed": {
+			if (previous.pendingEffect?.effectId !== event.effectId || previous.pendingEffect.kind !== "round") {
+				throw new Error(`round completion without matching effect intent: ${event.effectId}`);
+			}
 			if (event.round !== previous.rounds + 1) throw new Error(`invalid round number: ${event.round}`);
 			if (event.round > config.limits.maxRounds) throw new Error(`round limit exceeded: ${event.round}`);
+			next.pendingEffect = undefined;
 			next.rounds = event.round;
 			next.lastWorkUnitId = event.report.workUnitId;
 			next.lastStrategyId = event.report.strategyId;
