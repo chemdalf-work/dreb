@@ -6,10 +6,10 @@
  * against the faux streaming harness, with a fake process.stdout.write that
  * simulates a busy dashboard (permanent pipe backpressure) so every event
  * frame accumulates in the guard's queue. The turn's unique base64 payload
- * far exceeds the guard's 16 MiB cap, and the consumer makes no drain
- * progress until the test flips the backpressure switch — well inside the
- * 30 s no-drain grace window. The session must survive and every frame must
- * be delivered in order.
+ * far exceeds the former 16 MiB immediate-abort threshold but remains below
+ * the 64 MiB hard cap, and the consumer makes drain progress inside the 30 s
+ * watchdog window. The session must survive and every frame must be delivered
+ * in order.
  *
  * Before the fix, the guard aborted (process.exit(1)) the moment the backlog
  * crossed the cap, so this test would observe the exit and missing frames.
@@ -103,7 +103,7 @@ describe("runRpcMode multi-image survival (issue 495)", () => {
 		harness = undefined;
 	});
 
-	it("survives an over-cap backlog while the consumer drains within the grace window", async () => {
+	it("survives a large backlog while the consumer drains within the watchdog window", async () => {
 		// Permanent backpressure: every frame after the first goes into the
 		// guard's queue.
 		let writable = false;
@@ -146,11 +146,11 @@ describe("runRpcMode multi-image survival (issue 495)", () => {
 		process.stdout.emit("drain");
 		await vi.waitFor(() => expect(captured.length).toBe(harness!.events.length));
 
-		// 0. The queued backlog really did exceed the guard's cap (regression
-		// scenario: before the fix this crossed the cap and killed the child).
-		expect(captured.reduce((total, line) => total + line.length, 0)).toBeGreaterThan(
-			outputGuard.MAX_QUEUED_STDOUT_BYTES,
-		);
+		// 0. The queued backlog exceeds the former immediate-abort threshold
+		// while remaining within the guard's hard memory bound.
+		const capturedBytes = captured.reduce((total, line) => total + Buffer.byteLength(line), 0);
+		expect(capturedBytes).toBeGreaterThan(16 * MB);
+		expect(capturedBytes).toBeLessThanOrEqual(outputGuard.MAX_QUEUED_STDOUT_BYTES);
 
 		// 1. No abort at any point.
 		expect(exitSpy).not.toHaveBeenCalled();
