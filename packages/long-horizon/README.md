@@ -45,6 +45,8 @@ dreb-long-horizon resume .dreb/long-runs/<run-id> --acknowledge-pending "workspa
 dreb-long-horizon abort  .dreb/long-runs/<run-id> "stop work"
 ```
 
+`status` emits the complete `LongHorizonStatus` JSON, including chronological `handoffHistory` and `escalationHistory` entries with journal sequence/timestamp metadata and content-digested artifact references.
+
 Signals and control requests are applied at safe control points; context thresholds never abort an active model turn or tool operation. The default soft boundary is 250k current-context tokens and the strong rollover boundary is 300k. Automatic compaction remains available as emergency protection, but the supervisor disables `continueAfterAutoCompaction` inside hosted sessions so only durable supervisor decisions can dispatch another round.
 
 ## Durability and recovery

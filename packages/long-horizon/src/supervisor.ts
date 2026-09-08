@@ -18,14 +18,16 @@ import {
 	validateSolAdvice,
 	validateSolPlan,
 } from "./reports.js";
-import { RunStore } from "./run-store.js";
+import { digest, RunStore } from "./run-store.js";
 import { DrebSessionHost, type HostedSession, type PromptResult, type SessionHost } from "./session-host.js";
-import { isTerminalPhase, selectNextAction } from "./state-machine.js";
+import { isTerminalPhase, replayJournal, selectNextAction } from "./state-machine.js";
 import type {
 	CapturedFailureEvidence,
 	CommandEvidence,
 	EffectKind,
+	EscalationHistoryEntry,
 	HandoffArtifact,
+	HandoffHistoryEntry,
 	LongHorizonRunConfig,
 	LongHorizonStatus,
 	SessionReference,
@@ -94,12 +96,66 @@ export class LongHorizonSupervisor {
 	}
 
 	status(): LongHorizonStatus {
-		const state = this.store.replay();
+		const records = this.store.readRecords();
+		if (records[0]?.event.type !== "run_created" || records[0].event.configDigest !== digest(this.config)) {
+			throw new Error("run configuration does not match journal");
+		}
+		const state = replayJournal(records, this.config);
+		const handoffSessions = new Map<string, string>();
+		const handoffHistory: HandoffHistoryEntry[] = [];
+		const escalationHistory: EscalationHistoryEntry[] = [];
+		for (const record of records) {
+			const event = record.event;
+			if (event.type === "effect_intent" && event.kind === "handoff") {
+				if (event.sessionId) handoffSessions.set(event.effectId, event.sessionId);
+				continue;
+			}
+			if (event.type === "effect_abandoned" && event.kind === "handoff") {
+				handoffSessions.delete(event.effectId);
+				continue;
+			}
+			if (event.type === "effect_completed" && event.kind === "handoff") {
+				const fromSessionId = handoffSessions.get(event.effectId);
+				if (!fromSessionId || !event.artifact || !event.artifactDigest) {
+					throw new Error(
+						`completed handoff ${event.effectId} is missing its durable source or artifact reference`,
+					);
+				}
+				const handoff = validateHandoffArtifact(
+					this.store.readArtifact<unknown>(event.artifact, event.artifactDigest),
+				);
+				if (handoff.fromSessionId !== fromSessionId) {
+					throw new Error("handoff intent session does not match the handoff artifact source session");
+				}
+				handoffHistory.push({
+					seq: record.seq,
+					timestamp: record.timestamp,
+					effectId: event.effectId,
+					fromSessionId,
+					artifact: event.artifact,
+					artifactDigest: event.artifactDigest,
+				});
+				handoffSessions.delete(event.effectId);
+				continue;
+			}
+			if (event.type === "escalation_completed") {
+				escalationHistory.push({
+					seq: record.seq,
+					timestamp: record.timestamp,
+					workUnitId: event.workUnitId,
+					signature: event.signature,
+					adviceArtifact: event.adviceArtifact,
+					adviceArtifactDigest: event.adviceArtifactDigest,
+				});
+			}
+		}
 		return {
 			...state,
 			limits: this.config.limits,
 			rollover: this.config.rollover,
 			elapsedMs: Math.max(0, Date.now() - Date.parse(this.config.createdAt)),
+			handoffHistory,
+			escalationHistory,
 		};
 	}
 

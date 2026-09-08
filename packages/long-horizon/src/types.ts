@@ -234,8 +234,28 @@ export interface RunState {
 	lastEvent: JournalEventData;
 }
 
+export interface HandoffHistoryEntry {
+	seq: number;
+	timestamp: string;
+	effectId: string;
+	fromSessionId: string;
+	artifact: string;
+	artifactDigest: string;
+}
+
+export interface EscalationHistoryEntry {
+	seq: number;
+	timestamp: string;
+	workUnitId: string;
+	signature: string;
+	adviceArtifact: string;
+	adviceArtifactDigest: string;
+}
+
 export interface LongHorizonStatus extends RunState {
 	limits: RunLimits;
 	rollover: RolloverThresholds;
 	elapsedMs: number;
+	handoffHistory: HandoffHistoryEntry[];
+	escalationHistory: EscalationHistoryEntry[];
 }
