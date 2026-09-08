@@ -175,7 +175,7 @@ describe("safe-edge rollover", () => {
 		]);
 	});
 
-	it("validates a persisted handoff before creating its child session", async () => {
+	it("rejects an invalid handoff artifact before creating its child session", () => {
 		const config = testConfig();
 		const store = RunStore.create(config);
 		store.append({ type: "phase_changed", from: "created", to: "planning", reason: "start" });
@@ -218,17 +218,16 @@ describe("safe-edge rollover", () => {
 			evidenceIds: [],
 			createdAt: new Date().toISOString(),
 		});
-		store.append({
-			type: "effect_completed",
-			effectId: "handoff-strict",
-			kind: "handoff",
-			artifact: handoffArtifact,
-			artifactDigest: store.artifactDigest(handoffArtifact),
-		});
-		const sessions = new FakeSessionHost({});
-
-		await expect(new LongHorizonSupervisor(store, { sessionHost: sessions }).run()).rejects.toThrow(/fromSessionId/);
-		expect(sessions.created).toHaveLength(0);
+		expect(() =>
+			store.append({
+				type: "effect_completed",
+				effectId: "handoff-strict",
+				kind: "handoff",
+				artifact: handoffArtifact,
+				artifactDigest: store.artifactDigest(handoffArtifact),
+			}),
+		).toThrow(/fromSessionId/);
+		expect(store.replay().pendingEffect).toMatchObject({ effectId: "handoff-strict", kind: "handoff" });
 	});
 
 	it("uses the soft band for wrap-up without interrupting or replacing the current session", async () => {

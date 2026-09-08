@@ -13,9 +13,11 @@ import {
 } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { parseRunConfig } from "./config.js";
+import { validateHandoffArtifact } from "./reports.js";
 import { applyJournalRecord, replayJournal } from "./state-machine.js";
 import type {
 	CapturedFailureEvidence,
+	HandoffArtifact,
 	JournalEventData,
 	JournalRecord,
 	LongHorizonRunConfig,
@@ -257,6 +259,9 @@ function validateJournalEvent(value: unknown): JournalEventData {
 			nonEmptyString(event.effectId, `${name}.effectId`);
 			enumString(event.kind, `${name}.kind`, EFFECT_KINDS);
 			optionalString(event.sessionId, `${name}.sessionId`);
+			if (event.kind === "handoff" && event.sessionId === undefined) {
+				throw new Error(`${name}.sessionId is required for a handoff intent`);
+			}
 			break;
 		case "effect_completed":
 			exactKeys(event, name, ["type", "effectId", "kind"], ["artifact", "artifactDigest"]);
@@ -265,6 +270,9 @@ function validateJournalEvent(value: unknown): JournalEventData {
 			optionalString(event.artifact, `${name}.artifact`);
 			if ((event.artifact === undefined) !== (event.artifactDigest === undefined)) {
 				throw new Error(`${name}.artifact and artifactDigest must be recorded together`);
+			}
+			if (event.kind === "handoff" && event.artifact === undefined) {
+				throw new Error(`${name}.artifact and artifactDigest are required for a handoff completion`);
 			}
 			if (event.artifactDigest !== undefined) artifactDigest(event.artifactDigest, `${name}.artifactDigest`);
 			break;
@@ -542,8 +550,10 @@ export class RunStore {
 
 	append(event: JournalEventData): RunState {
 		const validatedEvent = validateJournalEvent(event);
+		let completedHandoff: HandoffArtifact | undefined;
 		if (validatedEvent.type === "effect_completed" && validatedEvent.artifact) {
-			this.readArtifact(validatedEvent.artifact, validatedEvent.artifactDigest!);
+			const artifact = this.readArtifact<unknown>(validatedEvent.artifact, validatedEvent.artifactDigest!);
+			if (validatedEvent.kind === "handoff") completedHandoff = validateHandoffArtifact(artifact);
 		} else if (validatedEvent.type === "round_completed") {
 			this.readArtifact(validatedEvent.artifact, validatedEvent.artifactDigest);
 		} else if (validatedEvent.type === "escalation_completed") {
@@ -553,6 +563,9 @@ export class RunStore {
 		try {
 			const records = this.readRecords();
 			const previous = records.length ? replayJournal(records, this.config) : undefined;
+			if (completedHandoff && previous?.pendingEffect?.sessionId !== completedHandoff.fromSessionId) {
+				throw new Error("handoff intent session does not match the handoff artifact source session");
+			}
 			const unsigned: Omit<JournalRecord, "hash"> = {
 				schemaVersion: 1,
 				seq: previous ? previous.lastSeq + 1 : 0,
@@ -578,8 +591,26 @@ export class RunStore {
 
 	private validateArtifactReferences(records: readonly JournalRecord[]): void {
 		const checked = new Set<string>();
+		const handoffSessions = new Map<string, string>();
 		for (const record of records) {
 			const event = record.event;
+			if (event.type === "effect_intent" && event.kind === "handoff") {
+				handoffSessions.set(event.effectId, event.sessionId!);
+				continue;
+			}
+			if (event.type === "effect_abandoned" && event.kind === "handoff") {
+				handoffSessions.delete(event.effectId);
+				continue;
+			}
+			if (event.type === "effect_completed" && event.kind === "handoff") {
+				const handoff = validateHandoffArtifact(this.readArtifact<unknown>(event.artifact!, event.artifactDigest!));
+				if (handoffSessions.get(event.effectId) !== handoff.fromSessionId) {
+					throw new Error("handoff intent session does not match the handoff artifact source session");
+				}
+				handoffSessions.delete(event.effectId);
+				checked.add(`${event.artifact}\0${event.artifactDigest}`);
+				continue;
+			}
 			let artifact: string | undefined;
 			let expectedDigest: string | undefined;
 			if (event.type === "effect_completed" && event.artifact) {

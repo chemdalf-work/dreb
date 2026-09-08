@@ -105,6 +105,92 @@ describe("RunStore", () => {
 		);
 	});
 
+	it("requires completed handoffs to identify the same source session as their durable artifact", () => {
+		const missingSource = RunStore.create(testConfig());
+		expect(() => missingSource.append({ type: "effect_intent", effectId: "handoff", kind: "handoff" })).toThrow(
+			/sessionId is required for a handoff intent/,
+		);
+
+		const missingArtifact = RunStore.create(testConfig());
+		missingArtifact.append({
+			type: "effect_intent",
+			effectId: "handoff",
+			kind: "handoff",
+			sessionId: "executor-1",
+		});
+		expect(() => missingArtifact.append({ type: "effect_completed", effectId: "handoff", kind: "handoff" })).toThrow(
+			/required for a handoff completion/,
+		);
+
+		const mismatched = RunStore.create(testConfig());
+		mismatched.append({
+			type: "effect_intent",
+			effectId: "handoff",
+			kind: "handoff",
+			sessionId: "executor-1",
+		});
+		const artifact = mismatched.writeArtifact("handoff", "handoff", {
+			schemaVersion: 1,
+			fromSessionId: "executor-2",
+			workUnitId: "unit",
+			strategyId: "strategy-a",
+			summary: "checkpoint",
+			nextAction: "continue",
+			evidenceIds: [],
+			createdAt: new Date().toISOString(),
+		});
+		expect(() =>
+			mismatched.append({
+				type: "effect_completed",
+				effectId: "handoff",
+				kind: "handoff",
+				artifact,
+				artifactDigest: mismatched.artifactDigest(artifact),
+			}),
+		).toThrow(/does not match the handoff artifact source session/);
+	});
+
+	it("rejects a handoff source mismatch when reopening a rewritten journal and artifact", () => {
+		const store = RunStore.create(testConfig());
+		store.append({
+			type: "effect_intent",
+			effectId: "handoff",
+			kind: "handoff",
+			sessionId: "executor-1",
+		});
+		const handoff = {
+			schemaVersion: 1,
+			fromSessionId: "executor-1",
+			workUnitId: "unit",
+			strategyId: "strategy-a",
+			summary: "checkpoint",
+			nextAction: "continue",
+			evidenceIds: [],
+			createdAt: new Date().toISOString(),
+		};
+		const artifact = store.writeArtifact("handoff", "handoff", handoff);
+		store.append({
+			type: "effect_completed",
+			effectId: "handoff",
+			kind: "handoff",
+			artifact,
+			artifactDigest: store.artifactDigest(artifact),
+		});
+
+		writeFileSync(artifact, `${JSON.stringify({ ...handoff, fromSessionId: "executor-2" }, null, 2)}\n`);
+		const records = readFileSync(store.journalPath, "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line));
+		records[2].event.artifactDigest = createHash("sha256").update(readFileSync(artifact)).digest("hex");
+		const { hash: _oldHash, ...unsigned } = records[2];
+		records[2].hash = digest(unsigned);
+		writeFileSync(store.journalPath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+		unlinkSync(store.snapshotPath);
+
+		expect(() => RunStore.open(store.runDir)).toThrow(/does not match the handoff artifact source session/);
+	});
+
 	it("rejects an ambiguous live lock and concurrent supervisor ownership", () => {
 		const store = RunStore.create(testConfig());
 		writeFileSync(store.lockPath, JSON.stringify({ pid: process.pid }));
