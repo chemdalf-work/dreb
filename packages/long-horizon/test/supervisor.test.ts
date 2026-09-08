@@ -56,6 +56,25 @@ describe("LongHorizonSupervisor", () => {
 		expect(sessions.created).toHaveLength(0);
 	});
 
+	it("does not dispatch a model prompt when abort persists during session creation", async () => {
+		const config = testConfig();
+		const sessions = new FakeSessionHost({ planner: [promptResult(PLAN)] });
+		let supervisor: LongHorizonSupervisor;
+		const create = sessions.create.bind(sessions);
+		sessions.create = async (...args) => {
+			const hosted = await create(...args);
+			supervisor.store.requestControl("abort", "stop before prompt dispatch");
+			return hosted;
+		};
+		supervisor = LongHorizonSupervisor.create(config, { sessionHost: sessions });
+
+		const status = await supervisor.run();
+
+		expect(status.phase).toBe("aborted");
+		expect(sessions.prompts).toHaveLength(0);
+		expect(status.pendingEffect).toBeUndefined();
+	});
+
 	it("never promotes a rejected plan artifact on resume", async () => {
 		const config = testConfig();
 		const badPlan = PLAN.replace("finish the test objective", "different objective");

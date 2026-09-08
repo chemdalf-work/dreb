@@ -162,6 +162,9 @@ export class LongHorizonSupervisor {
 		watcher.unref();
 		let result: PromptResult;
 		try {
+			if (this.stopping || this.store.replay().pendingControl === "abort") {
+				throw new Error("model prompt dispatch cancelled by operator abort");
+			}
 			result = await session.prompt(prompt);
 		} finally {
 			clearInterval(watcher);
@@ -677,8 +680,12 @@ export class LongHorizonSupervisor {
 				}
 				const report = effect.value;
 				const beforeRound = this.store.replay();
-				const successfulEvidence = effect.result.commandEvidence.some(
-					(item) => item.exitCode === 0 && report.evidenceIds.includes(item.id),
+				const successfulVerification = effect.result.commandEvidence.some(
+					(item) =>
+						item.exitCode === 0 &&
+						item.termination === undefined &&
+						report.evidenceIds.includes(item.id) &&
+						this.config.acceptanceCommands.includes(item.command),
 				);
 				const failureSignature =
 					report.status === "failed" && report.failure
@@ -691,7 +698,7 @@ export class LongHorizonSupervisor {
 					round: beforeRound.rounds + 1,
 					report,
 					failureSignature,
-					verificationSucceeded: successfulEvidence,
+					verificationSucceeded: successfulVerification,
 				});
 				if (this.applyControl()) return this.status();
 				if (this.failIfResourceLimitReached(report.status !== "complete")) return this.status();
