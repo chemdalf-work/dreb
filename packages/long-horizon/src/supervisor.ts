@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { type CommandRunner, getWorkspaceIdentity, runAuthorizedCommand } from "./policy.js";
+import { type CommandRunner, getWorkspaceContext, getWorkspaceIdentity, runAuthorizedCommand } from "./policy.js";
 import {
 	continuationPrompt,
 	escalationPrompt,
@@ -9,11 +9,20 @@ import {
 	initialExecutionPrompt,
 	planningPrompt,
 } from "./prompts.js";
-import { normalizeFailure, parseSolAdvice, parseSolPlan, parseTerraReport } from "./reports.js";
+import {
+	normalizeFailure,
+	parseSolAdvice,
+	parseSolPlan,
+	parseTerraReport,
+	validateHandoffArtifact,
+	validateSolAdvice,
+	validateSolPlan,
+} from "./reports.js";
 import { RunStore } from "./run-store.js";
 import { DrebSessionHost, type HostedSession, type PromptResult, type SessionHost } from "./session-host.js";
 import { isTerminalPhase, selectNextAction } from "./state-machine.js";
 import type {
+	CapturedFailureEvidence,
 	CommandEvidence,
 	EffectKind,
 	HandoffArtifact,
@@ -36,6 +45,29 @@ interface ModelEffect<T> {
 	value: T;
 	result: PromptResult;
 	artifact: string;
+	artifactDigest: string;
+}
+
+function validatedModelArtifact<T>(input: unknown, name: string, validate: (value: unknown) => T): T | undefined {
+	if (!input || typeof input !== "object" || Array.isArray(input))
+		throw new Error(`${name} artifact must be an object`);
+	const artifact = input as Record<string, unknown>;
+	const keys = Object.keys(artifact).sort();
+	if (Object.hasOwn(artifact, "value")) {
+		if (keys.join(",") !== "result,value") throw new Error(`${name} artifact has an invalid schema`);
+		if (!artifact.result || typeof artifact.result !== "object" || Array.isArray(artifact.result)) {
+			throw new Error(`${name} artifact result must be an object`);
+		}
+		return validate(artifact.value);
+	}
+	if (keys.join(",") !== "error,raw,result") throw new Error(`${name} artifact has an invalid schema`);
+	if (typeof artifact.raw !== "string" || typeof artifact.error !== "string" || !artifact.error.trim()) {
+		throw new Error(`${name} failure artifact has an invalid schema`);
+	}
+	if (!artifact.result || typeof artifact.result !== "object" || Array.isArray(artifact.result)) {
+		throw new Error(`${name} artifact result must be an object`);
+	}
+	return undefined;
 }
 
 export class LongHorizonSupervisor {
@@ -85,19 +117,28 @@ export class LongHorizonSupervisor {
 		if (this.active) await this.active.abort();
 	}
 
-	private latestArtifact(kind: EffectKind): string | undefined {
+	private latestArtifact(kind: EffectKind): { path: string; digest: string } | undefined {
 		for (const record of this.store.readRecords().toReversed()) {
-			if (record.event.type === "effect_completed" && record.event.kind === kind && record.event.artifact) {
-				return record.event.artifact;
+			if (
+				record.event.type === "effect_completed" &&
+				record.event.kind === kind &&
+				record.event.artifact &&
+				record.event.artifactDigest
+			) {
+				return { path: record.event.artifact, digest: record.event.artifactDigest };
 			}
 		}
 		return undefined;
 	}
 
 	private loadPlan(): SolPlan | undefined {
-		const path = this.latestArtifact("plan");
-		if (!path) return undefined;
-		const plan = this.store.readArtifact<{ value?: SolPlan }>(path).value;
+		const artifact = this.latestArtifact("plan");
+		if (!artifact) return undefined;
+		const plan = validatedModelArtifact(
+			this.store.readArtifact<unknown>(artifact.path, artifact.digest),
+			"plan",
+			validateSolPlan,
+		);
 		if (plan && plan.objective !== this.config.objective) throw new Error("persisted plan changed the run objective");
 		return plan;
 	}
@@ -110,13 +151,21 @@ export class LongHorizonSupervisor {
 	}
 
 	private loadLastAdvice(): SolAdvice | undefined {
-		const path = this.latestArtifact("advice");
-		return path ? this.store.readArtifact<{ value: SolAdvice }>(path).value : undefined;
+		const artifact = this.latestArtifact("advice");
+		return artifact
+			? validatedModelArtifact(
+					this.store.readArtifact<unknown>(artifact.path, artifact.digest),
+					"advice",
+					validateSolAdvice,
+				)
+			: undefined;
 	}
 
 	private loadLastHandoff(): HandoffArtifact | undefined {
-		const path = this.latestArtifact("handoff");
-		return path ? this.store.readArtifact<HandoffArtifact>(path) : undefined;
+		const artifact = this.latestArtifact("handoff");
+		return artifact
+			? validateHandoffArtifact(this.store.readArtifact<unknown>(artifact.path, artifact.digest))
+			: undefined;
 	}
 
 	private async createSession(role: SessionRole, parentFile?: string): Promise<HostedSession> {
@@ -210,12 +259,16 @@ export class LongHorizonSupervisor {
 				error: (error as Error).message,
 				result,
 			});
-			if (!deferCompletion) this.store.append({ type: "effect_completed", effectId, kind, artifact });
+			const artifactDigest = this.store.artifactDigest(artifact);
+			if (!deferCompletion) {
+				this.store.append({ type: "effect_completed", effectId, kind, artifact, artifactDigest });
+			}
 			throw error;
 		}
 		const artifact = this.store.writeArtifact(kind, effectId, { value, result });
-		if (!deferCompletion) this.store.append({ type: "effect_completed", effectId, kind, artifact });
-		return { effectId, value, result, artifact };
+		const artifactDigest = this.store.artifactDigest(artifact);
+		if (!deferCompletion) this.store.append({ type: "effect_completed", effectId, kind, artifact, artifactDigest });
+		return { effectId, value, result, artifact, artifactDigest };
 	}
 
 	private block(reason: string): void {
@@ -254,46 +307,66 @@ export class LongHorizonSupervisor {
 		}
 	}
 
-	private capturedFailure(report: TerraRoundReport, result: PromptResult): NonNullable<TerraRoundReport["failure"]> {
+	private capturedFailure(report: TerraRoundReport, result: PromptResult): CapturedFailureEvidence {
 		const command = result.commandEvidence.find(
 			(item) => report.evidenceIds.includes(item.id) && (item.exitCode !== 0 || item.termination !== undefined),
 		);
-		if (command) {
-			return {
-				operation: "run_command",
-				command: command.command,
-				exitCode: command.exitCode,
-				diagnostic: command.stderr || command.stdout || command.termination || "command failed",
-			};
-		}
+		if (command) return { source: "command", evidence: { ...command } };
 		const tool = result.toolEvidence.find((item) => report.evidenceIds.includes(item.id) && item.isError);
-		if (!tool) throw new Error("failed report has no matching captured failure evidence");
+		if (!tool) throw new Error("verification-failed report has no matching captured failure evidence");
 		return {
-			operation: tool.toolName,
-			diagnostic: JSON.stringify(tool.result).slice(0, 2000),
+			source: "tool",
+			evidence: { ...tool, args: tool.args ?? null, result: tool.result ?? null },
 		};
 	}
 
-	private async advise(report: TerraRoundReport, signature: string): Promise<SolAdvice> {
+	private normalizedCapturedFailure(captured: CapturedFailureEvidence): NonNullable<TerraRoundReport["failure"]> {
+		if (captured.source === "command") {
+			const evidence = captured.evidence;
+			return {
+				operation: "run_command",
+				command: evidence.command,
+				exitCode: evidence.exitCode,
+				diagnostic: evidence.stderr || evidence.stdout || evidence.termination || "command failed",
+			};
+		}
+		return {
+			operation: captured.evidence.toolName,
+			diagnostic: JSON.stringify(captured.evidence.result),
+		};
+	}
+
+	private validateAdviceForFailure(advice: SolAdvice, report: TerraRoundReport, signature: string): void {
+		if (advice.workUnitId !== report.workUnitId || advice.failureSignature !== signature) {
+			throw new Error("advisor response does not match the escalated failure");
+		}
+		if (advice.strategyId === report.strategyId) {
+			throw new Error("advisor response must propose a different strategy ID");
+		}
+	}
+
+	private async advise(
+		plan: SolPlan,
+		report: TerraRoundReport,
+		signature: string,
+		failureEvidence: CapturedFailureEvidence,
+	): Promise<SolAdvice> {
 		const advisor = await this.createSession("advisor");
 		try {
+			const workspace = await getWorkspaceContext(this.config.cwd);
 			const effect = await this.modelEffect(
 				"advice",
 				advisor,
-				escalationPrompt(this.config, report, signature),
+				escalationPrompt(this.config, plan, report, signature, workspace, failureEvidence),
 				(text) => parseSolAdvice(text),
 			);
-			if (effect.value.workUnitId !== report.workUnitId || effect.value.failureSignature !== signature) {
-				throw new Error("advisor response does not match the escalated failure");
-			}
-			if (effect.value.strategyId === report.strategyId) {
-				throw new Error("advisor response must propose a different strategy ID");
-			}
+			this.validateAdviceForFailure(effect.value, report, signature);
 			this.store.append({
 				type: "escalation_completed",
 				workUnitId: report.workUnitId,
 				signature,
 				adviceArtifact: effect.artifact,
+				adviceArtifactDigest: effect.artifactDigest,
 			});
 			return effect.value;
 		} finally {
@@ -301,29 +374,50 @@ export class LongHorizonSupervisor {
 		}
 	}
 
-	private async recoverPendingEscalation(report: TerraRoundReport): Promise<SolAdvice | undefined> {
+	private loadLastFailureEvidence(report: TerraRoundReport): CapturedFailureEvidence {
+		for (const record of this.store.readRecords().toReversed()) {
+			if (record.event.type !== "round_completed") continue;
+			if (
+				record.event.report.workUnitId !== report.workUnitId ||
+				record.event.report.strategyId !== report.strategyId ||
+				record.event.failureEvidence === undefined
+			) {
+				throw new Error("persisted failed round is missing matching captured evidence");
+			}
+			return record.event.failureEvidence;
+		}
+		throw new Error("persisted failed round is missing");
+	}
+
+	private async recoverPendingEscalation(plan: SolPlan, report: TerraRoundReport): Promise<SolAdvice | undefined> {
 		const failure = this.store.replay().failureStreak;
 		if (!failure || failure.count <= this.config.limits.failureThreshold) return undefined;
 		const existing = this.loadLastAdvice();
 		if (failure.escalated) {
-			return existing?.workUnitId === failure.workUnitId && existing.failureSignature === failure.signature
-				? existing
-				: undefined;
+			if (!existing) throw new Error("completed escalation is missing persisted advice");
+			this.validateAdviceForFailure(existing, report, failure.signature);
+			return existing;
 		}
-		if (existing?.workUnitId === failure.workUnitId && existing.failureSignature === failure.signature) {
+		if (
+			existing?.workUnitId === failure.workUnitId &&
+			existing.failureSignature === failure.signature &&
+			existing.strategyId !== report.strategyId
+		) {
+			this.validateAdviceForFailure(existing, report, failure.signature);
 			const artifact = this.latestArtifact("advice")!;
 			this.store.append({
 				type: "escalation_completed",
 				workUnitId: failure.workUnitId,
 				signature: failure.signature,
-				adviceArtifact: artifact,
+				adviceArtifact: artifact.path,
+				adviceArtifactDigest: artifact.digest,
 			});
 			return existing;
 		}
 		if (this.store.replay().escalations >= this.config.limits.maxEscalations) {
 			throw new Error("escalation limit exhausted during recovery");
 		}
-		return this.advise(report, failure.signature);
+		return this.advise(plan, report, failure.signature, this.loadLastFailureEvidence(report));
 	}
 
 	private async runAcceptance(plan: SolPlan): Promise<"passed" | "failed" | "controlled"> {
@@ -332,7 +426,13 @@ export class LongHorizonSupervisor {
 		const evidence: CommandEvidence[] = [];
 		const finish = () => {
 			const artifact = this.store.writeArtifact("acceptance", effectId, evidence);
-			this.store.append({ type: "effect_completed", effectId, kind: "acceptance", artifact });
+			this.store.append({
+				type: "effect_completed",
+				effectId,
+				kind: "acceptance",
+				artifact,
+				artifactDigest: this.store.artifactDigest(artifact),
+			});
 		};
 		for (const command of this.config.acceptanceCommands) {
 			if (this.store.replay().pendingControl === "abort" || this.store.replay().pendingControl === "pause") {
@@ -437,7 +537,9 @@ export class LongHorizonSupervisor {
 			createdAt: new Date().toISOString(),
 		};
 		const artifact = this.store.writeArtifact("handoff", effectId, handoff);
-		this.store.append({ type: "effect_completed", effectId, kind: "handoff", artifact });
+		const artifactDigest = this.store.artifactDigest(artifact);
+		this.store.append({ type: "effect_completed", effectId, kind: "handoff", artifact, artifactDigest });
+		validateHandoffArtifact(this.store.readArtifact<unknown>(artifact, artifactDigest));
 		old.dispose();
 		const next = await this.createSession("executor", old.reference.file);
 		this.active = next;
@@ -630,9 +732,9 @@ export class LongHorizonSupervisor {
 				state = this.store.replay();
 			}
 			let recoveredAdvice: SolAdvice | undefined;
-			if (previous?.status === "failed") {
+			if (previous?.status === "verification-failed") {
 				try {
-					recoveredAdvice = await this.recoverPendingEscalation(previous);
+					recoveredAdvice = await this.recoverPendingEscalation(plan, previous);
 				} catch (error) {
 					if (!this.applyControl()) this.block(`advisor escalation recovery failed: ${(error as Error).message}`);
 					return this.status();
@@ -687,17 +789,22 @@ export class LongHorizonSupervisor {
 						report.evidenceIds.includes(item.id) &&
 						this.config.acceptanceCommands.includes(item.command),
 				);
-				const failureSignature =
-					report.status === "failed" && report.failure
-						? normalizeFailure(this.capturedFailure(report, effect.result))
+				const failureEvidence =
+					report.status === "verification-failed" && report.failure
+						? this.capturedFailure(report, effect.result)
 						: undefined;
+				const failureSignature = failureEvidence
+					? normalizeFailure(this.normalizedCapturedFailure(failureEvidence))
+					: undefined;
 				this.store.append({
 					type: "round_completed",
 					effectId: effect.effectId,
 					artifact: effect.artifact,
+					artifactDigest: effect.artifactDigest,
 					round: beforeRound.rounds + 1,
 					report,
 					failureSignature,
+					failureEvidence,
 					verificationSucceeded: successfulVerification,
 				});
 				if (this.applyControl()) return this.status();
@@ -713,7 +820,7 @@ export class LongHorizonSupervisor {
 							return this.status();
 						}
 						try {
-							advice = await this.advise(report, signature);
+							advice = await this.advise(plan, report, signature, failureEvidence!);
 						} catch (error) {
 							if (!this.applyControl()) this.block(`advisor escalation failed: ${(error as Error).message}`);
 							return this.status();
@@ -755,8 +862,10 @@ export class LongHorizonSupervisor {
 						return this.status();
 					}
 					this.active = await this.rollover(report);
-					const handoffPath = this.latestArtifact("handoff")!;
-					const handoff = this.store.readArtifact<HandoffArtifact>(handoffPath);
+					const handoffArtifact = this.latestArtifact("handoff")!;
+					const handoff = validateHandoffArtifact(
+						this.store.readArtifact<unknown>(handoffArtifact.path, handoffArtifact.digest),
+					);
 					nextPrompt = handoffPrompt(handoff);
 				} else {
 					if (soft && this.store.replay().phase === "executing") {

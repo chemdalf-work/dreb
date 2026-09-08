@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { normalizeFailure, parseSolPlan, parseTerraReport } from "../src/reports.js";
+import {
+	normalizeFailure,
+	parseSolPlan,
+	parseTerraReport,
+	validateHandoffArtifact,
+	validateSolAdvice,
+	validateSolPlan,
+} from "../src/reports.js";
 import { PLAN, report } from "./helpers.js";
 
 describe("structured reports", () => {
@@ -12,17 +19,55 @@ describe("structured reports", () => {
 		expect(() => parseSolPlan("{}")).toThrow();
 		const text = report("progress").replace('"evidenceIds":[]', '"evidenceIds":["invented"]');
 		expect(() => parseTerraReport(text, [])).toThrow(/unknown evidence/);
-		const failed = report("failed", '"failure":{"operation":"test","diagnostic":"boom"},');
+		const failed = report("verification-failed", '"failure":{"operation":"test","diagnostic":"boom"},');
 		expect(() => parseTerraReport(failed, [])).toThrow(/failing tool evidence/);
 	});
 
-	it("rejects contradictory handoff and failure fields", () => {
+	it("accepts the issue status vocabulary and rejects legacy statuses", () => {
+		const evidence = { id: "failed-command", exitCode: 1 };
+		const verificationFailed = report("failed", '"failure":{"operation":"test","diagnostic":"boom"},')
+			.replace('"status":"failed"', '"status":"verification-failed"')
+			.replace('"evidenceIds":[]', '"evidenceIds":["failed-command"]');
+		expect(parseTerraReport(verificationFailed, [evidence]).status).toBe("verification-failed");
 		expect(() =>
-			parseTerraReport(report("handoff_ready").replace('"handoffReady":true', '"handoffReady":false'), []),
-		).toThrow(/handoffReady=true/);
+			parseTerraReport(report("failed", '"failure":{"operation":"test","diagnostic":"boom"},'), [evidence]),
+		).toThrow(/invalid report status/);
+		expect(() => parseTerraReport(report("handoff_ready"), [])).toThrow(/invalid report status/);
+	});
+
+	it("keeps handoff readiness orthogonal to status and rejects contradictory failure fields", () => {
+		const handoffReady = report("progress").replace('"handoffReady":false', '"handoffReady":true');
+		expect(parseTerraReport(handoffReady, []).handoffReady).toBe(true);
 		expect(() =>
 			parseTerraReport(report("progress", '"failure":{"operation":"test","diagnostic":"boom"},'), []),
-		).toThrow(/only failed reports/);
+		).toThrow(/only verification-failed reports/);
+	});
+
+	it("strictly validates persisted plan, advice, and handoff schemas", () => {
+		const plan = parseSolPlan(PLAN);
+		expect(() => validateSolPlan({ ...plan, injected: true })).toThrow(/unknown fields/);
+		expect(() =>
+			validateSolAdvice({
+				schemaVersion: 1,
+				workUnitId: "unit",
+				failureSignature: "signature",
+				strategyId: "strategy-b",
+				advice: "change approach",
+				injected: true,
+			}),
+		).toThrow(/unknown fields/);
+		expect(() =>
+			validateHandoffArtifact({
+				schemaVersion: 1,
+				fromSessionId: 42,
+				workUnitId: "unit",
+				strategyId: "strategy-a",
+				summary: "checkpoint",
+				nextAction: "continue",
+				evidenceIds: [],
+				createdAt: new Date().toISOString(),
+			}),
+		).toThrow(/fromSessionId/);
 	});
 
 	it("normalizes cosmetic failure differences deterministically", () => {

@@ -44,13 +44,15 @@ describe("state machine", () => {
 		const store = RunStore.create(testConfig());
 		store.append({ type: "effect_intent", effectId: "round-a", kind: "round" });
 		const artifact = store.writeArtifact("round", "round-a", { value: parseTerraReport(report("progress"), []) });
-		expect(() => store.append({ type: "effect_completed", effectId: "round-a", kind: "round", artifact })).toThrow(
-			/must commit through round_completed/,
-		);
+		const artifactDigest = store.artifactDigest(artifact);
+		expect(() =>
+			store.append({ type: "effect_completed", effectId: "round-a", kind: "round", artifact, artifactDigest }),
+		).toThrow(/must commit through round_completed/);
 		const state = store.append({
 			type: "round_completed",
 			effectId: "round-a",
 			artifact,
+			artifactDigest,
 			round: 1,
 			report: parseTerraReport(report("progress"), []),
 			verificationSucceeded: false,

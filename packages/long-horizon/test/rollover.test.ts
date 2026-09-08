@@ -40,8 +40,17 @@ describe("safe-edge rollover", () => {
 		store.append({ type: "phase_changed", from: "created", to: "planning", reason: "start" });
 		const planId = "plan-recovery";
 		store.append({ type: "effect_intent", effectId: planId, kind: "plan" });
-		const planArtifact = store.writeArtifact("plan", planId, { value: parseSolPlan(PLAN) });
-		store.append({ type: "effect_completed", effectId: planId, kind: "plan", artifact: planArtifact });
+		const planArtifact = store.writeArtifact("plan", planId, {
+			value: parseSolPlan(PLAN),
+			result: promptResult(PLAN),
+		});
+		store.append({
+			type: "effect_completed",
+			effectId: planId,
+			kind: "plan",
+			artifact: planArtifact,
+			artifactDigest: store.artifactDigest(planArtifact),
+		});
 		store.append({ type: "phase_changed", from: "planning", to: "executing", reason: "planned" });
 		const oldFile = `${store.sessionsDir}/old.jsonl`;
 		writeFileSync(oldFile, "session evidence");
@@ -66,6 +75,7 @@ describe("safe-edge rollover", () => {
 			type: "round_completed",
 			effectId: roundId,
 			artifact: roundArtifact,
+			artifactDigest: store.artifactDigest(roundArtifact),
 			round: 1,
 			report: prior,
 			verificationSucceeded: false,
@@ -85,8 +95,17 @@ describe("safe-edge rollover", () => {
 		const store = RunStore.create(config);
 		store.append({ type: "phase_changed", from: "created", to: "planning", reason: "start" });
 		store.append({ type: "effect_intent", effectId: "plan-later", kind: "plan" });
-		const planArtifact = store.writeArtifact("plan", "plan-later", { value: parseSolPlan(PLAN) });
-		store.append({ type: "effect_completed", effectId: "plan-later", kind: "plan", artifact: planArtifact });
+		const planArtifact = store.writeArtifact("plan", "plan-later", {
+			value: parseSolPlan(PLAN),
+			result: promptResult(PLAN),
+		});
+		store.append({
+			type: "effect_completed",
+			effectId: "plan-later",
+			kind: "plan",
+			artifact: planArtifact,
+			artifactDigest: store.artifactDigest(planArtifact),
+		});
 		store.append({ type: "phase_changed", from: "planning", to: "executing", reason: "planned" });
 		const firstFile = `${store.sessionsDir}/executor-a.jsonl`;
 		const secondFile = `${store.sessionsDir}/executor-b.jsonl`;
@@ -134,6 +153,7 @@ describe("safe-edge rollover", () => {
 			effectId: "handoff-b",
 			kind: "handoff",
 			artifact: handoffArtifact,
+			artifactDigest: store.artifactDigest(handoffArtifact),
 		});
 
 		const sessions = new FakeSessionHost({ executor: [promptResult(report("complete"))] });
@@ -153,6 +173,62 @@ describe("safe-edge rollover", () => {
 				text: expect.stringContaining("validated durable handoff"),
 			}),
 		]);
+	});
+
+	it("validates a persisted handoff before creating its child session", async () => {
+		const config = testConfig();
+		const store = RunStore.create(config);
+		store.append({ type: "phase_changed", from: "created", to: "planning", reason: "start" });
+		store.append({ type: "effect_intent", effectId: "plan-strict", kind: "plan" });
+		const planArtifact = store.writeArtifact("plan", "plan-strict", {
+			value: parseSolPlan(PLAN),
+			result: promptResult(PLAN),
+		});
+		store.append({
+			type: "effect_completed",
+			effectId: "plan-strict",
+			kind: "plan",
+			artifact: planArtifact,
+			artifactDigest: store.artifactDigest(planArtifact),
+		});
+		store.append({ type: "phase_changed", from: "planning", to: "executing", reason: "planned" });
+		const parentFile = `${store.sessionsDir}/parent.jsonl`;
+		writeFileSync(parentFile, "parent\n");
+		store.append({
+			type: "session_registered",
+			session: {
+				id: "parent",
+				role: "executor",
+				file: parentFile,
+				provider: "test",
+				modelId: "terra",
+				thinkingLevel: "high",
+				createdAt: new Date().toISOString(),
+			},
+		});
+		store.append({ type: "phase_changed", from: "executing", to: "handoff", reason: "recover" });
+		store.append({ type: "effect_intent", effectId: "handoff-strict", kind: "handoff", sessionId: "parent" });
+		const handoffArtifact = store.writeArtifact("handoff", "handoff-strict", {
+			schemaVersion: 1,
+			fromSessionId: 42,
+			workUnitId: "unit",
+			strategyId: "strategy-a",
+			summary: "checkpoint",
+			nextAction: "continue",
+			evidenceIds: [],
+			createdAt: new Date().toISOString(),
+		});
+		store.append({
+			type: "effect_completed",
+			effectId: "handoff-strict",
+			kind: "handoff",
+			artifact: handoffArtifact,
+			artifactDigest: store.artifactDigest(handoffArtifact),
+		});
+		const sessions = new FakeSessionHost({});
+
+		await expect(new LongHorizonSupervisor(store, { sessionHost: sessions }).run()).rejects.toThrow(/fromSessionId/);
+		expect(sessions.created).toHaveLength(0);
 	});
 
 	it("uses the soft band for wrap-up without interrupting or replacing the current session", async () => {

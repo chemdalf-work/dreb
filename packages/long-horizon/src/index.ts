@@ -3,11 +3,21 @@ export {
 	assertCommandAuthorized,
 	type CommandRunner,
 	createAuthorizedCommandTool,
+	getWorkspaceContext,
 	getWorkspaceIdentity,
 	roleToolSurface,
 	runAuthorizedCommand,
 } from "./policy.js";
-export { extractStructuredJson, normalizeFailure, parseSolAdvice, parseSolPlan, parseTerraReport } from "./reports.js";
+export {
+	extractStructuredJson,
+	normalizeFailure,
+	parseSolAdvice,
+	parseSolPlan,
+	parseTerraReport,
+	validateHandoffArtifact,
+	validateSolAdvice,
+	validateSolPlan,
+} from "./reports.js";
 export { digest, RunStore } from "./run-store.js";
 export {
 	DrebSessionHost,

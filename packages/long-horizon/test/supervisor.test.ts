@@ -85,9 +85,14 @@ describe("LongHorizonSupervisor", () => {
 		const planEvent = supervisor.store
 			.readRecords()
 			.find((record) => record.event.type === "effect_completed" && record.event.kind === "plan");
-		if (planEvent?.event.type !== "effect_completed" || !planEvent.event.artifact)
+		if (planEvent?.event.type !== "effect_completed" || !planEvent.event.artifact || !planEvent.event.artifactDigest)
 			throw new Error("missing plan artifact");
-		expect(supervisor.store.readArtifact<Record<string, unknown>>(planEvent.event.artifact).value).toBeUndefined();
+		expect(
+			supervisor.store.readArtifact<Record<string, unknown>>(
+				planEvent.event.artifact,
+				planEvent.event.artifactDigest,
+			).value,
+		).toBeUndefined();
 		expect(sessions.created.some((session) => session.role === "executor")).toBe(false);
 	});
 

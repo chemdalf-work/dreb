@@ -112,7 +112,7 @@ export interface SolPlan {
 
 export interface TerraRoundReport {
 	schemaVersion: 1;
-	status: "progress" | "failed" | "blocked" | "complete" | "handoff_ready";
+	status: "progress" | "complete" | "blocked" | "verification-failed";
 	workUnitId: string;
 	strategyId: string;
 	progress: string;
@@ -135,6 +135,16 @@ export interface SolAdvice {
 	advice: string;
 }
 
+export type CapturedFailureEvidence =
+	| { source: "command"; evidence: CommandEvidence }
+	| { source: "tool"; evidence: ToolEvidence };
+
+export interface WorkspaceContext {
+	workspaceIdentity: string;
+	status: string;
+	diff: string;
+}
+
 export interface HandoffArtifact {
 	schemaVersion: 1;
 	fromSessionId: string;
@@ -154,22 +164,30 @@ export type JournalEventData =
 	| { type: "control_requested"; action: ControlAction; reason?: string }
 	| { type: "session_registered"; session: SessionReference }
 	| { type: "effect_intent"; effectId: string; kind: EffectKind; sessionId?: string }
-	| { type: "effect_completed"; effectId: string; kind: EffectKind; artifact?: string }
+	| { type: "effect_completed"; effectId: string; kind: EffectKind; artifact?: string; artifactDigest?: string }
 	| { type: "effect_abandoned"; effectId: string; kind: EffectKind; reason: string }
 	| {
 			type: "round_completed";
 			effectId: string;
 			artifact: string;
+			artifactDigest: string;
 			round: number;
 			report: TerraRoundReport;
 			failureSignature?: string;
+			failureEvidence?: CapturedFailureEvidence;
 			verificationSucceeded: boolean;
 	  }
 	| { type: "usage_recorded"; role: SessionRole; tokens: number; costUsd: number }
 	| { type: "context_observed"; sessionId: string; tokens: number; contextWindow: number }
 	| { type: "failure_recorded"; workUnitId: string; strategyId: string; signature: string }
 	| { type: "failure_reset"; workUnitId: string; reason: "verification" | "strategy_changed" }
-	| { type: "escalation_completed"; workUnitId: string; signature: string; adviceArtifact: string }
+	| {
+			type: "escalation_completed";
+			workUnitId: string;
+			signature: string;
+			adviceArtifact: string;
+			adviceArtifactDigest: string;
+	  }
 	| { type: "acceptance_recorded"; evidence: CommandEvidence }
 	| { type: "blocked"; reason: string }
 	| { type: "terminal"; phase: "completed" | "failed" | "aborted"; reason: string };
