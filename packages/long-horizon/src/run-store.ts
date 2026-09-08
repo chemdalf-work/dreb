@@ -34,6 +34,289 @@ function recordHash(record: Omit<JournalRecord, "hash">): string {
 	return digest(record);
 }
 
+const RUN_PHASES = new Set([
+	"created",
+	"planning",
+	"executing",
+	"wrapping",
+	"handoff",
+	"blocked",
+	"paused",
+	"completed",
+	"failed",
+	"aborted",
+]);
+const SESSION_ROLES = new Set(["planner", "executor", "advisor", "verifier"]);
+const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+const CONTROL_ACTIONS = new Set(["pause", "resume", "abort"]);
+const EFFECT_KINDS = new Set(["session", "plan", "round", "advice", "handoff", "acceptance", "final-verification"]);
+const REPORT_STATUSES = new Set(["progress", "failed", "blocked", "complete", "handoff_ready"]);
+
+function object(value: unknown, name: string): Record<string, unknown> {
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${name} must be an object`);
+	return value as Record<string, unknown>;
+}
+
+function exactKeys(
+	value: Record<string, unknown>,
+	name: string,
+	required: readonly string[],
+	optional: readonly string[] = [],
+): void {
+	const allowed = new Set([...required, ...optional]);
+	const unknown = Object.keys(value).filter((key) => value[key] !== undefined && !allowed.has(key));
+	if (unknown.length > 0) throw new Error(`${name} contains unknown fields: ${unknown.join(", ")}`);
+	const missing = required.filter((key) => !Object.hasOwn(value, key));
+	if (missing.length > 0) throw new Error(`${name} is missing fields: ${missing.join(", ")}`);
+}
+
+function nonEmptyString(value: unknown, name: string): asserts value is string {
+	if (typeof value !== "string" || !value.trim()) throw new Error(`${name} must be a non-empty string`);
+}
+
+function optionalString(value: unknown, name: string): void {
+	if (value !== undefined && typeof value !== "string") throw new Error(`${name} must be a string`);
+}
+
+function finiteNumber(value: unknown, name: string, minimum = 0): asserts value is number {
+	if (typeof value !== "number" || !Number.isFinite(value) || value < minimum) {
+		throw new Error(`${name} must be a finite number greater than or equal to ${minimum}`);
+	}
+}
+
+function safeInteger(value: unknown, name: string, minimum = 0): asserts value is number {
+	if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum) {
+		throw new Error(`${name} must be a safe integer greater than or equal to ${minimum}`);
+	}
+}
+
+function enumString(value: unknown, name: string, allowed: ReadonlySet<string>): asserts value is string {
+	if (typeof value !== "string" || !allowed.has(value)) throw new Error(`${name} is invalid`);
+}
+
+function validTimestamp(value: unknown, name: string): asserts value is string {
+	if (typeof value !== "string" || !value || !Number.isFinite(Date.parse(value))) {
+		throw new Error(`${name} must be a valid timestamp`);
+	}
+}
+
+function stringArray(value: unknown, name: string): asserts value is string[] {
+	if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !item.trim())) {
+		throw new Error(`${name} must be an array of non-empty strings`);
+	}
+}
+
+function validateSessionReference(value: unknown, name: string): void {
+	const session = object(value, name);
+	exactKeys(
+		session,
+		name,
+		["id", "role", "file", "provider", "modelId", "thinkingLevel", "createdAt"],
+		["parentFile"],
+	);
+	nonEmptyString(session.id, `${name}.id`);
+	enumString(session.role, `${name}.role`, SESSION_ROLES);
+	nonEmptyString(session.file, `${name}.file`);
+	optionalString(session.parentFile, `${name}.parentFile`);
+	nonEmptyString(session.provider, `${name}.provider`);
+	nonEmptyString(session.modelId, `${name}.modelId`);
+	enumString(session.thinkingLevel, `${name}.thinkingLevel`, THINKING_LEVELS);
+	validTimestamp(session.createdAt, `${name}.createdAt`);
+}
+
+function validateFailure(value: unknown, name: string): void {
+	const failure = object(value, name);
+	exactKeys(failure, name, ["operation", "diagnostic"], ["command", "exitCode"]);
+	nonEmptyString(failure.operation, `${name}.operation`);
+	nonEmptyString(failure.diagnostic, `${name}.diagnostic`);
+	optionalString(failure.command, `${name}.command`);
+	if (
+		failure.exitCode !== undefined &&
+		failure.exitCode !== null &&
+		(typeof failure.exitCode !== "number" || !Number.isSafeInteger(failure.exitCode))
+	) {
+		throw new Error(`${name}.exitCode must be an integer or null`);
+	}
+}
+
+function validateTerraReport(value: unknown, name: string): void {
+	const report = object(value, name);
+	exactKeys(
+		report,
+		name,
+		["schemaVersion", "status", "workUnitId", "strategyId", "progress", "evidenceIds", "handoffReady", "nextAction"],
+		["failure"],
+	);
+	if (report.schemaVersion !== 1) throw new Error(`${name}.schemaVersion is unsupported`);
+	enumString(report.status, `${name}.status`, REPORT_STATUSES);
+	nonEmptyString(report.workUnitId, `${name}.workUnitId`);
+	nonEmptyString(report.strategyId, `${name}.strategyId`);
+	nonEmptyString(report.progress, `${name}.progress`);
+	stringArray(report.evidenceIds, `${name}.evidenceIds`);
+	if (typeof report.handoffReady !== "boolean") throw new Error(`${name}.handoffReady must be a boolean`);
+	nonEmptyString(report.nextAction, `${name}.nextAction`);
+	if (report.failure !== undefined) validateFailure(report.failure, `${name}.failure`);
+	if (report.status === "failed" && report.failure === undefined) throw new Error(`${name}.failure is required`);
+	if (report.status !== "failed" && report.failure !== undefined) {
+		throw new Error(`${name}.failure is only valid for failed reports`);
+	}
+	if (report.status === "handoff_ready" && report.handoffReady !== true) {
+		throw new Error(`${name}.handoffReady must be true for handoff_ready reports`);
+	}
+}
+
+function validateCommandEvidence(value: unknown, name: string): void {
+	const evidence = object(value, name);
+	exactKeys(
+		evidence,
+		name,
+		["id", "command", "exitCode", "stdout", "stderr", "startedAt", "completedAt", "workspaceIdentity"],
+		["termination"],
+	);
+	nonEmptyString(evidence.id, `${name}.id`);
+	nonEmptyString(evidence.command, `${name}.command`);
+	if (
+		evidence.exitCode !== null &&
+		(typeof evidence.exitCode !== "number" || !Number.isSafeInteger(evidence.exitCode))
+	) {
+		throw new Error(`${name}.exitCode must be an integer or null`);
+	}
+	if (typeof evidence.stdout !== "string") throw new Error(`${name}.stdout must be a string`);
+	if (typeof evidence.stderr !== "string") throw new Error(`${name}.stderr must be a string`);
+	validTimestamp(evidence.startedAt, `${name}.startedAt`);
+	validTimestamp(evidence.completedAt, `${name}.completedAt`);
+	nonEmptyString(evidence.workspaceIdentity, `${name}.workspaceIdentity`);
+	if (evidence.termination !== undefined && evidence.termination !== "timeout" && evidence.termination !== "aborted") {
+		throw new Error(`${name}.termination is invalid`);
+	}
+}
+
+function validateJournalEvent(value: unknown): JournalEventData {
+	const event = object(value, "journal event");
+	if (typeof event.type !== "string") throw new Error("journal event.type must be a string");
+	const name = `journal event ${event.type}`;
+	switch (event.type) {
+		case "run_created":
+			exactKeys(event, name, ["type", "configDigest"]);
+			nonEmptyString(event.configDigest, `${name}.configDigest`);
+			break;
+		case "phase_changed":
+			exactKeys(event, name, ["type", "from", "to", "reason"]);
+			enumString(event.from, `${name}.from`, RUN_PHASES);
+			enumString(event.to, `${name}.to`, RUN_PHASES);
+			nonEmptyString(event.reason, `${name}.reason`);
+			break;
+		case "control_requested":
+			exactKeys(event, name, ["type", "action"], ["reason"]);
+			enumString(event.action, `${name}.action`, CONTROL_ACTIONS);
+			optionalString(event.reason, `${name}.reason`);
+			break;
+		case "session_registered":
+			exactKeys(event, name, ["type", "session"]);
+			validateSessionReference(event.session, `${name}.session`);
+			break;
+		case "effect_intent":
+			exactKeys(event, name, ["type", "effectId", "kind"], ["sessionId"]);
+			nonEmptyString(event.effectId, `${name}.effectId`);
+			enumString(event.kind, `${name}.kind`, EFFECT_KINDS);
+			optionalString(event.sessionId, `${name}.sessionId`);
+			break;
+		case "effect_completed":
+			exactKeys(event, name, ["type", "effectId", "kind"], ["artifact"]);
+			nonEmptyString(event.effectId, `${name}.effectId`);
+			enumString(event.kind, `${name}.kind`, EFFECT_KINDS);
+			optionalString(event.artifact, `${name}.artifact`);
+			break;
+		case "effect_abandoned":
+			exactKeys(event, name, ["type", "effectId", "kind", "reason"]);
+			nonEmptyString(event.effectId, `${name}.effectId`);
+			enumString(event.kind, `${name}.kind`, EFFECT_KINDS);
+			nonEmptyString(event.reason, `${name}.reason`);
+			break;
+		case "round_completed":
+			exactKeys(
+				event,
+				name,
+				["type", "effectId", "artifact", "round", "report", "verificationSucceeded"],
+				["failureSignature"],
+			);
+			nonEmptyString(event.effectId, `${name}.effectId`);
+			nonEmptyString(event.artifact, `${name}.artifact`);
+			safeInteger(event.round, `${name}.round`, 1);
+			validateTerraReport(event.report, `${name}.report`);
+			optionalString(event.failureSignature, `${name}.failureSignature`);
+			if (typeof event.verificationSucceeded !== "boolean") {
+				throw new Error(`${name}.verificationSucceeded must be a boolean`);
+			}
+			break;
+		case "usage_recorded":
+			exactKeys(event, name, ["type", "role", "tokens", "costUsd"]);
+			enumString(event.role, `${name}.role`, SESSION_ROLES);
+			finiteNumber(event.tokens, `${name}.tokens`);
+			finiteNumber(event.costUsd, `${name}.costUsd`);
+			break;
+		case "context_observed":
+			exactKeys(event, name, ["type", "sessionId", "tokens", "contextWindow"]);
+			nonEmptyString(event.sessionId, `${name}.sessionId`);
+			finiteNumber(event.tokens, `${name}.tokens`);
+			finiteNumber(event.contextWindow, `${name}.contextWindow`, Number.MIN_VALUE);
+			break;
+		case "failure_recorded":
+			exactKeys(event, name, ["type", "workUnitId", "strategyId", "signature"]);
+			nonEmptyString(event.workUnitId, `${name}.workUnitId`);
+			nonEmptyString(event.strategyId, `${name}.strategyId`);
+			nonEmptyString(event.signature, `${name}.signature`);
+			break;
+		case "failure_reset":
+			exactKeys(event, name, ["type", "workUnitId", "reason"]);
+			nonEmptyString(event.workUnitId, `${name}.workUnitId`);
+			enumString(event.reason, `${name}.reason`, new Set(["verification", "strategy_changed"]));
+			break;
+		case "escalation_completed":
+			exactKeys(event, name, ["type", "workUnitId", "signature", "adviceArtifact"]);
+			nonEmptyString(event.workUnitId, `${name}.workUnitId`);
+			nonEmptyString(event.signature, `${name}.signature`);
+			nonEmptyString(event.adviceArtifact, `${name}.adviceArtifact`);
+			break;
+		case "acceptance_recorded":
+			exactKeys(event, name, ["type", "evidence"]);
+			validateCommandEvidence(event.evidence, `${name}.evidence`);
+			break;
+		case "blocked":
+			exactKeys(event, name, ["type", "reason"]);
+			nonEmptyString(event.reason, `${name}.reason`);
+			break;
+		case "terminal":
+			exactKeys(event, name, ["type", "phase", "reason"]);
+			enumString(event.phase, `${name}.phase`, new Set(["completed", "failed", "aborted"]));
+			nonEmptyString(event.reason, `${name}.reason`);
+			break;
+		default:
+			throw new Error(`unknown journal event type: ${event.type}`);
+	}
+	return event as unknown as JournalEventData;
+}
+
+function validateJournalRecord(value: unknown, line: number, validateEvent = true): JournalRecord {
+	const name = `journal record at line ${line}`;
+	const record = object(value, name);
+	exactKeys(record, name, ["schemaVersion", "seq", "timestamp", "previousHash", "event", "hash"]);
+	if (record.schemaVersion !== 1) throw new Error(`unsupported journal schema at line ${line}`);
+	safeInteger(record.seq, `${name}.seq`);
+	validTimestamp(record.timestamp, `${name}.timestamp`);
+	if (
+		typeof record.previousHash !== "string" ||
+		(record.previousHash !== "" && !/^[a-f0-9]{64}$/.test(record.previousHash))
+	) {
+		throw new Error(`${name}.previousHash is invalid`);
+	}
+	if (typeof record.hash !== "string" || !/^[a-f0-9]{64}$/.test(record.hash)) {
+		throw new Error(`${name}.hash is invalid`);
+	}
+	if (validateEvent) validateJournalEvent(record.event);
+	return record as unknown as JournalRecord;
+}
+
 function atomicWrite(path: string, content: string): void {
 	mkdirSync(dirname(path), { recursive: true });
 	const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
@@ -180,15 +463,16 @@ export class RunStore {
 		const records: JournalRecord[] = [];
 		for (const [index, line] of content.split("\n").entries()) {
 			if (!line) continue;
-			let record: JournalRecord;
+			let parsed: unknown;
 			try {
-				record = JSON.parse(line) as JournalRecord;
+				parsed = JSON.parse(line);
 			} catch (error) {
 				throw new Error(`malformed journal record at line ${index + 1}: ${(error as Error).message}`);
 			}
-			if (record.schemaVersion !== 1) throw new Error(`unsupported journal schema at line ${index + 1}`);
+			const record = validateJournalRecord(parsed, index + 1, false);
 			const { hash, ...unsigned } = record;
 			if (hash !== recordHash(unsigned)) throw new Error(`journal checksum mismatch at line ${index + 1}`);
+			validateJournalEvent(record.event);
 			records.push(record);
 		}
 		return records;
@@ -203,6 +487,7 @@ export class RunStore {
 	}
 
 	append(event: JournalEventData): RunState {
+		const validatedEvent = validateJournalEvent(event);
 		const release = this.acquireLock();
 		try {
 			const records = this.readRecords();
@@ -212,7 +497,7 @@ export class RunStore {
 				seq: previous ? previous.lastSeq + 1 : 0,
 				timestamp: new Date().toISOString(),
 				previousHash: previous?.lastHash ?? "",
-				event,
+				event: validatedEvent,
 			};
 			const record: JournalRecord = { ...unsigned, hash: recordHash(unsigned) };
 			const next = applyJournalRecord(previous, record, this.config);
