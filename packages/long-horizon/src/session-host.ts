@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
+import { resolve } from "node:path";
 import type { Model } from "@dreb/ai";
 import {
 	type AgentSession,
@@ -248,7 +249,7 @@ export class DrebSessionHost implements SessionHost {
 			sessionManager,
 			settingsManager,
 			resourceLoader,
-			tools: roleToolSurface(role, this.config.cwd),
+			tools: roleToolSurface(role, this.config.cwd, [resolve(this.config.runRoot, this.config.runId)]),
 			customTools: role === "executor" ? [commandTool as import("@dreb/coding-agent").ToolDefinition<any, any>] : [],
 			uiType: "long-horizon",
 		});

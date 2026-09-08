@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, existsSync, lstatSync, readlinkSync, realpathSync } from "node:fs";
+import { createReadStream, existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Type } from "@dreb/ai";
 import {
 	createEditTool,
@@ -15,14 +15,84 @@ import {
 } from "@dreb/coding-agent";
 import type { AuthorizationPolicy, CommandEvidence, SessionRole } from "./types.js";
 
-const DESTRUCTIVE_GIT =
-	/(?:^|\s)git\s+(?:push|clean|reset\s+--hard|checkout\s+--|restore\s+--source|branch\s+-D|tag\s+-d)(?:\s|$)/i;
-const RELEASE = /(?:^|\s)(?:npm\s+publish|pnpm\s+publish|yarn\s+npm\s+publish|gh\s+release)(?:\s|$)/i;
-const DEPLOY =
-	/(?:^|\s)(?:kubectl\s+(?:apply|delete)|helm\s+(?:install|upgrade|uninstall)|terraform\s+(?:apply|destroy)|vercel\s+deploy)(?:\s|$)/i;
 const CREDENTIALS = /(?:^|[\s/])(?:\.env|credentials?|secrets?|id_rsa|id_ed25519)(?:\s|$)/i;
-const REMOTE_STATE =
-	/(?:^|\s)(?:gh\s+(?:pr|issue)\s+(?:create|edit|close|merge|comment)|curl\s+.*(?:-X\s*)?(?:POST|PUT|PATCH|DELETE))(?:\s|$)/i;
+const MUTATING_HTTP_METHODS = new Set(["post", "put", "patch", "delete"]);
+
+function executableName(token: string): string {
+	return token.split(/[\\/]/).at(-1)?.toLowerCase() ?? token.toLowerCase();
+}
+
+/** Find an ordered command/subcommand sequence in parsed argv, ignoring interleaved global options. */
+function hasCommandSequence(argv: readonly string[], executable: string, sequence: readonly string[]): boolean {
+	for (let start = 0; start < argv.length; start++) {
+		if (executableName(argv[start]) !== executable) continue;
+		let next = start + 1;
+		for (const expected of sequence) {
+			next = argv.findIndex((token, index) => index >= next && token.toLowerCase() === expected);
+			if (next < 0) break;
+			next++;
+		}
+		if (next > start + sequence.length) return true;
+	}
+	return false;
+}
+
+function isDestructiveGit(argv: readonly string[]): boolean {
+	return (
+		hasCommandSequence(argv, "git", ["push"]) ||
+		hasCommandSequence(argv, "git", ["clean"]) ||
+		hasCommandSequence(argv, "git", ["reset", "--hard"]) ||
+		hasCommandSequence(argv, "git", ["checkout", "--"]) ||
+		hasCommandSequence(argv, "git", ["restore", "--source"]) ||
+		hasCommandSequence(argv, "git", ["branch", "-d"]) ||
+		hasCommandSequence(argv, "git", ["tag", "-d"])
+	);
+}
+
+function isRelease(argv: readonly string[]): boolean {
+	return (
+		hasCommandSequence(argv, "npm", ["publish"]) ||
+		hasCommandSequence(argv, "pnpm", ["publish"]) ||
+		hasCommandSequence(argv, "yarn", ["npm", "publish"]) ||
+		hasCommandSequence(argv, "gh", ["release"])
+	);
+}
+
+function isDeployment(argv: readonly string[]): boolean {
+	return (
+		hasCommandSequence(argv, "kubectl", ["apply"]) ||
+		hasCommandSequence(argv, "kubectl", ["delete"]) ||
+		hasCommandSequence(argv, "helm", ["install"]) ||
+		hasCommandSequence(argv, "helm", ["upgrade"]) ||
+		hasCommandSequence(argv, "helm", ["uninstall"]) ||
+		hasCommandSequence(argv, "terraform", ["apply"]) ||
+		hasCommandSequence(argv, "terraform", ["destroy"]) ||
+		hasCommandSequence(argv, "vercel", ["deploy"])
+	);
+}
+
+function mutatesRemoteState(argv: readonly string[]): boolean {
+	const ghMutation = ["pr", "issue"].some((resource) =>
+		["create", "edit", "close", "merge", "comment"].some((action) =>
+			hasCommandSequence(argv, "gh", [resource, action]),
+		),
+	);
+	if (ghMutation) return true;
+	const curlIndex = argv.findIndex((token) => executableName(token) === "curl");
+	if (curlIndex < 0) return false;
+	return argv.slice(curlIndex + 1).some((token, index, tail) => {
+		const lower = token.toLowerCase();
+		if (MUTATING_HTTP_METHODS.has(lower)) return true;
+		if (/^-x(?:post|put|patch|delete)$/i.test(token) || /^--request=(?:post|put|patch|delete)$/i.test(token))
+			return true;
+		if ((lower === "-x" || lower === "--request") && MUTATING_HTTP_METHODS.has(tail[index + 1]?.toLowerCase())) {
+			return true;
+		}
+		return /^(?:-d(?:.|$)|-F(?:.|$)|-T(?:.|$)|--data(?:-|=|$)|--form(?:-|=|$)|--json(?:=|$)|--upload-file(?:=|$))/.test(
+			token,
+		);
+	});
+}
 
 /** Parse a command into executable/argv without invoking a shell. */
 export function parseCommand(command: string): string[] {
@@ -83,12 +153,11 @@ export function assertCommandAuthorized(command: string, policy: AuthorizationPo
 	const normalized = argv.join(" ");
 	const allowed = new Set(policy.allowedCommands.map(commandKey));
 	if (!allowed.has(JSON.stringify(argv))) throw new Error(`command is not explicitly authorized: ${normalized}`);
-	if (!policy.allowDestructiveGit && DESTRUCTIVE_GIT.test(normalized))
-		throw new Error("destructive git command denied");
-	if (!policy.allowRelease && RELEASE.test(normalized)) throw new Error("release command denied");
-	if (!policy.allowDeploy && DEPLOY.test(normalized)) throw new Error("deployment command denied");
+	if (!policy.allowDestructiveGit && isDestructiveGit(argv)) throw new Error("destructive git command denied");
+	if (!policy.allowRelease && isRelease(argv)) throw new Error("release command denied");
+	if (!policy.allowDeploy && isDeployment(argv)) throw new Error("deployment command denied");
 	if (!policy.allowCredentials && CREDENTIALS.test(normalized)) throw new Error("credential access denied");
-	if (!policy.allowRemoteState && REMOTE_STATE.test(normalized)) throw new Error("remote-state mutation denied");
+	if (!policy.allowRemoteState && mutatesRemoteState(argv)) throw new Error("remote-state mutation denied");
 }
 
 function bounded(value: string, maxBytes: number): string {
@@ -350,7 +419,7 @@ function normalizeToolPath(requestedPath: string): string {
 	return normalized;
 }
 
-function assertResolvedWorkspacePath(cwd: string, candidate: string): void {
+function assertResolvedWorkspacePath(cwd: string, candidate: string): string {
 	const lexicalRoot = resolve(cwd);
 	if (!isContained(lexicalRoot, candidate)) throw new Error("file tool path escapes configured workspace");
 
@@ -374,11 +443,55 @@ function assertResolvedWorkspacePath(cwd: string, candidate: string): void {
 		throw new Error("file tool path contains an unresolved symbolic link");
 	}
 	if (!isContained(realRoot, realExisting)) throw new Error("file tool path escapes configured workspace via symlink");
+	return realExisting;
 }
 
 /** Validate both lexical traversal and existing symlink ancestors before a stock file tool runs. */
 export function assertWorkspacePath(cwd: string, requestedPath: string): void {
 	assertResolvedWorkspacePath(cwd, resolve(cwd, normalizeToolPath(requestedPath || ".")));
+}
+
+function gitControlPaths(cwd: string): string[] {
+	const dotGit = resolve(cwd, ".git");
+	const paths = [dotGit];
+	if (!existsSync(dotGit) || !lstatSync(dotGit).isFile()) return paths;
+	const match = /^gitdir:\s*(.+)\s*$/m.exec(readFileSync(dotGit, "utf8"));
+	if (!match?.[1]) throw new Error("Git control file does not name a git directory");
+	const gitDir = resolve(dirname(dotGit), match[1].trim());
+	paths.push(gitDir);
+	const commonDirFile = join(gitDir, "commondir");
+	if (existsSync(commonDirFile)) {
+		const commonDir = readFileSync(commonDirFile, "utf8").trim();
+		if (!commonDir) throw new Error("Git common-dir file is empty");
+		paths.push(resolve(gitDir, commonDir));
+	}
+	return paths;
+}
+
+function assertMutableWorkspacePath(cwd: string, requestedPath: string, protectedPaths: readonly string[]): void {
+	const candidate = resolve(cwd, normalizeToolPath(requestedPath || "."));
+	const realCandidate = assertResolvedWorkspacePath(cwd, candidate);
+	if (existsSync(candidate)) {
+		const candidateStat = lstatSync(candidate);
+		if (candidateStat.isFile() && candidateStat.nlink > 1) {
+			throw new Error("file tool mutation targets a protected control-plane path through a hard link");
+		}
+	}
+	for (const path of protectedPaths) {
+		const protectedPath = resolve(cwd, path);
+		if (isContained(protectedPath, candidate))
+			throw new Error("file tool mutation targets a protected control-plane path");
+		if (!existsSync(protectedPath)) continue;
+		let realProtectedPath: string;
+		try {
+			realProtectedPath = realpathSync(protectedPath);
+		} catch {
+			throw new Error("protected control-plane path cannot be resolved");
+		}
+		if (isContained(realProtectedPath, realCandidate)) {
+			throw new Error("file tool mutation targets a protected control-plane path");
+		}
+	}
 }
 
 function assertReadWorkspacePath(cwd: string, requestedPath: string): void {
@@ -394,22 +507,33 @@ function assertReadWorkspacePath(cwd: string, requestedPath: string): void {
 	assertResolvedWorkspacePath(cwd, candidates.find((candidate) => existsSync(candidate)) ?? requested);
 }
 
-function confineRoleTool<T extends RoleTool>(tool: T, cwd: string): T {
+function confineRoleTool<T extends RoleTool>(tool: T, cwd: string, protectedMutationPaths: readonly string[] = []): T {
 	const execute = tool.execute.bind(tool);
 	return {
 		...tool,
 		execute: (async (toolCallId: string, params: { path?: string }, signal?: AbortSignal, onUpdate?: unknown) => {
 			if (tool.name === "read") assertReadWorkspacePath(cwd, params.path ?? ".");
-			else assertWorkspacePath(cwd, params.path ?? ".");
+			else if (tool.name === "edit" || tool.name === "write") {
+				assertMutableWorkspacePath(cwd, params.path ?? ".", protectedMutationPaths);
+			} else assertWorkspacePath(cwd, params.path ?? ".");
 			return execute(toolCallId, params as never, signal, onUpdate as never);
 		}) as T["execute"],
 	};
 }
 
-export function roleToolSurface(role: SessionRole, cwd: string): RoleTool[] {
+export function roleToolSurface(
+	role: SessionRole,
+	cwd: string,
+	protectedMutationPaths: readonly string[] = [],
+): RoleTool[] {
 	const readOnly: RoleTool[] = [createReadTool(cwd), createGrepTool(cwd), createFindTool(cwd), createLsTool(cwd)].map(
 		(tool) => confineRoleTool(tool, cwd),
 	);
 	if (role !== "executor") return readOnly;
-	return [...readOnly, confineRoleTool(createEditTool(cwd), cwd), confineRoleTool(createWriteTool(cwd), cwd)];
+	const protectedPaths = [...gitControlPaths(cwd), ...protectedMutationPaths];
+	return [
+		...readOnly,
+		confineRoleTool(createEditTool(cwd), cwd, protectedPaths),
+		confineRoleTool(createWriteTool(cwd), cwd, protectedPaths),
+	];
 }

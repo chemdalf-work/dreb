@@ -1,4 +1,4 @@
-import { existsSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -78,6 +78,55 @@ describe("tool policy", () => {
 		expect(existsSync(join(outsideDir, "created-outside.txt"))).toBe(false);
 	});
 
+	it("denies executor mutations of Git and active supervisor storage", async () => {
+		const config = testConfig();
+		const runDir = join(config.cwd, ".dreb", "long-runs", config.runId);
+		mkdirSync(runDir, { recursive: true });
+		const journal = join(runDir, "journal.jsonl");
+		writeFileSync(journal, "durable\n");
+		const gitConfig = join(config.cwd, ".git", "config");
+		const gitConfigBefore = readFileSync(gitConfig, "utf8");
+		const gitAlias = join(config.cwd, "git-control");
+		symlinkSync(join(config.cwd, ".git"), gitAlias, "dir");
+		const hardLinkedGitConfig = join(config.cwd, "git-config-link");
+		const hardLinkedJournal = join(config.cwd, "journal-link");
+		linkSync(gitConfig, hardLinkedGitConfig);
+		linkSync(journal, hardLinkedJournal);
+
+		const tools = roleToolSurface("executor", config.cwd, [runDir]);
+		const edit = tools.find((tool) => tool.name === "edit");
+		const write = tools.find((tool) => tool.name === "write");
+		if (!edit || !write) throw new Error("missing executor mutation tools");
+
+		for (const target of [gitConfig, join(gitAlias, "config"), hardLinkedGitConfig, journal, hardLinkedJournal]) {
+			await expect(write.execute("call", { path: target, content: "corrupt\n" } as never)).rejects.toThrow(
+				/protected control-plane path/,
+			);
+			await expect(
+				edit.execute("call", { path: target, oldText: "durable", newText: "corrupt" } as never),
+			).rejects.toThrow(/protected control-plane path/);
+		}
+		expect(readFileSync(gitConfig, "utf8")).toBe(gitConfigBefore);
+		expect(readFileSync(journal, "utf8")).toBe("durable\n");
+	});
+
+	it("protects the actual Git directory referenced by a gitdir file", async () => {
+		const config = testConfig();
+		const dotGit = join(config.cwd, ".git");
+		const actualGitDir = join(config.cwd, ".git-data");
+		renameSync(dotGit, actualGitDir);
+		writeFileSync(dotGit, "gitdir: .git-data\n");
+		const gitConfig = join(actualGitDir, "config");
+		const before = readFileSync(gitConfig, "utf8");
+		const write = roleToolSurface("executor", config.cwd).find((tool) => tool.name === "write");
+		if (!write) throw new Error("missing executor write tool");
+
+		await expect(write.execute("call", { path: gitConfig, content: "corrupt\n" } as never)).rejects.toThrow(
+			/protected control-plane path/,
+		);
+		expect(readFileSync(gitConfig, "utf8")).toBe(before);
+	});
+
 	it("default-denies commands outside the exact allowlist and hazardous categories", () => {
 		const policy = testConfig().policy;
 		expect(() => assertCommandAuthorized("rm -rf /", policy)).toThrow(/explicitly authorized/);
@@ -90,6 +139,27 @@ describe("tool policy", () => {
 		expect(() => assertCommandAuthorized("npm test; rm -rf /", policy)).toThrow(/shell operators/);
 		expect(() => assertCommandAuthorized("npm test -- --watch", policy)).toThrow(/explicitly authorized/);
 		expect(() => assertCommandAuthorized("npm test", policy)).not.toThrow();
+	});
+
+	it.each([
+		["git -C . push origin main", /destructive git/],
+		["npm --prefix pkg publish", /release/],
+		["kubectl --context production delete deployment app", /deployment/],
+		["gh --repo owner/repo pr comment 9 --body approved", /remote-state/],
+		[`curl --data '{"state":"closed"}' https://api.example.invalid/resource`, /remote-state/],
+	] as const)("does not let executable-global options bypass category policy: %s", (command, category) => {
+		const policy = { ...testConfig().policy, allowedCommands: [command] };
+		expect(() => assertCommandAuthorized(command, policy)).toThrow(category);
+	});
+
+	it.each([
+		"git -C . status --short",
+		"npm --prefix pkg test",
+		"kubectl --context production get pods",
+		"gh --repo owner/repo pr view 9",
+	])("allows exact-listed option-bearing commands outside hazardous categories: %s", (command) => {
+		const policy = { ...testConfig().policy, allowedCommands: [command] };
+		expect(() => assertCommandAuthorized(command, policy)).not.toThrow();
 	});
 
 	it("enforces policy before calling an injected command runner", async () => {
