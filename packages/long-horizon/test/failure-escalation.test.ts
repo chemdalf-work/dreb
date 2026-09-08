@@ -8,6 +8,22 @@ const failure =
 const advice =
 	'<dreb-advice>{"schemaVersion":1,"workUnitId":"unit","failureSignature":"SIGNATURE","strategyId":"strategy-b","advice":"change approach"}</dreb-advice>';
 
+function echoAdvisorSignature(sessions: FakeSessionHost): void {
+	const create = sessions.create.bind(sessions);
+	sessions.create = async (...args) => {
+		const hosted = await create(...args);
+		if (args[0] !== "advisor") return hosted;
+		return {
+			...hosted,
+			prompt: async (text) =>
+				hosted.prompt(text).then((result) => ({
+					...result,
+					text: result.text.replace("SIGNATURE", text.match(/"signature":"([a-f0-9]+)"/)?.[1] ?? "missing"),
+				})),
+		};
+	};
+}
+
 describe("failure escalation", () => {
 	it("launches exactly one fresh advisor on the fourth equivalent failure and applies its advice", async () => {
 		const base = testConfig();
@@ -22,20 +38,8 @@ describe("failure escalation", () => {
 			executor: [failed, failed, failed, failed, promptResult(report("complete"))],
 			advisor: [promptResult(advice)],
 		});
-		const originalPrompt = sessions.create.bind(sessions);
 		// Advisor must echo the deterministic signature supplied in its prompt.
-		sessions.create = async (...args) => {
-			const hosted = await originalPrompt(...args);
-			if (args[0] !== "advisor") return hosted;
-			return {
-				...hosted,
-				prompt: async (text) =>
-					hosted.prompt(text).then((result) => ({
-						...result,
-						text: result.text.replace("SIGNATURE", text.match(/"signature":"([a-f0-9]+)"/)?.[1] ?? "missing"),
-					})),
-			};
-		};
+		echoAdvisorSignature(sessions);
 		const commandRunner = async (command: string, cwd: string) =>
 			commandEvidence(command, await getWorkspaceIdentity(cwd));
 		const status = await LongHorizonSupervisor.create(config, { sessionHost: sessions, commandRunner }).run();
@@ -45,6 +49,70 @@ describe("failure escalation", () => {
 		expect(sessions.prompts.filter((item) => item.sessionId.startsWith("executor-")).at(-1)?.text).toContain(
 			"Advisor guidance",
 		);
+	});
+
+	it("does not reset equivalent failures for a successful non-verification command", async () => {
+		const base = testConfig();
+		const config = { ...base, limits: { ...base.limits, maxEscalations: 1 } };
+		const failureEvidence = commandEvidence("npm test", "workspace", 1);
+		const statusEvidence = commandEvidence("git status --short", "workspace");
+		const failed = promptResult(
+			report("failed", failure).replace(
+				'"evidenceIds":[]',
+				`"evidenceIds":["${failureEvidence.id}","${statusEvidence.id}"]`,
+			),
+			{ commandEvidence: [failureEvidence, statusEvidence] },
+		);
+		const sessions = new FakeSessionHost({
+			planner: [promptResult(PLAN)],
+			executor: [failed, failed, failed, failed, promptResult(report("complete"))],
+			advisor: [promptResult(advice)],
+		});
+		echoAdvisorSignature(sessions);
+		const commandRunner = async (command: string, cwd: string) =>
+			commandEvidence(command, await getWorkspaceIdentity(cwd));
+
+		const supervisor = LongHorizonSupervisor.create(config, { sessionHost: sessions, commandRunner });
+		const status = await supervisor.run();
+
+		expect(status.phase).toBe("completed");
+		expect(status.escalations).toBe(1);
+		expect(sessions.created.filter((session) => session.role === "advisor")).toHaveLength(1);
+		const rounds = supervisor.store
+			.readRecords()
+			.filter((record) => record.event.type === "round_completed")
+			.map((record) => (record.event.type === "round_completed" ? record.event : undefined));
+		expect(rounds.slice(0, 4).every((event) => event?.verificationSucceeded === false)).toBe(true);
+	});
+
+	it("resets a failure streak after referenced acceptance-command verification succeeds", async () => {
+		const config = testConfig();
+		const failureEvidence = commandEvidence("npm test", "workspace", 1);
+		const verificationEvidence = commandEvidence("npm test", "workspace");
+		const failed = promptResult(
+			report("failed", failure).replace('"evidenceIds":[]', `"evidenceIds":["${failureEvidence.id}"]`),
+			{ commandEvidence: [failureEvidence] },
+		);
+		const verified = promptResult(
+			report("progress").replace('"evidenceIds":[]', `"evidenceIds":["${verificationEvidence.id}"]`),
+			{ commandEvidence: [verificationEvidence] },
+		);
+		const sessions = new FakeSessionHost({
+			planner: [promptResult(PLAN)],
+			executor: [failed, verified, promptResult(report("complete"))],
+		});
+		const commandRunner = async (command: string, cwd: string) =>
+			commandEvidence(command, await getWorkspaceIdentity(cwd));
+
+		const supervisor = LongHorizonSupervisor.create(config, { sessionHost: sessions, commandRunner });
+		const status = await supervisor.run();
+
+		expect(status.phase).toBe("completed");
+		expect(status.failureStreak).toBeUndefined();
+		const verifiedRound = supervisor.store
+			.readRecords()
+			.find((record) => record.event.type === "round_completed" && record.event.round === 2);
+		expect(verifiedRound?.event).toMatchObject({ type: "round_completed", verificationSucceeded: true });
 	});
 
 	it("isolates and resets streaks while preventing duplicate escalation after restart", () => {
