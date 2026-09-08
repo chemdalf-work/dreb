@@ -112,6 +112,9 @@ function executeProcess(
 	maxOutputBytes: number,
 	signal?: AbortSignal,
 ): Promise<ProcessResult> {
+	if (signal?.aborted) {
+		return Promise.resolve({ exitCode: null, stdout: "", stderr: "", termination: "aborted" });
+	}
 	return new Promise((resolvePromise, reject) => {
 		const grouped = process.platform !== "win32";
 		const child = spawn(executable, args, {

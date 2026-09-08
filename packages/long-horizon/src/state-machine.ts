@@ -72,9 +72,15 @@ export function applyJournalRecord(
 			requireTransition(event.from, event.to);
 			next.phase = event.to;
 			if (event.to !== "blocked") next.blockedReason = undefined;
-			if (event.to === "paused" || event.reason === "resume") next.pendingControl = undefined;
+			if ((event.to === "paused" || event.reason === "resume") && previous.pendingControl !== "abort") {
+				next.pendingControl = undefined;
+			}
 			break;
 		case "control_requested":
+			if (previous.pendingControl === "abort") {
+				next.pendingControl = "abort";
+				break;
+			}
 			if (event.action === "resume" && previous.phase !== "paused" && previous.phase !== "blocked") {
 				throw new Error("resume is only valid for paused or blocked runs");
 			}
@@ -147,11 +153,19 @@ export function applyJournalRecord(
 			break;
 		}
 		case "usage_recorded":
+			if (!Number.isFinite(event.tokens) || !Number.isFinite(event.costUsd)) {
+				throw new Error("usage must be finite");
+			}
 			if (event.tokens < 0 || event.costUsd < 0) throw new Error("usage cannot be negative");
 			next.totalTokens += event.tokens;
 			next.totalCostUsd += event.costUsd;
 			break;
 		case "context_observed":
+			if (!Number.isFinite(event.tokens) || event.tokens < 0)
+				throw new Error("context tokens must be finite and non-negative");
+			if (!Number.isFinite(event.contextWindow) || event.contextWindow <= 0) {
+				throw new Error("context window must be a positive finite number");
+			}
 			if (!previous.sessions.some((session) => session.id === event.sessionId)) {
 				throw new Error(`context observed for unknown session: ${event.sessionId}`);
 			}

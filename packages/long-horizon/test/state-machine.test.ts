@@ -15,6 +15,21 @@ describe("state machine", () => {
 		);
 	});
 
+	it("keeps an abort request monotonic over later pause and resume controls", () => {
+		const store = RunStore.create(testConfig());
+		store.append({ type: "control_requested", action: "abort", reason: "stop now" });
+		store.append({ type: "control_requested", action: "pause", reason: "late pause" });
+		expect(store.replay().pendingControl).toBe("abort");
+		expect(selectNextAction(store.replay(), store.config)).toBe("abort");
+
+		store.append({ type: "phase_changed", from: "created", to: "paused", reason: "stale pause handler" });
+		expect(store.replay().pendingControl).toBe("abort");
+
+		store.append({ type: "control_requested", action: "resume", reason: "late resume" });
+		expect(store.replay().pendingControl).toBe("abort");
+		expect(selectNextAction(store.replay(), store.config)).toBe("abort");
+	});
+
 	it("never accepts duplicate side-effect intent or completion", () => {
 		const store = RunStore.create(testConfig());
 		store.append({ type: "effect_intent", effectId: "a", kind: "plan" });

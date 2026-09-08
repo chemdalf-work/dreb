@@ -118,6 +118,24 @@ describe("tool policy", () => {
 		expect(second).not.toBe(first);
 	});
 
+	it("does not spawn an authorized process when its signal is already aborted", async () => {
+		const config = testConfig();
+		const marker = join(config.cwd, "spawned.txt");
+		const command = `node -e 'require("node:fs").writeFileSync("spawned.txt", "yes")'`;
+		const controller = new AbortController();
+		controller.abort();
+
+		const result = await runAuthorizedCommand(
+			command,
+			config.cwd,
+			{ ...config.policy, allowedCommands: [command] },
+			controller.signal,
+		);
+
+		expect(result).toMatchObject({ exitCode: null, termination: "aborted" });
+		expect(existsSync(marker)).toBe(false);
+	});
+
 	it("terminates an authorized process when its timeout expires", async () => {
 		const policy = {
 			...testConfig().policy,

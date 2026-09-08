@@ -48,6 +48,35 @@ describe("RunStore", () => {
 		expect(() => store.replay()).toThrow(/unknown journal event/);
 	});
 
+	it("rejects malformed event payloads before appending", () => {
+		const store = RunStore.create(testConfig());
+		const before = readFileSync(store.journalPath, "utf8");
+		expect(() => store.append({ type: "usage_recorded", role: "planner", tokens: Number.NaN, costUsd: 0 })).toThrow(
+			/usage_recorded\.tokens/,
+		);
+		expect(() =>
+			store.append({ type: "usage_recorded", role: "planner", tokens: 1, costUsd: Number.POSITIVE_INFINITY }),
+		).toThrow(/usage_recorded\.costUsd/);
+		expect(() => store.append({ type: "control_requested", action: "pause", unexpected: true } as never)).toThrow(
+			/unknown fields/,
+		);
+		expect(readFileSync(store.journalPath, "utf8")).toBe(before);
+	});
+
+	it("rejects a checksummed journal event with a malformed payload during replay", () => {
+		const store = RunStore.create(testConfig());
+		store.append({ type: "usage_recorded", role: "planner", tokens: 5, costUsd: 0.25 });
+		const records = readFileSync(store.journalPath, "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line));
+		records[1].event.tokens = "unbounded";
+		const { hash: _oldHash, ...unsigned } = records[1];
+		records[1].hash = digest(unsigned);
+		writeFileSync(store.journalPath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+		expect(() => store.replay()).toThrow(/usage_recorded\.tokens/);
+	});
+
 	it("rejects an ambiguous live lock and concurrent supervisor ownership", () => {
 		const store = RunStore.create(testConfig());
 		writeFileSync(store.lockPath, JSON.stringify({ pid: process.pid }));
