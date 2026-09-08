@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { parseSolPlan, parseTerraReport } from "../src/reports.js";
 import { RunStore } from "../src/run-store.js";
 import { LongHorizonSupervisor } from "../src/supervisor.js";
-import { FakeSessionHost, PLAN, report, testConfig } from "./helpers.js";
+import { FakeSessionHost, PLAN, promptResult, report, testConfig } from "./helpers.js";
 
 describe("filesystem-backed integration", () => {
 	it("replays controls and session lineage from journal after restart", async () => {
@@ -22,8 +22,17 @@ describe("filesystem-backed integration", () => {
 		const store = RunStore.create(testConfig());
 		store.append({ type: "phase_changed", from: "created", to: "planning", reason: "start" });
 		store.append({ type: "effect_intent", effectId: "plan", kind: "plan" });
-		const planArtifact = store.writeArtifact("plan", "plan", { value: parseSolPlan(PLAN) });
-		store.append({ type: "effect_completed", effectId: "plan", kind: "plan", artifact: planArtifact });
+		const planArtifact = store.writeArtifact("plan", "plan", {
+			value: parseSolPlan(PLAN),
+			result: promptResult(PLAN),
+		});
+		store.append({
+			type: "effect_completed",
+			effectId: "plan",
+			kind: "plan",
+			artifact: planArtifact,
+			artifactDigest: store.artifactDigest(planArtifact),
+		});
 		store.append({ type: "phase_changed", from: "planning", to: "executing", reason: "planned" });
 		const sessionFile = `${store.sessionsDir}/executor.jsonl`;
 		writeFileSync(sessionFile, "session evidence\n");

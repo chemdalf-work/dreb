@@ -119,6 +119,9 @@ export function commandEvidence(command: string, workspaceIdentity: string, exit
 
 export const PLAN = `<dreb-plan>{"schemaVersion":1,"objective":"finish the test objective","workUnits":[{"id":"unit","title":"work","acceptance":["tests"]}],"acceptanceCriteria":["tests pass"],"constraints":[]}</dreb-plan>`;
 
-export function report(status: "progress" | "failed" | "blocked" | "complete" | "handoff_ready", extra = ""): string {
-	return `<dreb-report>{"schemaVersion":1,"status":"${status}","workUnitId":"unit","strategyId":"strategy-a","progress":"did work","evidenceIds":[],${extra}"handoffReady":${status === "handoff_ready"},"nextAction":"continue"}</dreb-report>`;
+export function report(
+	status: "progress" | "complete" | "blocked" | "verification-failed" | "failed" | "handoff_ready",
+	extra = "",
+): string {
+	return `<dreb-report>{"schemaVersion":1,"status":"${status}","workUnitId":"unit","strategyId":"strategy-a","progress":"did work","evidenceIds":[],${extra}"handoffReady":false,"nextAction":"continue"}</dreb-report>`;
 }

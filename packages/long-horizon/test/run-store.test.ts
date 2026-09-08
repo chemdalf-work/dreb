@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { digest, RunStore } from "../src/run-store.js";
@@ -75,6 +76,33 @@ describe("RunStore", () => {
 		records[1].hash = digest(unsigned);
 		writeFileSync(store.journalPath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
 		expect(() => store.replay()).toThrow(/usage_recorded\.tokens/);
+	});
+
+	it("rejects an artifact whose content no longer matches its journal-bound digest", () => {
+		const store = RunStore.create(testConfig());
+		store.append({ type: "effect_intent", effectId: "tamper-test", kind: "plan" });
+		const artifact = store.writeArtifact("plan", "tamper-test", { value: "original" });
+		const expectedDigest = createHash("sha256").update(readFileSync(artifact)).digest("hex");
+		store.append({
+			type: "effect_completed",
+			effectId: "tamper-test",
+			kind: "plan",
+			artifact,
+			artifactDigest: expectedDigest,
+		});
+		writeFileSync(artifact, '{"value":"mutated"}\n');
+
+		expect(() => store.readArtifact(artifact, expectedDigest)).toThrow(/artifact integrity/);
+		expect(() => RunStore.open(store.runDir)).toThrow(/artifact integrity/);
+	});
+
+	it("requires a content digest whenever an artifact path is journaled", () => {
+		const store = RunStore.create(testConfig());
+		store.append({ type: "effect_intent", effectId: "unbound", kind: "plan" });
+		const artifact = store.writeArtifact("plan", "unbound", { value: "unbound" });
+		expect(() => store.append({ type: "effect_completed", effectId: "unbound", kind: "plan", artifact })).toThrow(
+			/recorded together/,
+		);
 	});
 
 	it("rejects an ambiguous live lock and concurrent supervisor ownership", () => {

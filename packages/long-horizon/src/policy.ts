@@ -13,7 +13,7 @@ import {
 	createWriteTool,
 	type ToolDefinition,
 } from "@dreb/coding-agent";
-import type { AuthorizationPolicy, CommandEvidence, SessionRole } from "./types.js";
+import type { AuthorizationPolicy, CommandEvidence, SessionRole, WorkspaceContext } from "./types.js";
 
 const CREDENTIALS = /(?:^|[\s/])(?:\.env|credentials?|secrets?|id_rsa|id_ed25519)(?:\s|$)/i;
 const MUTATING_HTTP_METHODS = new Set(["post", "put", "patch", "delete"]);
@@ -273,6 +273,40 @@ function gitOutput(cwd: string, args: string[], maxBytes = 16 * 1024 * 1024): Pr
 	});
 }
 
+function gitOutputPreview(cwd: string, args: string[], maxBytes: number): Promise<string> {
+	return new Promise((resolvePromise, reject) => {
+		const child = spawn("git", args, { cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+		const chunks: Buffer[] = [];
+		let capturedBytes = 0;
+		let truncated = false;
+		let stderr = "";
+		child.stdout.on("data", (chunk: Buffer) => {
+			if (capturedBytes < maxBytes) {
+				const remaining = maxBytes - capturedBytes;
+				const captured = chunk.subarray(0, remaining);
+				chunks.push(captured);
+				capturedBytes += captured.length;
+			}
+			if (capturedBytes >= maxBytes && (chunk.length > 0 || chunks.length > 0)) {
+				truncated = true;
+				child.kill("SIGTERM");
+			}
+		});
+		child.stderr.on("data", (chunk) => {
+			stderr = bounded(stderr + String(chunk), 64 * 1024);
+		});
+		child.on("error", reject);
+		child.on("close", (exitCode) => {
+			if (exitCode !== 0 && !truncated) {
+				reject(new Error(`git ${args[0]} failed (${String(exitCode)}): ${stderr.trim()}`));
+				return;
+			}
+			const preview = Buffer.concat(chunks).toString("utf8");
+			resolvePromise(truncated ? `${preview}\n[truncated at ${maxBytes} bytes]` : preview);
+		});
+	});
+}
+
 function gitOutputDigest(cwd: string, args: string[]): Promise<string> {
 	return new Promise((resolvePromise, reject) => {
 		const child = spawn("git", args, { cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
@@ -322,6 +356,19 @@ export async function getWorkspaceIdentity(cwd: string): Promise<string> {
 		else throw new Error(`unsupported untracked workspace entry: ${name}`);
 	}
 	return hash.digest("hex");
+}
+
+export async function getWorkspaceContext(cwd: string, maxSectionBytes = 32 * 1024): Promise<WorkspaceContext> {
+	if (!Number.isSafeInteger(maxSectionBytes) || maxSectionBytes <= 0) {
+		throw new Error("workspace context limit must be a positive safe integer");
+	}
+	const root = resolve(cwd);
+	const [workspaceIdentity, status, diff] = await Promise.all([
+		getWorkspaceIdentity(root),
+		gitOutputPreview(root, ["status", "--short", "--branch", "--untracked-files=all"], maxSectionBytes),
+		gitOutputPreview(root, ["diff", "--no-ext-diff", "--unified=3", "HEAD", "--"], maxSectionBytes),
+	]);
+	return { workspaceIdentity, status, diff };
 }
 
 export type CommandRunner = (

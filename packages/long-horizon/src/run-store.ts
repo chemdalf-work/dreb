@@ -14,7 +14,13 @@ import {
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { parseRunConfig } from "./config.js";
 import { applyJournalRecord, replayJournal } from "./state-machine.js";
-import type { JournalEventData, JournalRecord, LongHorizonRunConfig, RunState } from "./types.js";
+import type {
+	CapturedFailureEvidence,
+	JournalEventData,
+	JournalRecord,
+	LongHorizonRunConfig,
+	RunState,
+} from "./types.js";
 
 function canonical(value: unknown): string {
 	if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
@@ -34,6 +40,10 @@ function recordHash(record: Omit<JournalRecord, "hash">): string {
 	return digest(record);
 }
 
+function contentDigest(content: string): string {
+	return createHash("sha256").update(content).digest("hex");
+}
+
 const RUN_PHASES = new Set([
 	"created",
 	"planning",
@@ -50,7 +60,7 @@ const SESSION_ROLES = new Set(["planner", "executor", "advisor", "verifier"]);
 const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 const CONTROL_ACTIONS = new Set(["pause", "resume", "abort"]);
 const EFFECT_KINDS = new Set(["session", "plan", "round", "advice", "handoff", "acceptance", "final-verification"]);
-const REPORT_STATUSES = new Set(["progress", "failed", "blocked", "complete", "handoff_ready"]);
+const REPORT_STATUSES = new Set(["progress", "complete", "blocked", "verification-failed"]);
 
 function object(value: unknown, name: string): Record<string, unknown> {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${name} must be an object`);
@@ -76,6 +86,10 @@ function nonEmptyString(value: unknown, name: string): asserts value is string {
 
 function optionalString(value: unknown, name: string): void {
 	if (value !== undefined && typeof value !== "string") throw new Error(`${name} must be a string`);
+}
+
+function artifactDigest(value: unknown, name: string): asserts value is string {
+	if (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) throw new Error(`${name} is invalid`);
 }
 
 function finiteNumber(value: unknown, name: string, minimum = 0): asserts value is number {
@@ -139,7 +153,21 @@ function validateFailure(value: unknown, name: string): void {
 	}
 }
 
-function validateTerraReport(value: unknown, name: string): void {
+function validateCapturedFailureEvidence(value: unknown, name: string): asserts value is CapturedFailureEvidence {
+	const captured = object(value, name);
+	exactKeys(captured, name, ["source", "evidence"]);
+	if (captured.source === "command") {
+		validateCommandEvidence(captured.evidence, `${name}.evidence`);
+		return;
+	}
+	if (captured.source === "tool") {
+		validateToolEvidence(captured.evidence, `${name}.evidence`);
+		return;
+	}
+	throw new Error(`${name}.source is invalid`);
+}
+
+function validateTerraReport(value: unknown, name: string): asserts value is import("./types.js").TerraRoundReport {
 	const report = object(value, name);
 	exactKeys(
 		report,
@@ -156,12 +184,11 @@ function validateTerraReport(value: unknown, name: string): void {
 	if (typeof report.handoffReady !== "boolean") throw new Error(`${name}.handoffReady must be a boolean`);
 	nonEmptyString(report.nextAction, `${name}.nextAction`);
 	if (report.failure !== undefined) validateFailure(report.failure, `${name}.failure`);
-	if (report.status === "failed" && report.failure === undefined) throw new Error(`${name}.failure is required`);
-	if (report.status !== "failed" && report.failure !== undefined) {
-		throw new Error(`${name}.failure is only valid for failed reports`);
+	if (report.status === "verification-failed" && report.failure === undefined) {
+		throw new Error(`${name}.failure is required`);
 	}
-	if (report.status === "handoff_ready" && report.handoffReady !== true) {
-		throw new Error(`${name}.handoffReady must be true for handoff_ready reports`);
+	if (report.status !== "verification-failed" && report.failure !== undefined) {
+		throw new Error(`${name}.failure is only valid for verification-failed reports`);
 	}
 }
 
@@ -189,6 +216,16 @@ function validateCommandEvidence(value: unknown, name: string): void {
 	if (evidence.termination !== undefined && evidence.termination !== "timeout" && evidence.termination !== "aborted") {
 		throw new Error(`${name}.termination is invalid`);
 	}
+}
+
+function validateToolEvidence(value: unknown, name: string): void {
+	const evidence = object(value, name);
+	exactKeys(evidence, name, ["id", "toolName", "startedAt", "completedAt", "args", "result", "isError"]);
+	nonEmptyString(evidence.id, `${name}.id`);
+	nonEmptyString(evidence.toolName, `${name}.toolName`);
+	validTimestamp(evidence.startedAt, `${name}.startedAt`);
+	validTimestamp(evidence.completedAt, `${name}.completedAt`);
+	if (typeof evidence.isError !== "boolean") throw new Error(`${name}.isError must be a boolean`);
 }
 
 function validateJournalEvent(value: unknown): JournalEventData {
@@ -222,10 +259,14 @@ function validateJournalEvent(value: unknown): JournalEventData {
 			optionalString(event.sessionId, `${name}.sessionId`);
 			break;
 		case "effect_completed":
-			exactKeys(event, name, ["type", "effectId", "kind"], ["artifact"]);
+			exactKeys(event, name, ["type", "effectId", "kind"], ["artifact", "artifactDigest"]);
 			nonEmptyString(event.effectId, `${name}.effectId`);
 			enumString(event.kind, `${name}.kind`, EFFECT_KINDS);
 			optionalString(event.artifact, `${name}.artifact`);
+			if ((event.artifact === undefined) !== (event.artifactDigest === undefined)) {
+				throw new Error(`${name}.artifact and artifactDigest must be recorded together`);
+			}
+			if (event.artifactDigest !== undefined) artifactDigest(event.artifactDigest, `${name}.artifactDigest`);
 			break;
 		case "effect_abandoned":
 			exactKeys(event, name, ["type", "effectId", "kind", "reason"]);
@@ -237,14 +278,25 @@ function validateJournalEvent(value: unknown): JournalEventData {
 			exactKeys(
 				event,
 				name,
-				["type", "effectId", "artifact", "round", "report", "verificationSucceeded"],
-				["failureSignature"],
+				["type", "effectId", "artifact", "artifactDigest", "round", "report", "verificationSucceeded"],
+				["failureSignature", "failureEvidence"],
 			);
 			nonEmptyString(event.effectId, `${name}.effectId`);
 			nonEmptyString(event.artifact, `${name}.artifact`);
+			artifactDigest(event.artifactDigest, `${name}.artifactDigest`);
 			safeInteger(event.round, `${name}.round`, 1);
 			validateTerraReport(event.report, `${name}.report`);
 			optionalString(event.failureSignature, `${name}.failureSignature`);
+			if (event.failureEvidence !== undefined) {
+				validateCapturedFailureEvidence(event.failureEvidence, `${name}.failureEvidence`);
+			}
+			if (event.report.status === "verification-failed") {
+				if (event.failureSignature === undefined || event.failureEvidence === undefined) {
+					throw new Error(`${name} requires a failure signature and captured evidence`);
+				}
+			} else if (event.failureSignature !== undefined || event.failureEvidence !== undefined) {
+				throw new Error(`${name} failure details require verification-failed status`);
+			}
 			if (typeof event.verificationSucceeded !== "boolean") {
 				throw new Error(`${name}.verificationSucceeded must be a boolean`);
 			}
@@ -273,10 +325,11 @@ function validateJournalEvent(value: unknown): JournalEventData {
 			enumString(event.reason, `${name}.reason`, new Set(["verification", "strategy_changed"]));
 			break;
 		case "escalation_completed":
-			exactKeys(event, name, ["type", "workUnitId", "signature", "adviceArtifact"]);
+			exactKeys(event, name, ["type", "workUnitId", "signature", "adviceArtifact", "adviceArtifactDigest"]);
 			nonEmptyString(event.workUnitId, `${name}.workUnitId`);
 			nonEmptyString(event.signature, `${name}.signature`);
 			nonEmptyString(event.adviceArtifact, `${name}.adviceArtifact`);
+			artifactDigest(event.adviceArtifactDigest, `${name}.adviceArtifactDigest`);
 			break;
 		case "acceptance_recorded":
 			exactKeys(event, name, ["type", "evidence"]);
@@ -397,6 +450,7 @@ export class RunStore {
 		const release = store.acquireLock();
 		try {
 			const records = store.readRecords();
+			store.validateArtifactReferences(records);
 			const state = replayJournal(records, config);
 			if (!existsSync(store.snapshotPath)) {
 				atomicWrite(store.snapshotPath, `${JSON.stringify(state, null, 2)}\n`);
@@ -488,6 +542,13 @@ export class RunStore {
 
 	append(event: JournalEventData): RunState {
 		const validatedEvent = validateJournalEvent(event);
+		if (validatedEvent.type === "effect_completed" && validatedEvent.artifact) {
+			this.readArtifact(validatedEvent.artifact, validatedEvent.artifactDigest!);
+		} else if (validatedEvent.type === "round_completed") {
+			this.readArtifact(validatedEvent.artifact, validatedEvent.artifactDigest);
+		} else if (validatedEvent.type === "escalation_completed") {
+			this.readArtifact(validatedEvent.adviceArtifact, validatedEvent.adviceArtifactDigest);
+		}
 		const release = this.acquireLock();
 		try {
 			const records = this.readRecords();
@@ -515,6 +576,30 @@ export class RunStore {
 		}
 	}
 
+	private validateArtifactReferences(records: readonly JournalRecord[]): void {
+		const checked = new Set<string>();
+		for (const record of records) {
+			const event = record.event;
+			let artifact: string | undefined;
+			let expectedDigest: string | undefined;
+			if (event.type === "effect_completed" && event.artifact) {
+				artifact = event.artifact;
+				expectedDigest = event.artifactDigest;
+			} else if (event.type === "round_completed") {
+				artifact = event.artifact;
+				expectedDigest = event.artifactDigest;
+			} else if (event.type === "escalation_completed") {
+				artifact = event.adviceArtifact;
+				expectedDigest = event.adviceArtifactDigest;
+			}
+			if (!artifact || !expectedDigest) continue;
+			const key = `${artifact}\0${expectedDigest}`;
+			if (checked.has(key)) continue;
+			this.readArtifact(artifact, expectedDigest);
+			checked.add(key);
+		}
+	}
+
 	writeArtifact<T>(kind: string, id: string, value: T): string {
 		if (!/^[a-z][a-z0-9-]*$/.test(kind) || !/^[a-zA-Z0-9_-]+$/.test(id)) {
 			throw new Error("invalid artifact name");
@@ -525,13 +610,30 @@ export class RunStore {
 		return path;
 	}
 
-	readArtifact<T>(path: string): T {
+	artifactDigest(path: string): string {
+		const resolved = this.resolveArtifactPath(path);
+		return contentDigest(readFileSync(resolved, "utf8"));
+	}
+
+	readArtifact<T>(path: string, expectedDigest: string): T {
+		artifactDigest(expectedDigest, "expected artifact digest");
+		const resolved = this.resolveArtifactPath(path);
+		const content = readFileSync(resolved, "utf8");
+		if (contentDigest(content) !== expectedDigest) throw new Error(`artifact integrity check failed: ${resolved}`);
+		try {
+			return JSON.parse(content) as T;
+		} catch (error) {
+			throw new Error(`invalid artifact JSON: ${(error as Error).message}`);
+		}
+	}
+
+	private resolveArtifactPath(path: string): string {
 		const resolved = resolve(path);
 		const contained = relative(resolve(this.artifactsDir), resolved);
 		if (!contained || contained.startsWith("..") || resolve(this.artifactsDir, contained) !== resolved) {
 			throw new Error("artifact path escapes run directory");
 		}
-		return JSON.parse(readFileSync(resolved, "utf8")) as T;
+		return resolved;
 	}
 
 	acknowledgePendingEffect(reason: string): RunState {
