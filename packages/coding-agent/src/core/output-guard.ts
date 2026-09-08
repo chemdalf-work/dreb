@@ -54,18 +54,16 @@ export function isStdoutTakenOver(): boolean {
 // output queue up unboundedly inside the process, which is what produced the
 // multi-thousand-event end-of-response bursts in issue 448. While the stream
 // is backpressured we queue subsequent writes and flush them in order on
-// "drain". The queue is byte-capped: legitimate multi-MiB bursts (for example
-// dashboard turns with several inline images, issue 495) can push the backlog
-// past the cap while the consumer is merely slow, so the cap is a grace
-// trigger, not an immediate kill — we only abort when the consumer makes no
-// drain progress for the grace window, which means the output channel is dead
-// or hopelessly behind. That keeps us from growing memory without bound.
+// "drain". The queue has a hard byte cap large enough for legitimate
+// multi-image dashboard bursts (issue 495); writes beyond it fail loudly
+// instead of being retained. Independently, every backpressured interval has a
+// watchdog so a blocked stream cannot leave flushRawStdout() waiting forever.
 // ---------------------------------------------------------------------------
 
-/** Maximum aggregate bytes allowed for ordinary queued writes before the no-drain window starts. */
-export const MAX_QUEUED_STDOUT_BYTES = 16 * 1024 * 1024; // 16 MiB
+/** Hard maximum aggregate bytes retained by the stdout queue. */
+export const MAX_QUEUED_STDOUT_BYTES = 64 * 1024 * 1024; // 64 MiB
 
-/** Abort if the queue stays above the cap with no drain progress for this long. */
+/** Abort if stdout stays backpressured with no drain progress for this long. */
 export const MAX_NO_DRAIN_GRACE_MS = 30_000;
 
 const FATAL_DIAGNOSTIC_FLUSH_TIMEOUT_MS = 1_000;
@@ -76,6 +74,8 @@ let stdoutBackpressured = false;
 let stdoutDrainListening = false;
 let stdoutDrainWaiters: Array<() => void> = [];
 let noDrainAbortTimer: ReturnType<typeof setTimeout> | undefined;
+let fatalOutputAbortStarted = false;
+let fatalOutputExitTimer: ReturnType<typeof setTimeout> | undefined;
 
 function writeToStdout(text: string): boolean {
 	if (stdoutTakeoverState) {
@@ -89,17 +89,16 @@ function requestDrainFlush(): void {
 	stdoutDrainListening = true;
 	process.stdout.once("drain", () => {
 		stdoutDrainListening = false;
-		// Any drain is forward progress by the consumer: reset the no-drain
-		// abort window. If the backlog is still above the cap after this flush,
-		// the next queued write starts a fresh window.
+		// A drain proves forward progress. Give the consumer a fresh watchdog
+		// window if flushing immediately encounters backpressure again.
 		disarmNoDrainAbort();
 		flushStdoutQueue();
 	});
 }
 
-/** Start (or keep) the no-drain abort window for an over-cap backlog. */
+/** Start (or keep) the watchdog for the current backpressured interval. */
 function armNoDrainAbort(): void {
-	if (noDrainAbortTimer) return;
+	if (noDrainAbortTimer || fatalOutputAbortStarted) return;
 	const timer = setTimeout(() => {
 		noDrainAbortTimer = undefined;
 		abortForStalledConsumer();
@@ -114,30 +113,36 @@ function disarmNoDrainAbort(): void {
 	noDrainAbortTimer = undefined;
 }
 
-/**
- * The consumer exceeded the queue cap and then made no drain progress for the
- * full grace window — treat the output channel as dead and abort loudly
- * instead of holding payloads in memory forever.
- */
-function abortForStalledConsumer(): void {
-	if (stdoutQueuedBytes <= MAX_QUEUED_STDOUT_BYTES) {
-		// The backlog drained back under the cap before the window expired.
-		return;
-	}
-	const diagnostic =
-		`Fatal: stdout write queue exceeded ${MAX_QUEUED_STDOUT_BYTES} bytes with no drain progress ` +
-		`for ${MAX_NO_DRAIN_GRACE_MS} ms. The consumer of this process's stdout is not reading; ` +
-		"refusing unbounded memory growth. Aborting.\n";
+function abortOutput(diagnostic: string): void {
+	if (fatalOutputAbortStarted) return;
+	fatalOutputAbortStarted = true;
+	disarmNoDrainAbort();
+
 	let exiting = false;
 	const exit = (): void => {
 		if (exiting) return;
 		exiting = true;
-		clearTimeout(forceExit);
+		if (fatalOutputExitTimer) clearTimeout(fatalOutputExitTimer);
+		fatalOutputExitTimer = undefined;
 		process.exit(1);
 	};
-	const forceExit = setTimeout(exit, FATAL_DIAGNOSTIC_FLUSH_TIMEOUT_MS);
-	forceExit.unref();
+	fatalOutputExitTimer = setTimeout(exit, FATAL_DIAGNOSTIC_FLUSH_TIMEOUT_MS);
+	fatalOutputExitTimer.unref();
 	process.stderr.write(diagnostic, exit);
+}
+
+function abortForStalledConsumer(): void {
+	if (!stdoutBackpressured && stdoutQueue.length === 0) return;
+	abortOutput(
+		`Fatal: stdout remained backpressured with ${stdoutQueuedBytes} queued bytes and no drain progress ` +
+			`for ${MAX_NO_DRAIN_GRACE_MS} ms. The consumer of this process's stdout is not reading. Aborting.\n`,
+	);
+}
+
+function markStdoutBackpressured(): void {
+	stdoutBackpressured = true;
+	requestDrainFlush();
+	armNoDrainAbort();
 }
 
 function flushStdoutQueue(): void {
@@ -148,8 +153,7 @@ function flushStdoutQueue(): void {
 		// A false return means the stream accepted the chunk but its buffer is
 		// full again — stop writing and wait for the next drain.
 		if (!writeToStdout(next)) {
-			stdoutBackpressured = true;
-			requestDrainFlush();
+			markStdoutBackpressured();
 			return;
 		}
 	}
@@ -160,35 +164,35 @@ function flushStdoutQueue(): void {
 	}
 }
 
-function enqueueStdout(text: string): void {
-	const bytes = Buffer.byteLength(text);
-	// Bound accumulated ordinary backlog, but allow one legitimate protocol frame
-	// larger than the cap (for example, a complete dashboard snapshot). Once that
-	// oversized frame is queued, any subsequent write still counts against the cap.
-	const exceedsAggregateCap = stdoutQueuedBytes + bytes > MAX_QUEUED_STDOUT_BYTES;
-	const isSingleOversizedFrame = bytes > MAX_QUEUED_STDOUT_BYTES && stdoutQueuedBytes <= MAX_QUEUED_STDOUT_BYTES;
-	if (exceedsAggregateCap && !isSingleOversizedFrame) {
-		// Over the cap: keep queuing (this process has no other output channel)
-		// and start the no-drain abort window. A slow-but-alive consumer — for
-		// example a dashboard synchronously decoding multi-MiB image lines —
-		// makes drain progress before the window expires and is not killed
-		// mid-turn (issue 495); a dead one is.
-		armNoDrainAbort();
+function abortForStdoutLimit(): void {
+	abortOutput(
+		`Fatal: stdout write queue exceeded its ${MAX_QUEUED_STDOUT_BYTES}-byte hard limit. ` +
+			"Refusing unbounded memory growth. Aborting.\n",
+	);
+}
+
+function enqueueStdout(text: string, bytes: number): void {
+	if (bytes > MAX_QUEUED_STDOUT_BYTES - stdoutQueuedBytes) {
+		abortForStdoutLimit();
+		return;
 	}
 	stdoutQueue.push(text);
 	stdoutQueuedBytes += bytes;
 }
 
 export function writeRawStdout(text: string): void {
-	// Queue behind any backpressured/queued writes to preserve ordering.
-	if (stdoutBackpressured || stdoutQueue.length > 0) {
-		enqueueStdout(text);
+	if (fatalOutputAbortStarted) return;
+	const bytes = Buffer.byteLength(text);
+	if (bytes > MAX_QUEUED_STDOUT_BYTES) {
+		abortForStdoutLimit();
 		return;
 	}
-	if (!writeToStdout(text)) {
-		stdoutBackpressured = true;
-		requestDrainFlush();
+	// Queue behind any backpressured/queued writes to preserve ordering.
+	if (stdoutBackpressured || stdoutQueue.length > 0) {
+		enqueueStdout(text, bytes);
+		return;
 	}
+	if (!writeToStdout(text)) markStdoutBackpressured();
 }
 
 export async function flushRawStdout(): Promise<void> {
@@ -228,4 +232,7 @@ export function resetOutputGuardForTests(): void {
 	stdoutBackpressured = false;
 	stdoutDrainWaiters.length = 0;
 	disarmNoDrainAbort();
+	if (fatalOutputExitTimer) clearTimeout(fatalOutputExitTimer);
+	fatalOutputExitTimer = undefined;
+	fatalOutputAbortStarted = false;
 }
