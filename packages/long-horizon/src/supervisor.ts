@@ -180,15 +180,16 @@ export class LongHorizonSupervisor {
 		if (this.active) await this.active.abort();
 	}
 
-	private latestArtifact(kind: EffectKind): { path: string; digest: string } | undefined {
+	private latestArtifact(kind: EffectKind, afterSeq = -1): { path: string; digest: string; seq: number } | undefined {
 		for (const record of this.store.readRecords().toReversed()) {
+			if (record.seq <= afterSeq) break;
 			if (
 				record.event.type === "effect_completed" &&
 				record.event.kind === kind &&
 				record.event.artifact &&
 				record.event.artifactDigest
 			) {
-				return { path: record.event.artifact, digest: record.event.artifactDigest };
+				return { path: record.event.artifact, digest: record.event.artifactDigest, seq: record.seq };
 			}
 		}
 		return undefined;
@@ -499,101 +500,211 @@ export class LongHorizonSupervisor {
 		return this.advise(plan, report, failure.signature, this.loadLastFailureEvidence(report));
 	}
 
+	private finalVerificationAccepted(assessment: SolAdvice | undefined): boolean {
+		return (
+			assessment?.workUnitId === "final" &&
+			assessment.failureSignature === "none" &&
+			assessment.strategyId === "accept"
+		);
+	}
+
+	private recoverFinalVerification(round: number): boolean | undefined {
+		const state = this.store.replay();
+		if (state.finalVerification?.round === round) {
+			const value = validatedModelArtifact(
+				this.store.readArtifact<unknown>(state.finalVerification.artifact, state.finalVerification.artifactDigest),
+				"final verification",
+				validateSolAdvice,
+			);
+			const accepted = this.finalVerificationAccepted(value);
+			if (accepted !== state.finalVerification.accepted) {
+				throw new Error("final verification checkpoint does not match its artifact");
+			}
+			return accepted;
+		}
+		const acceptance = this.store
+			.readRecords()
+			.toReversed()
+			.find(
+				(record) =>
+					record.event.type === "acceptance_completed" &&
+					record.event.round === round &&
+					record.event.status === "passed",
+			);
+		if (!acceptance) return undefined;
+		const verificationReset = this.store
+			.readRecords()
+			.toReversed()
+			.find(
+				(record) =>
+					record.event.type === "acceptance_reset" &&
+					record.event.round === round &&
+					record.event.stage === "verification",
+			);
+		const artifact = this.latestArtifact(
+			"final-verification",
+			Math.max(acceptance.seq, verificationReset?.seq ?? -1),
+		);
+		if (!artifact) return undefined;
+		const value = validatedModelArtifact(
+			this.store.readArtifact<unknown>(artifact.path, artifact.digest),
+			"final verification",
+			validateSolAdvice,
+		);
+		const accepted = this.finalVerificationAccepted(value);
+		this.store.append({
+			type: "final_verification_recorded",
+			round,
+			accepted,
+			artifact: artifact.path,
+			artifactDigest: artifact.digest,
+		});
+		return accepted;
+	}
+
 	private async runAcceptance(plan: SolPlan): Promise<"passed" | "failed" | "controlled"> {
-		const effectId = randomUUID();
-		this.store.append({ type: "effect_intent", effectId, kind: "acceptance" });
-		const evidence: CommandEvidence[] = [];
-		const finish = () => {
-			const artifact = this.store.writeArtifact("acceptance", effectId, evidence);
-			this.store.append({
-				type: "effect_completed",
-				effectId,
-				kind: "acceptance",
-				artifact,
-				artifactDigest: this.store.artifactDigest(artifact),
-			});
-		};
-		for (const command of this.config.acceptanceCommands) {
-			if (this.store.replay().pendingControl === "abort" || this.store.replay().pendingControl === "pause") {
-				finish();
+		let state = this.store.replay();
+		const round = state.rounds;
+		const evidence: CommandEvidence[] =
+			state.acceptanceProgress?.round === round ? [...state.acceptanceProgress.evidence] : [];
+		if (evidence.length > this.config.acceptanceCommands.length) {
+			throw new Error("persisted acceptance evidence exceeds configured commands");
+		}
+		for (let index = 0; index < evidence.length; index++) {
+			if (evidence[index].command !== this.config.acceptanceCommands[index]) {
+				throw new Error(`persisted acceptance evidence command mismatch at index ${index}`);
+			}
+		}
+		if (evidence.some((item) => item.exitCode !== 0 || item.termination)) return "failed";
+		const identityBefore = await getWorkspaceIdentity(this.config.cwd);
+		if (evidence.some((item) => item.workspaceIdentity !== identityBefore)) return "failed";
+
+		let acceptancePassed =
+			state.acceptanceCheckpoint?.round === round && state.acceptanceCheckpoint.status === "passed";
+		if (acceptancePassed && state.acceptanceCheckpoint?.workspaceIdentity !== identityBefore) return "failed";
+
+		if (!acceptancePassed) {
+			const effectId = randomUUID();
+			this.store.append({ type: "effect_intent", effectId, kind: "acceptance" });
+			const finish = (status: "partial" | "passed" | "failed", workspaceIdentity?: string): void => {
+				const artifact = this.store.writeArtifact("acceptance", effectId, {
+					schemaVersion: 1,
+					round,
+					status,
+					evidence,
+					workspaceIdentity,
+				});
+				this.store.append({
+					type: "acceptance_completed",
+					effectId,
+					artifact,
+					artifactDigest: this.store.artifactDigest(artifact),
+					round,
+					status,
+					evidenceIds: evidence.map((item) => item.id),
+					workspaceIdentity,
+				});
+			};
+			for (
+				let commandIndex = evidence.length;
+				commandIndex < this.config.acceptanceCommands.length;
+				commandIndex++
+			) {
+				if (this.store.replay().pendingControl === "abort" || this.store.replay().pendingControl === "pause") {
+					finish("partial");
+					this.applyControl();
+					return "controlled";
+				}
+				const command = this.config.acceptanceCommands[commandIndex];
+				const policy = {
+					...this.config.policy,
+					allowedCommands: [...this.config.policy.allowedCommands, command],
+				};
+				const controller = new AbortController();
+				let watchError: Error | undefined;
+				const watcher = setInterval(() => {
+					try {
+						if (this.store.replay().pendingControl === "abort") controller.abort();
+					} catch (error) {
+						watchError = error as Error;
+						controller.abort();
+					}
+				}, 100);
+				watcher.unref();
+				let result: CommandExecutionResult;
+				try {
+					result = await this.commandRunner(command, this.config.cwd, policy, controller.signal);
+				} finally {
+					clearInterval(watcher);
+				}
+				if (watchError) throw new Error(`acceptance control watcher failed: ${watchError.message}`);
+				if (isUncertainCommandOutcome(result)) {
+					this.store.append({ type: "command_outcome_uncertain", effectId, evidence: result });
+					throw new Error(`command outcome requires reconciliation: ${result.id}`);
+				}
+				evidence.push(result);
+				this.store.append({ type: "acceptance_recorded", effectId, round, commandIndex, evidence: result });
+				if (result.exitCode !== 0 || result.termination) {
+					finish("failed", result.workspaceIdentity);
+					if (this.store.replay().pendingControl) {
+						this.applyControl();
+						return "controlled";
+					}
+					return "failed";
+				}
+			}
+			const currentIdentity = await getWorkspaceIdentity(this.config.cwd);
+			const fresh = evidence.every((item) => item.workspaceIdentity === currentIdentity);
+			finish(fresh ? "passed" : "failed", currentIdentity);
+			if (this.store.replay().pendingControl) {
 				this.applyControl();
 				return "controlled";
 			}
-			const policy = {
-				...this.config.policy,
-				allowedCommands: [...this.config.policy.allowedCommands, command],
-			};
-			const controller = new AbortController();
-			let watchError: Error | undefined;
-			const watcher = setInterval(() => {
-				try {
-					if (this.store.replay().pendingControl === "abort") controller.abort();
-				} catch (error) {
-					watchError = error as Error;
-					controller.abort();
-				}
-			}, 100);
-			watcher.unref();
-			let result: CommandExecutionResult;
-			try {
-				result = await this.commandRunner(command, this.config.cwd, policy, controller.signal);
-			} finally {
-				clearInterval(watcher);
-			}
-			if (watchError) throw new Error(`acceptance control watcher failed: ${watchError.message}`);
-			if (isUncertainCommandOutcome(result)) {
-				this.store.append({ type: "command_outcome_uncertain", effectId, evidence: result });
-				throw new Error(`command outcome requires reconciliation: ${result.id}`);
-			}
-			evidence.push(result);
-			this.store.append({ type: "acceptance_recorded", evidence: result });
-			if (result.exitCode !== 0 || result.termination) {
-				finish();
-				if (this.store.replay().pendingControl) {
-					this.applyControl();
-					return "controlled";
-				}
-				return "failed";
-			}
+			if (this.failIfResourceLimitReached(false)) return "controlled";
+			if (!fresh) return "failed";
+			acceptancePassed = true;
+			state = this.store.replay();
 		}
-		const currentIdentity = await getWorkspaceIdentity(this.config.cwd);
-		const fresh = evidence.every((item) => item.workspaceIdentity === currentIdentity);
-		finish();
-		if (this.store.replay().pendingControl) {
-			this.applyControl();
-			return "controlled";
-		}
-		if (this.failIfResourceLimitReached(false)) return "controlled";
-		if (!fresh) return "failed";
 
+		if (!acceptancePassed) return "failed";
 		if (this.config.verifier) {
-			const verifier = await this.createSession("verifier");
-			try {
-				const assessment = await this.modelEffect(
-					"final-verification",
-					verifier,
-					finalVerificationPrompt(
-						this.config,
-						plan,
-						evidence.map((item) => item.id),
-					),
-					(text) => parseSolAdvice(text),
-				);
-				if (this.store.replay().pendingControl) {
-					this.applyControl();
-					return "controlled";
+			let accepted = this.recoverFinalVerification(round);
+			if (accepted === undefined) {
+				const verifier = await this.createSession("verifier");
+				try {
+					try {
+						const assessment = await this.modelEffect(
+							"final-verification",
+							verifier,
+							finalVerificationPrompt(
+								this.config,
+								plan,
+								evidence.map((item) => item.id),
+							),
+							(text) => parseSolAdvice(text),
+						);
+						accepted = this.finalVerificationAccepted(assessment.value);
+						this.store.append({
+							type: "final_verification_recorded",
+							round,
+							accepted,
+							artifact: assessment.artifact,
+							artifactDigest: assessment.artifactDigest,
+						});
+					} catch (error) {
+						accepted = this.recoverFinalVerification(round);
+						if (accepted === undefined) throw error;
+					}
+				} finally {
+					verifier.dispose();
 				}
-				if (this.failIfResourceLimitReached(false)) return "controlled";
-				if (
-					assessment.value.workUnitId !== "final" ||
-					assessment.value.failureSignature !== "none" ||
-					assessment.value.strategyId !== "accept"
-				) {
-					return "failed";
-				}
-			} finally {
-				verifier.dispose();
 			}
+			if (this.store.replay().pendingControl) {
+				this.applyControl();
+				return "controlled";
+			}
+			if (this.failIfResourceLimitReached(false)) return "controlled";
+			if (!accepted) return "failed";
 		}
 		return "passed";
 	}
@@ -673,6 +784,29 @@ export class LongHorizonSupervisor {
 		if (state.pendingControl === "resume") {
 			if (state.phase !== "paused" && state.phase !== "blocked")
 				throw new Error("resume requested for a non-paused run");
+			if (state.phase === "blocked" && state.blockedReason?.startsWith("completion candidate rejected")) {
+				if (state.finalVerification?.round === state.rounds) {
+					this.store.append({
+						type: "acceptance_reset",
+						round: state.rounds,
+						stage: "verification",
+						reason: "operator resumed rejected final verification",
+					});
+				} else {
+					const failedIndex =
+						state.acceptanceProgress?.evidence.findIndex(
+							(item) => item.exitCode !== 0 || item.termination !== undefined,
+						) ?? -1;
+					this.store.append({
+						type: "acceptance_reset",
+						round: state.rounds,
+						stage: "commands",
+						retryFrom: failedIndex >= 0 ? failedIndex : 0,
+						reason: "operator resumed rejected acceptance evidence",
+					});
+				}
+				state = this.store.replay();
+			}
 			const target = this.loadPlan() ? "executing" : "planning";
 			this.store.append({ type: "phase_changed", from: state.phase, to: target, reason: "resume" });
 			state = this.store.replay();

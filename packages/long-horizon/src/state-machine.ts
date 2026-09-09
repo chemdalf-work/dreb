@@ -135,6 +135,9 @@ export function applyJournalRecord(
 			if (event.round > config.limits.maxRounds) throw new Error(`round limit exceeded: ${event.round}`);
 			next.pendingEffect = undefined;
 			next.rounds = event.round;
+			next.acceptanceProgress = undefined;
+			next.acceptanceCheckpoint = undefined;
+			next.finalVerification = undefined;
 			next.lastWorkUnitId = event.report.workUnitId;
 			next.lastStrategyId = event.report.strategyId;
 			const prior = previous.failureStreak;
@@ -211,7 +214,118 @@ export function applyJournalRecord(
 			next.escalations++;
 			next.failureStreak = { ...previous.failureStreak, escalated: true };
 			break;
-		case "acceptance_recorded":
+		case "acceptance_recorded": {
+			if (event.effectId === undefined && event.round === undefined && event.commandIndex === undefined) break;
+			if (event.effectId === undefined || event.round === undefined || event.commandIndex === undefined) {
+				throw new Error("acceptance evidence checkpoint metadata is incomplete");
+			}
+			if (previous.pendingEffect?.effectId !== event.effectId || previous.pendingEffect.kind !== "acceptance") {
+				throw new Error(`acceptance evidence without matching effect intent: ${event.effectId}`);
+			}
+			if (event.round !== previous.rounds) throw new Error(`acceptance evidence has invalid round: ${event.round}`);
+			const evidence =
+				previous.acceptanceProgress?.round === event.round ? [...previous.acceptanceProgress.evidence] : [];
+			if (event.commandIndex !== evidence.length) {
+				throw new Error(`acceptance evidence has invalid command index: ${event.commandIndex}`);
+			}
+			if (event.commandIndex >= config.acceptanceCommands.length) {
+				throw new Error(`acceptance evidence exceeds configured commands: ${event.commandIndex}`);
+			}
+			if (event.evidence.command !== config.acceptanceCommands[event.commandIndex]) {
+				throw new Error(`acceptance evidence command mismatch at index ${event.commandIndex}`);
+			}
+			evidence.push(event.evidence);
+			next.acceptanceProgress = { round: event.round, evidence };
+			break;
+		}
+		case "acceptance_completed": {
+			if (previous.pendingEffect?.effectId !== event.effectId || previous.pendingEffect.kind !== "acceptance") {
+				throw new Error(`acceptance completion without matching effect intent: ${event.effectId}`);
+			}
+			if (event.round !== previous.rounds)
+				throw new Error(`acceptance completion has invalid round: ${event.round}`);
+			const evidence =
+				previous.acceptanceProgress?.round === event.round ? previous.acceptanceProgress.evidence : [];
+			if (event.evidenceIds.length !== evidence.length) {
+				throw new Error("acceptance completion evidence count mismatch");
+			}
+			for (let index = 0; index < evidence.length; index++) {
+				if (event.evidenceIds[index] !== evidence[index].id) {
+					throw new Error(`acceptance completion evidence mismatch at index ${index}`);
+				}
+			}
+			const successful = evidence.every((item) => item.exitCode === 0 && item.termination === undefined);
+			if (event.status === "passed") {
+				if (evidence.length !== config.acceptanceCommands.length || !successful || !event.workspaceIdentity) {
+					throw new Error("passed acceptance completion is inconsistent with its evidence");
+				}
+				if (evidence.some((item) => item.workspaceIdentity !== event.workspaceIdentity)) {
+					throw new Error("passed acceptance evidence is stale");
+				}
+			}
+			if (event.status === "partial" && (!successful || evidence.length >= config.acceptanceCommands.length)) {
+				throw new Error("partial acceptance completion is inconsistent with its evidence");
+			}
+			if (
+				event.status === "failed" &&
+				(evidence.length === 0 ||
+					(successful &&
+						(!event.workspaceIdentity ||
+							evidence.every((item) => item.workspaceIdentity === event.workspaceIdentity))))
+			) {
+				throw new Error("failed acceptance completion requires failed or stale evidence");
+			}
+			next.pendingEffect = undefined;
+			next.acceptanceCheckpoint = {
+				round: event.round,
+				status: event.status,
+				evidenceIds: [...event.evidenceIds],
+				workspaceIdentity: event.workspaceIdentity,
+			};
+			break;
+		}
+		case "final_verification_recorded":
+			if (
+				previous.acceptanceCheckpoint?.round !== event.round ||
+				previous.acceptanceCheckpoint.status !== "passed"
+			) {
+				throw new Error("final verification requires a passed acceptance checkpoint");
+			}
+			next.finalVerification = {
+				round: event.round,
+				accepted: event.accepted,
+				artifact: event.artifact,
+				artifactDigest: event.artifactDigest,
+			};
+			break;
+		case "acceptance_reset":
+			if (event.round !== previous.rounds) throw new Error(`acceptance reset has invalid round: ${event.round}`);
+			if (previous.pendingEffect) throw new Error("acceptance reset cannot abandon a pending effect");
+			if (event.stage === "verification") {
+				if (
+					previous.acceptanceCheckpoint?.round !== event.round ||
+					previous.acceptanceCheckpoint.status !== "passed"
+				) {
+					throw new Error("verification reset requires a passed acceptance checkpoint");
+				}
+				next.finalVerification = undefined;
+			} else {
+				const progress =
+					previous.acceptanceProgress?.round === event.round ? previous.acceptanceProgress : undefined;
+				if (
+					event.retryFrom === undefined ||
+					(!progress && event.retryFrom !== 0) ||
+					(progress && event.retryFrom > progress.evidence.length)
+				) {
+					throw new Error("command reset requires a valid acceptance retry index");
+				}
+				next.acceptanceProgress =
+					event.retryFrom === 0
+						? undefined
+						: { round: event.round, evidence: progress!.evidence.slice(0, event.retryFrom) };
+				next.acceptanceCheckpoint = undefined;
+				next.finalVerification = undefined;
+			}
 			break;
 		case "blocked":
 			requireTransition(previous.phase, "blocked");

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseTerraReport } from "../src/reports.js";
 import { RunStore } from "../src/run-store.js";
 import { selectNextAction } from "../src/state-machine.js";
-import { report, testConfig } from "./helpers.js";
+import { commandEvidence, report, testConfig } from "./helpers.js";
 
 describe("state machine", () => {
 	it("enforces transitions and control precedence", () => {
@@ -59,6 +59,65 @@ describe("state machine", () => {
 		});
 		expect(state.pendingEffect).toBeUndefined();
 		expect(state.rounds).toBe(1);
+	});
+
+	it("checkpoints acceptance and final verification in journal order", () => {
+		const store = RunStore.create(testConfig());
+		store.append({ type: "effect_intent", effectId: "round-complete", kind: "round" });
+		const roundArtifact = store.writeArtifact("round", "round-complete", {
+			value: parseTerraReport(report("complete"), []),
+		});
+		store.append({
+			type: "round_completed",
+			effectId: "round-complete",
+			artifact: roundArtifact,
+			artifactDigest: store.artifactDigest(roundArtifact),
+			round: 1,
+			report: parseTerraReport(report("complete"), []),
+			verificationSucceeded: false,
+		});
+
+		store.append({ type: "effect_intent", effectId: "acceptance", kind: "acceptance" });
+		const evidence = commandEvidence("npm test", "workspace");
+		store.append({
+			type: "acceptance_recorded",
+			effectId: "acceptance",
+			round: 1,
+			commandIndex: 0,
+			evidence,
+		});
+		const acceptanceArtifact = store.writeArtifact("acceptance", "acceptance", { evidence: [evidence] });
+		const accepted = store.append({
+			type: "acceptance_completed",
+			effectId: "acceptance",
+			artifact: acceptanceArtifact,
+			artifactDigest: store.artifactDigest(acceptanceArtifact),
+			round: 1,
+			status: "passed",
+			evidenceIds: [evidence.id],
+			workspaceIdentity: "workspace",
+		});
+		expect(accepted.pendingEffect).toBeUndefined();
+		expect(accepted.acceptanceCheckpoint?.status).toBe("passed");
+
+		const verificationArtifact = store.writeArtifact("final-verification", "final", { value: "accepted" });
+		const verified = store.append({
+			type: "final_verification_recorded",
+			round: 1,
+			accepted: true,
+			artifact: verificationArtifact,
+			artifactDigest: store.artifactDigest(verificationArtifact),
+		});
+		expect(verified.finalVerification?.accepted).toBe(true);
+		expect(() =>
+			store.append({
+				type: "acceptance_reset",
+				round: 2,
+				stage: "commands",
+				retryFrom: 0,
+				reason: "invalid future reset",
+			}),
+		).toThrow(/invalid round/);
 	});
 
 	it("applies budget limits before ordinary execution", () => {

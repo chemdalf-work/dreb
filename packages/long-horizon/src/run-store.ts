@@ -372,9 +372,50 @@ function validateJournalEvent(value: unknown): JournalEventData {
 			nonEmptyString(event.adviceArtifact, `${name}.adviceArtifact`);
 			artifactDigest(event.adviceArtifactDigest, `${name}.adviceArtifactDigest`);
 			break;
-		case "acceptance_recorded":
-			exactKeys(event, name, ["type", "evidence"]);
+		case "acceptance_recorded": {
+			exactKeys(event, name, ["type", "evidence"], ["effectId", "round", "commandIndex"]);
 			validateCommandEvidence(event.evidence, `${name}.evidence`);
+			const checkpointFields = [event.effectId, event.round, event.commandIndex];
+			if (
+				checkpointFields.some((value) => value !== undefined) &&
+				checkpointFields.some((value) => value === undefined)
+			) {
+				throw new Error(`${name} checkpoint metadata must be complete`);
+			}
+			if (event.effectId !== undefined) nonEmptyString(event.effectId, `${name}.effectId`);
+			if (event.round !== undefined) safeInteger(event.round, `${name}.round`, 1);
+			if (event.commandIndex !== undefined) safeInteger(event.commandIndex, `${name}.commandIndex`);
+			break;
+		}
+		case "acceptance_completed":
+			exactKeys(
+				event,
+				name,
+				["type", "effectId", "artifact", "artifactDigest", "round", "status", "evidenceIds"],
+				["workspaceIdentity"],
+			);
+			nonEmptyString(event.effectId, `${name}.effectId`);
+			nonEmptyString(event.artifact, `${name}.artifact`);
+			artifactDigest(event.artifactDigest, `${name}.artifactDigest`);
+			safeInteger(event.round, `${name}.round`, 1);
+			enumString(event.status, `${name}.status`, new Set(["partial", "passed", "failed"]));
+			stringArray(event.evidenceIds, `${name}.evidenceIds`);
+			optionalString(event.workspaceIdentity, `${name}.workspaceIdentity`);
+			break;
+		case "final_verification_recorded":
+			exactKeys(event, name, ["type", "round", "accepted", "artifact", "artifactDigest"]);
+			safeInteger(event.round, `${name}.round`, 1);
+			if (typeof event.accepted !== "boolean") throw new Error(`${name}.accepted must be a boolean`);
+			nonEmptyString(event.artifact, `${name}.artifact`);
+			artifactDigest(event.artifactDigest, `${name}.artifactDigest`);
+			break;
+		case "acceptance_reset":
+			exactKeys(event, name, ["type", "round", "stage", "reason"], ["retryFrom"]);
+			safeInteger(event.round, `${name}.round`, 1);
+			enumString(event.stage, `${name}.stage`, new Set(["commands", "verification"]));
+			nonEmptyString(event.reason, `${name}.reason`);
+			if (event.stage === "commands") safeInteger(event.retryFrom, `${name}.retryFrom`);
+			else if (event.retryFrom !== undefined) throw new Error(`${name}.retryFrom requires command reset`);
 			break;
 		case "blocked":
 			exactKeys(event, name, ["type", "reason"]);
@@ -591,6 +632,11 @@ export class RunStore {
 			this.readArtifact(validatedEvent.artifact, validatedEvent.artifactDigest);
 		} else if (validatedEvent.type === "escalation_completed") {
 			this.readArtifact(validatedEvent.adviceArtifact, validatedEvent.adviceArtifactDigest);
+		} else if (
+			validatedEvent.type === "acceptance_completed" ||
+			validatedEvent.type === "final_verification_recorded"
+		) {
+			this.readArtifact(validatedEvent.artifact, validatedEvent.artifactDigest);
 		}
 		const release = this.acquireLock();
 		try {
@@ -655,6 +701,9 @@ export class RunStore {
 			} else if (event.type === "escalation_completed") {
 				artifact = event.adviceArtifact;
 				expectedDigest = event.adviceArtifactDigest;
+			} else if (event.type === "acceptance_completed" || event.type === "final_verification_recorded") {
+				artifact = event.artifact;
+				expectedDigest = event.artifactDigest;
 			}
 			if (!artifact || !expectedDigest) continue;
 			const key = `${artifact}\0${expectedDigest}`;

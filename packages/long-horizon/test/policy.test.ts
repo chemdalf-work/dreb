@@ -199,6 +199,13 @@ describe("tool policy", () => {
 		).not.toThrow();
 	});
 
+	it("requires credential authorization before printing the GitHub auth token", () => {
+		const command = "gh auth token";
+		const policy = { ...testConfig().policy, allowedCommands: [command] };
+		expect(() => assertCommandAuthorized(command, policy)).toThrow(/credential access/);
+		expect(() => assertCommandAuthorized(command, { ...policy, allowCredentials: true })).not.toThrow();
+	});
+
 	it("default-denies commands outside the exact allowlist and hazardous categories", () => {
 		const policy = testConfig().policy;
 		expect(() => assertCommandAuthorized("rm -rf /", policy)).toThrow(/explicitly authorized/);
@@ -250,17 +257,44 @@ describe("tool policy", () => {
 		"git tag --delete v1",
 		"git tag -f v1 HEAD~1",
 		"git tag --force v1 HEAD~1",
-	] as const)("classifies destructive Git option aliases and attached values: %s", (command) => {
+		"git update-ref refs/heads/main HEAD~1",
+		"git stash clear",
+		"git stash drop stash@{0}",
+		"git worktree remove ../other",
+		"git worktree prune",
+	] as const)("classifies destructive Git operations: %s", (command) => {
 		const policy = { ...testConfig().policy, allowedCommands: [command] };
 		expect(() => assertCommandAuthorized(command, policy)).toThrow(/destructive git/);
 		expect(() => assertCommandAuthorized(command, { ...policy, allowDestructiveGit: true })).not.toThrow();
 	});
 
 	it.each([
+		"gh api repos/acme/project/issues --method POST -f title=x",
+		"gh api repos/acme/project/issues -XPOST -f title=x",
+		"gh api repos/acme/project/issues -f title=x",
+		"gh repo create demo --public",
+		"gh workflow run release.yml",
+		"gh run cancel 123",
+		"gh secret set TOKEN",
+	] as const)("classifies remote-state mutations: %s", (command) => {
+		const policy = { ...testConfig().policy, allowedCommands: [command], allowCredentials: true };
+		expect(() => assertCommandAuthorized(command, policy)).toThrow(/remote-state/);
+		expect(() => assertCommandAuthorized(command, { ...policy, allowRemoteState: true })).not.toThrow();
+	});
+
+	it.each([
 		"git -C . status --short",
+		"git diff --check",
+		"git log -1 --oneline",
+		"git stash list",
+		"git worktree list",
 		"npm --prefix pkg test",
 		"kubectl --context production get pods",
 		"gh --repo owner/repo pr view 9",
+		"gh pr --repo owner/repo view 9",
+		"gh issue list --repo owner/repo",
+		"gh api repos/owner/repo",
+		"gh api repos/owner/repo --method GET -f per_page=10",
 	])("allows exact-listed option-bearing commands outside hazardous categories: %s", (command) => {
 		const policy = { ...testConfig().policy, allowedCommands: [command] };
 		expect(() => assertCommandAuthorized(command, policy)).not.toThrow();
