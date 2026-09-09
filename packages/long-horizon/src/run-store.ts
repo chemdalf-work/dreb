@@ -22,6 +22,7 @@ import type {
 	JournalRecord,
 	LongHorizonRunConfig,
 	RunState,
+	UncertainCommandOutcome,
 } from "./types.js";
 
 function canonical(value: unknown): string {
@@ -220,6 +221,33 @@ function validateCommandEvidence(value: unknown, name: string): void {
 	}
 }
 
+function validateUncertainCommandOutcome(value: unknown, name: string): asserts value is UncertainCommandOutcome {
+	const evidence = object(value, name);
+	exactKeys(
+		evidence,
+		name,
+		["outcome", "id", "command", "exitCode", "stdout", "stderr", "startedAt", "completedAt", "reconciliationError"],
+		["termination"],
+	);
+	if (evidence.outcome !== "uncertain") throw new Error(`${name}.outcome is invalid`);
+	nonEmptyString(evidence.id, `${name}.id`);
+	nonEmptyString(evidence.command, `${name}.command`);
+	if (
+		evidence.exitCode !== null &&
+		(typeof evidence.exitCode !== "number" || !Number.isSafeInteger(evidence.exitCode))
+	) {
+		throw new Error(`${name}.exitCode must be an integer or null`);
+	}
+	if (typeof evidence.stdout !== "string") throw new Error(`${name}.stdout must be a string`);
+	if (typeof evidence.stderr !== "string") throw new Error(`${name}.stderr must be a string`);
+	validTimestamp(evidence.startedAt, `${name}.startedAt`);
+	validTimestamp(evidence.completedAt, `${name}.completedAt`);
+	nonEmptyString(evidence.reconciliationError, `${name}.reconciliationError`);
+	if (evidence.termination !== undefined && evidence.termination !== "timeout" && evidence.termination !== "aborted") {
+		throw new Error(`${name}.termination is invalid`);
+	}
+}
+
 function validateToolEvidence(value: unknown, name: string): void {
 	const evidence = object(value, name);
 	exactKeys(evidence, name, ["id", "toolName", "startedAt", "completedAt", "args", "result", "isError"]);
@@ -281,6 +309,11 @@ function validateJournalEvent(value: unknown): JournalEventData {
 			nonEmptyString(event.effectId, `${name}.effectId`);
 			enumString(event.kind, `${name}.kind`, EFFECT_KINDS);
 			nonEmptyString(event.reason, `${name}.reason`);
+			break;
+		case "command_outcome_uncertain":
+			exactKeys(event, name, ["type", "effectId", "evidence"]);
+			nonEmptyString(event.effectId, `${name}.effectId`);
+			validateUncertainCommandOutcome(event.evidence, `${name}.evidence`);
 			break;
 		case "round_completed":
 			exactKeys(

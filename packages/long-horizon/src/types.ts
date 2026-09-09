@@ -102,6 +102,21 @@ export interface CommandEvidence {
 	termination?: "timeout" | "aborted";
 }
 
+export interface UncertainCommandOutcome {
+	outcome: "uncertain";
+	id: string;
+	command: string;
+	exitCode: number | null;
+	stdout: string;
+	stderr: string;
+	startedAt: string;
+	completedAt: string;
+	reconciliationError: string;
+	termination?: "timeout" | "aborted";
+}
+
+export type CommandExecutionResult = CommandEvidence | UncertainCommandOutcome;
+
 export interface SolPlan {
 	schemaVersion: 1;
 	objective: string;
@@ -166,6 +181,7 @@ export type JournalEventData =
 	| { type: "effect_intent"; effectId: string; kind: EffectKind; sessionId?: string }
 	| { type: "effect_completed"; effectId: string; kind: EffectKind; artifact?: string; artifactDigest?: string }
 	| { type: "effect_abandoned"; effectId: string; kind: EffectKind; reason: string }
+	| { type: "command_outcome_uncertain"; effectId: string; evidence: UncertainCommandOutcome }
 	| {
 			type: "round_completed";
 			effectId: string;

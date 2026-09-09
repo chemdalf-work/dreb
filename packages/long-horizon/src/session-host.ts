@@ -16,7 +16,7 @@ import {
 import { validateThinkingCapability } from "./config.js";
 import { type CommandRunner, createAuthorizedCommandTool, roleToolSurface } from "./policy.js";
 import type {
-	CommandEvidence,
+	CommandExecutionResult,
 	LongHorizonRunConfig,
 	ModelSelection,
 	SessionReference,
@@ -28,7 +28,7 @@ export interface PromptResult {
 	text: string;
 	events: Array<{ timestamp: string; event: unknown }>;
 	toolEvidence: ToolEvidence[];
-	commandEvidence: CommandEvidence[];
+	commandEvidence: CommandExecutionResult[];
 	askUserObserved: boolean;
 	tokens: number;
 	costUsd: number;
@@ -81,7 +81,7 @@ class DrebHostedSession implements HostedSession {
 	private captures = new Map<string, Capture>();
 	private events: Array<{ timestamp: string; event: unknown }> = [];
 	private evidence: ToolEvidence[] = [];
-	private commandEvidence: CommandEvidence[] = [];
+	private commandEvidence: CommandExecutionResult[] = [];
 	private askUserObserved = false;
 	private unsubscribe: () => void;
 
@@ -118,7 +118,7 @@ class DrebHostedSession implements HostedSession {
 		}
 	}
 
-	addCommandEvidence(evidence: CommandEvidence): void {
+	addCommandEvidence(evidence: CommandExecutionResult): void {
 		this.commandEvidence.push(evidence);
 	}
 
