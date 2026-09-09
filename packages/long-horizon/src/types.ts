@@ -117,6 +117,25 @@ export interface UncertainCommandOutcome {
 
 export type CommandExecutionResult = CommandEvidence | UncertainCommandOutcome;
 
+export interface AcceptanceProgress {
+	round: number;
+	evidence: CommandEvidence[];
+}
+
+export interface AcceptanceCheckpoint {
+	round: number;
+	status: "partial" | "passed" | "failed";
+	evidenceIds: string[];
+	workspaceIdentity?: string;
+}
+
+export interface FinalVerificationCheckpoint {
+	round: number;
+	accepted: boolean;
+	artifact: string;
+	artifactDigest: string;
+}
+
 export interface SolPlan {
 	schemaVersion: 1;
 	objective: string;
@@ -204,7 +223,37 @@ export type JournalEventData =
 			adviceArtifact: string;
 			adviceArtifactDigest: string;
 	  }
-	| { type: "acceptance_recorded"; evidence: CommandEvidence }
+	| {
+			type: "acceptance_recorded";
+			evidence: CommandEvidence;
+			effectId?: string;
+			round?: number;
+			commandIndex?: number;
+	  }
+	| {
+			type: "acceptance_completed";
+			effectId: string;
+			artifact: string;
+			artifactDigest: string;
+			round: number;
+			status: "partial" | "passed" | "failed";
+			evidenceIds: string[];
+			workspaceIdentity?: string;
+	  }
+	| {
+			type: "final_verification_recorded";
+			round: number;
+			accepted: boolean;
+			artifact: string;
+			artifactDigest: string;
+	  }
+	| {
+			type: "acceptance_reset";
+			round: number;
+			stage: "commands" | "verification";
+			reason: string;
+			retryFrom?: number;
+	  }
 	| { type: "blocked"; reason: string }
 	| { type: "terminal"; phase: "completed" | "failed" | "aborted"; reason: string };
 
@@ -246,6 +295,9 @@ export interface RunState {
 	lastWorkUnitId?: string;
 	lastStrategyId?: string;
 	failureStreak?: FailureStreak;
+	acceptanceProgress?: AcceptanceProgress;
+	acceptanceCheckpoint?: AcceptanceCheckpoint;
+	finalVerification?: FinalVerificationCheckpoint;
 	context?: { tokens: number; contextWindow: number };
 	lastEvent: JournalEventData;
 }

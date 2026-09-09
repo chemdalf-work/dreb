@@ -60,7 +60,10 @@ export class FakeSessionHost implements SessionHost {
 	readonly aborted: string[] = [];
 	private nextId = 0;
 
-	constructor(private readonly responses: Partial<Record<SessionRole, PromptResult[]>>) {}
+	constructor(
+		private readonly responses: Partial<Record<SessionRole, PromptResult[]>>,
+		private readonly onPrompt?: (role: SessionRole, text: string) => void,
+	) {}
 
 	async create(
 		role: SessionRole,
@@ -91,6 +94,7 @@ export class FakeSessionHost implements SessionHost {
 			reference,
 			prompt: async (text) => {
 				this.prompts.push({ sessionId: reference.id, text });
+				this.onPrompt?.(reference.role, text);
 				const result = this.responses[reference.role]?.shift();
 				if (!result) throw new Error(`no fake ${reference.role} response`);
 				return result;

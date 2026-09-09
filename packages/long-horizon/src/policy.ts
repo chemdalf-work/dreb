@@ -59,47 +59,110 @@ function hasCommandSequence(argv: readonly string[], executable: string, sequenc
 	return false;
 }
 
-function hasGitSubcommandOption(
+interface ParsedSubcommand {
+	name: string;
+	index: number;
+}
+
+function findPositional(
 	argv: readonly string[],
-	subcommand: string,
-	option: (token: string) => boolean,
-): boolean {
-	const gitIndex = argv.findIndex((token) => executableName(token) === "git");
-	if (gitIndex < 0) return false;
-	const subcommandIndex = argv.findIndex((token, index) => index > gitIndex && token.toLowerCase() === subcommand);
-	return subcommandIndex >= 0 && argv.slice(subcommandIndex + 1).some(option);
+	start: number,
+	optionsWithValues: ReadonlySet<string>,
+	attachedValuePrefixes: readonly string[],
+): ParsedSubcommand | undefined {
+	for (let index = start; index < argv.length; index++) {
+		const token = argv[index];
+		if (token === "--") {
+			const name = argv[index + 1];
+			return name ? { name: name.toLowerCase(), index: index + 1 } : undefined;
+		}
+		if (optionsWithValues.has(token)) {
+			index++;
+			continue;
+		}
+		if (attachedValuePrefixes.some((prefix) => token.startsWith(prefix))) continue;
+		if (token.startsWith("-")) continue;
+		return { name: token.toLowerCase(), index };
+	}
+	return undefined;
+}
+
+function findSubcommand(
+	argv: readonly string[],
+	executable: string,
+	optionsWithValues: ReadonlySet<string>,
+	attachedValuePrefixes: readonly string[],
+): ParsedSubcommand | undefined {
+	const executableIndex = argv.findIndex((token) => executableName(token) === executable);
+	return executableIndex < 0
+		? undefined
+		: findPositional(argv, executableIndex + 1, optionsWithValues, attachedValuePrefixes);
+}
+
+const GIT_READ_ONLY_SUBCOMMANDS = new Set([
+	"annotate",
+	"blame",
+	"cat-file",
+	"check-attr",
+	"check-ignore",
+	"check-mailmap",
+	"check-ref-format",
+	"describe",
+	"diff",
+	"diff-files",
+	"diff-index",
+	"diff-tree",
+	"for-each-ref",
+	"grep",
+	"log",
+	"ls-files",
+	"ls-remote",
+	"ls-tree",
+	"merge-base",
+	"name-rev",
+	"range-diff",
+	"rev-list",
+	"rev-parse",
+	"shortlog",
+	"show",
+	"show-branch",
+	"status",
+	"version",
+	"whatchanged",
+]);
+
+function isReadOnlyGitFamily(argv: readonly string[], subcommand: ParsedSubcommand): boolean {
+	const args = argv.slice(subcommand.index + 1).map((token) => token.toLowerCase());
+	if (subcommand.name === "stash") return args[0] === "list" || args[0] === "show";
+	if (subcommand.name === "worktree") return args[0] === "list";
+	if (subcommand.name === "remote")
+		return args.length === 0 || args[0] === "-v" || args[0] === "show" || args[0] === "get-url";
+	if (subcommand.name === "branch") {
+		return args.length === 0 || args.some((token) => token === "--list" || token === "--show-current");
+	}
+	if (subcommand.name === "tag") {
+		return (
+			args.length === 0 ||
+			args.some((token) =>
+				["-l", "--list", "--contains", "--no-contains", "--merged", "--no-merged", "--points-at"].includes(
+					token.split("=")[0],
+				),
+			)
+		);
+	}
+	return false;
 }
 
 function isDestructiveGit(argv: readonly string[]): boolean {
-	return (
-		hasCommandSequence(argv, "git", ["push"]) ||
-		hasCommandSequence(argv, "git", ["clean"]) ||
-		hasCommandSequence(argv, "git", ["reset"]) ||
-		hasCommandSequence(argv, "git", ["restore"]) ||
-		hasCommandSequence(argv, "git", ["checkout"]) ||
-		hasGitSubcommandOption(argv, "switch", (token) => {
-			const lower = token.toLowerCase();
-			return (
-				token === "-f" ||
-				token === "-C" ||
-				token.startsWith("-C") ||
-				lower === "--force" ||
-				lower === "--discard-changes" ||
-				lower === "--force-create" ||
-				lower.startsWith("--force-create=") ||
-				lower === "--orphan" ||
-				lower.startsWith("--orphan=")
-			);
-		}) ||
-		hasGitSubcommandOption(argv, "branch", (token) => {
-			const lower = token.toLowerCase();
-			return ["-d", "-D", "-f", "-M"].includes(token) || lower === "--delete" || lower === "--force";
-		}) ||
-		hasGitSubcommandOption(argv, "tag", (token) => {
-			const lower = token.toLowerCase();
-			return token === "-d" || token === "-f" || lower === "--delete" || lower === "--force";
-		})
+	const subcommand = findSubcommand(
+		argv,
+		"git",
+		new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]),
+		["-C", "-c", "--git-dir=", "--work-tree=", "--namespace=", "--exec-path="],
 	);
+	if (!subcommand) return false;
+	if (GIT_READ_ONLY_SUBCOMMANDS.has(subcommand.name)) return false;
+	return !isReadOnlyGitFamily(argv, subcommand);
 }
 
 function isRelease(argv: readonly string[]): boolean {
@@ -124,13 +187,71 @@ function isDeployment(argv: readonly string[]): boolean {
 	);
 }
 
+const GH_READ_ONLY_ACTIONS = new Map<string, ReadonlySet<string>>([
+	["alias", new Set(["list"])],
+	["auth", new Set(["status", "token"])],
+	["config", new Set(["get", "list"])],
+	["extension", new Set(["list", "search"])],
+	["issue", new Set(["list", "status", "view"])],
+	["pr", new Set(["checks", "diff", "list", "status", "view"])],
+	["release", new Set(["download", "list", "view"])],
+	["repo", new Set(["list", "view"])],
+	["run", new Set(["list", "view", "watch"])],
+	["workflow", new Set(["list", "view"])],
+]);
+const GH_READ_ONLY_COMMANDS = new Set(["browse", "completion", "help", "search", "status", "version"]);
+const GH_OPTIONS_WITH_VALUES = new Set(["-R", "--repo", "--hostname"]);
+const GH_ATTACHED_VALUE_PREFIXES = ["-R", "--repo=", "--hostname="];
+
+function ghApiMutatesRemoteState(args: readonly string[]): boolean {
+	let method: string | undefined;
+	let suppliesInput = false;
+	for (let index = 0; index < args.length; index++) {
+		const token = args[index];
+		const lower = token.toLowerCase();
+		if (lower === "-x" || lower === "--method") {
+			method = args[index + 1]?.toLowerCase();
+			index++;
+			continue;
+		}
+		const attachedMethod = token.match(/^(?:-X|--method=)(.+)$/i)?.[1];
+		if (attachedMethod) {
+			method = attachedMethod.toLowerCase();
+			continue;
+		}
+		if (/^(?:-f|-F)(?:.|$)|^--(?:raw-)?field(?:=|$)|^--input(?:=|$)/.test(token)) suppliesInput = true;
+	}
+	const effectiveMethod = method ?? (suppliesInput ? "post" : "get");
+	return effectiveMethod !== "get" && effectiveMethod !== "head";
+}
+
+function ghCommand(argv: readonly string[]): { command: ParsedSubcommand; action?: ParsedSubcommand } | undefined {
+	const command = findSubcommand(argv, "gh", GH_OPTIONS_WITH_VALUES, GH_ATTACHED_VALUE_PREFIXES);
+	if (!command) return undefined;
+	return {
+		command,
+		action: findPositional(argv, command.index + 1, GH_OPTIONS_WITH_VALUES, GH_ATTACHED_VALUE_PREFIXES),
+	};
+}
+
+function accessesGhCredentials(argv: readonly string[]): boolean {
+	const parsed = ghCommand(argv);
+	return parsed?.command.name === "auth" && parsed.action?.name === "token";
+}
+
+function ghMutatesRemoteState(argv: readonly string[]): boolean {
+	const parsed = ghCommand(argv);
+	if (!parsed) return false;
+	const args = argv.slice(parsed.command.index + 1);
+	if (parsed.command.name === "api") return ghApiMutatesRemoteState(args);
+	if (GH_READ_ONLY_COMMANDS.has(parsed.command.name)) return false;
+	const allowedActions = GH_READ_ONLY_ACTIONS.get(parsed.command.name);
+	if (!allowedActions) return true;
+	return parsed.action === undefined || !allowedActions.has(parsed.action.name);
+}
+
 function mutatesRemoteState(argv: readonly string[]): boolean {
-	const ghMutation = ["pr", "issue"].some((resource) =>
-		["create", "edit", "close", "merge", "comment"].some((action) =>
-			hasCommandSequence(argv, "gh", [resource, action]),
-		),
-	);
-	if (ghMutation) return true;
+	if (argv.some((token) => executableName(token) === "gh") && ghMutatesRemoteState(argv)) return true;
 	const curlIndex = argv.findIndex((token) => executableName(token) === "curl");
 	if (curlIndex < 0) return false;
 	return argv.slice(curlIndex + 1).some((token, index, tail) => {
@@ -209,7 +330,9 @@ export function assertCommandAuthorized(command: string, policy: AuthorizationPo
 	if (!policy.allowDestructiveGit && isDestructiveGit(argv)) throw new Error("destructive git command denied");
 	if (!policy.allowRelease && isRelease(argv)) throw new Error("release command denied");
 	if (!policy.allowDeploy && isDeployment(argv)) throw new Error("deployment command denied");
-	if (!policy.allowCredentials && argv.some(isSensitiveCredentialPath)) throw new Error("credential access denied");
+	if (!policy.allowCredentials && (argv.some(isSensitiveCredentialPath) || accessesGhCredentials(argv))) {
+		throw new Error("credential access denied");
+	}
 	if (!policy.allowRemoteState && mutatesRemoteState(argv)) throw new Error("remote-state mutation denied");
 }
 
