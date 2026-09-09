@@ -506,6 +506,9 @@ export class RunStore {
 	static create(config: LongHorizonRunConfig): RunStore {
 		const validated = parseRunConfig(config);
 		const runDir = resolve(validated.runRoot, validated.runId);
+		if (dirname(runDir) !== validated.runRoot || basename(runDir) !== validated.runId) {
+			throw new Error("runId must resolve to a direct child of runRoot");
+		}
 		mkdirSync(validated.runRoot, { recursive: true });
 		try {
 			mkdirSync(runDir);

@@ -4,6 +4,8 @@ import {
 	type CommandRunner,
 	getWorkspaceContext,
 	getWorkspaceIdentity,
+	isCommandEvidence,
+	isDeniedCommandOutcome,
 	isUncertainCommandOutcome,
 	runAuthorizedCommand,
 } from "./policy.js";
@@ -287,7 +289,7 @@ export class LongHorizonSupervisor {
 		return result;
 	}
 
-	private recordUncertainCommandOutcomes(effectId: string, result: PromptResult): void {
+	private rejectUnsafeCommandOutcomes(effectId: string, result: PromptResult): void {
 		const uncertain = result.commandEvidence.filter(isUncertainCommandOutcome);
 		for (const evidence of uncertain) {
 			this.store.append({ type: "command_outcome_uncertain", effectId, evidence });
@@ -296,6 +298,10 @@ export class LongHorizonSupervisor {
 			throw new Error(
 				`command outcome requires reconciliation: ${uncertain.map((evidence) => evidence.id).join(", ")}`,
 			);
+		}
+		const denied = result.commandEvidence.filter(isDeniedCommandOutcome);
+		if (denied.length > 0) {
+			throw new Error(`command authorization denied: ${denied.map((evidence) => evidence.reason).join("; ")}`);
 		}
 	}
 
@@ -326,7 +332,7 @@ export class LongHorizonSupervisor {
 		if (result.context) {
 			this.store.append({ type: "context_observed", sessionId: session.reference.id, ...result.context });
 		}
-		this.recordUncertainCommandOutcomes(effectId, result);
+		this.rejectUnsafeCommandOutcomes(effectId, result);
 		let value: T;
 		try {
 			value = parse(result.text, result);
@@ -387,7 +393,7 @@ export class LongHorizonSupervisor {
 	private capturedFailure(report: TerraRoundReport, result: PromptResult): CapturedFailureEvidence {
 		const command = result.commandEvidence.find(
 			(item): item is CommandEvidence =>
-				!isUncertainCommandOutcome(item) &&
+				isCommandEvidence(item) &&
 				report.evidenceIds.includes(item.id) &&
 				(item.exitCode !== 0 || item.termination !== undefined),
 		);
@@ -641,6 +647,9 @@ export class LongHorizonSupervisor {
 				if (isUncertainCommandOutcome(result)) {
 					this.store.append({ type: "command_outcome_uncertain", effectId, evidence: result });
 					throw new Error(`command outcome requires reconciliation: ${result.id}`);
+				}
+				if (isDeniedCommandOutcome(result)) {
+					throw new Error(`command authorization denied: ${result.reason}`);
 				}
 				evidence.push(result);
 				this.store.append({ type: "acceptance_recorded", effectId, round, commandIndex, evidence: result });
@@ -986,7 +995,11 @@ export class LongHorizonSupervisor {
 						"round",
 						this.active!,
 						nextPrompt,
-						(text, result) => parseTerraReport(text, [...result.toolEvidence, ...result.commandEvidence]),
+						(text, result) =>
+							parseTerraReport(text, [
+								...result.toolEvidence,
+								...result.commandEvidence.filter(isCommandEvidence),
+							]),
 						true,
 					);
 				} catch (error) {
@@ -1001,7 +1014,7 @@ export class LongHorizonSupervisor {
 				const beforeRound = this.store.replay();
 				const successfulVerification = effect.result.commandEvidence.some(
 					(item) =>
-						!isUncertainCommandOutcome(item) &&
+						isCommandEvidence(item) &&
 						item.exitCode === 0 &&
 						item.termination === undefined &&
 						report.evidenceIds.includes(item.id) &&

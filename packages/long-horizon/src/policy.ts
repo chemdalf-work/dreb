@@ -15,7 +15,9 @@ import {
 } from "@dreb/coding-agent";
 import type {
 	AuthorizationPolicy,
+	CommandEvidence,
 	CommandExecutionResult,
+	DeniedCommandOutcome,
 	SessionRole,
 	UncertainCommandOutcome,
 	WorkspaceContext,
@@ -99,6 +101,9 @@ function findSubcommand(
 		: findPositional(argv, executableIndex + 1, optionsWithValues, attachedValuePrefixes);
 }
 
+const GIT_OPTIONS_WITH_VALUES = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]);
+const GIT_ATTACHED_VALUE_PREFIXES = ["-C", "-c", "--git-dir=", "--work-tree=", "--namespace=", "--exec-path="];
+
 const GIT_READ_ONLY_SUBCOMMANDS = new Set([
 	"annotate",
 	"blame",
@@ -131,6 +136,50 @@ const GIT_READ_ONLY_SUBCOMMANDS = new Set([
 	"whatchanged",
 ]);
 
+const GIT_LOCAL_OR_REMOTE_READ_SUBCOMMANDS = new Set([
+	...GIT_READ_ONLY_SUBCOMMANDS,
+	"add",
+	"am",
+	"apply",
+	"archive",
+	"bisect",
+	"branch",
+	"checkout",
+	"cherry",
+	"cherry-pick",
+	"clean",
+	"clone",
+	"commit",
+	"config",
+	"fetch",
+	"gc",
+	"init",
+	"maintenance",
+	"merge",
+	"mergetool",
+	"mv",
+	"notes",
+	"pull",
+	"rebase",
+	"reflog",
+	"remote",
+	"reset",
+	"restore",
+	"revert",
+	"rm",
+	"stash",
+	"submodule",
+	"switch",
+	"tag",
+	"update-index",
+	"update-ref",
+	"worktree",
+]);
+
+function gitSubcommand(argv: readonly string[]): ParsedSubcommand | undefined {
+	return findSubcommand(argv, "git", GIT_OPTIONS_WITH_VALUES, GIT_ATTACHED_VALUE_PREFIXES);
+}
+
 function isReadOnlyGitFamily(argv: readonly string[], subcommand: ParsedSubcommand): boolean {
 	const args = argv.slice(subcommand.index + 1).map((token) => token.toLowerCase());
 	if (subcommand.name === "stash") return args[0] === "list" || args[0] === "show";
@@ -154,12 +203,7 @@ function isReadOnlyGitFamily(argv: readonly string[], subcommand: ParsedSubcomma
 }
 
 function isDestructiveGit(argv: readonly string[]): boolean {
-	const subcommand = findSubcommand(
-		argv,
-		"git",
-		new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]),
-		["-C", "-c", "--git-dir=", "--work-tree=", "--namespace=", "--exec-path="],
-	);
+	const subcommand = gitSubcommand(argv);
 	if (!subcommand) return false;
 	if (GIT_READ_ONLY_SUBCOMMANDS.has(subcommand.name)) return false;
 	return !isReadOnlyGitFamily(argv, subcommand);
@@ -250,8 +294,74 @@ function ghMutatesRemoteState(argv: readonly string[]): boolean {
 	return parsed.action === undefined || !allowedActions.has(parsed.action.name);
 }
 
+const GIT_LFS_LOCAL_OR_REMOTE_READ_ACTIONS = new Set(["checkout", "fetch", "install", "ls-files", "pull", "status"]);
+
+function gitMutatesRemoteState(argv: readonly string[]): boolean {
+	const subcommand = gitSubcommand(argv);
+	if (!subcommand) return false;
+	if (subcommand.name === "push" || subcommand.name === "send-pack") return true;
+	if (subcommand.name === "lfs") {
+		const action = findPositional(argv, subcommand.index + 1, new Set(), []);
+		return action?.name === "push" || !GIT_LFS_LOCAL_OR_REMOTE_READ_ACTIONS.has(action?.name ?? "");
+	}
+	return !GIT_LOCAL_OR_REMOTE_READ_SUBCOMMANDS.has(subcommand.name);
+}
+
+const NODE_INLINE_EXECUTION_OPTIONS = new Set(["-e", "--eval", "-p", "--print"]);
+const PYTHON_INLINE_EXECUTION_OPTIONS = new Set(["-c"]);
+const RUBY_INLINE_EXECUTION_OPTIONS = new Set(["-e"]);
+const PERL_INLINE_EXECUTION_OPTIONS = new Set(["-e"]);
+const PHP_INLINE_EXECUTION_OPTIONS = new Set(["-r"]);
+const OPAQUE_INLINE_EXECUTION_OPTIONS = new Map<string, ReadonlySet<string>>([
+	["bash", new Set(["-c"])],
+	["bun", NODE_INLINE_EXECUTION_OPTIONS],
+	["dash", new Set(["-c"])],
+	["deno", new Set(["eval"])],
+	["fish", new Set(["-c"])],
+	["node", NODE_INLINE_EXECUTION_OPTIONS],
+	["nodejs", NODE_INLINE_EXECUTION_OPTIONS],
+	["perl", PERL_INLINE_EXECUTION_OPTIONS],
+	["php", PHP_INLINE_EXECUTION_OPTIONS],
+	["powershell", new Set(["-command", "-encodedcommand"])],
+	["pwsh", new Set(["-command", "-encodedcommand"])],
+	["python", PYTHON_INLINE_EXECUTION_OPTIONS],
+	["python3", PYTHON_INLINE_EXECUTION_OPTIONS],
+	["ruby", RUBY_INLINE_EXECUTION_OPTIONS],
+	["sh", new Set(["-c"])],
+	["zsh", new Set(["-c"])],
+]);
+
+function inlineExecutionOptions(executable: string): ReadonlySet<string> | undefined {
+	const exact = OPAQUE_INLINE_EXECUTION_OPTIONS.get(executable);
+	if (exact) return exact;
+	if (/^python\d+(?:\.\d+)*$/.test(executable)) return PYTHON_INLINE_EXECUTION_OPTIONS;
+	if (/^ruby\d+(?:\.\d+)*$/.test(executable)) return RUBY_INLINE_EXECUTION_OPTIONS;
+	if (/^perl\d+(?:\.\d+)*$/.test(executable)) return PERL_INLINE_EXECUTION_OPTIONS;
+	if (/^php\d+(?:\.\d+)*$/.test(executable)) return PHP_INLINE_EXECUTION_OPTIONS;
+	return undefined;
+}
+
+function executesOpaqueInlineCode(argv: readonly string[]): boolean {
+	for (let index = 0; index < argv.length; index++) {
+		const options = inlineExecutionOptions(executableName(argv[index]));
+		if (!options) continue;
+		for (const token of argv.slice(index + 1)) {
+			const lower = token.toLowerCase();
+			if (options.has(lower)) return true;
+			if ([...options].some((option) => option.startsWith("--") && lower.startsWith(`${option}=`))) return true;
+			if ([...options].some((option) => option.length === 2 && lower.startsWith(option) && lower.length > 2))
+				return true;
+		}
+	}
+	return false;
+}
+
 function mutatesRemoteState(argv: readonly string[]): boolean {
+	if (isRelease(argv) || isDeployment(argv)) return true;
+	if (argv.some((token) => executableName(token) === "git") && gitMutatesRemoteState(argv)) return true;
 	if (argv.some((token) => executableName(token) === "gh") && ghMutatesRemoteState(argv)) return true;
+	if (executesOpaqueInlineCode(argv)) return true;
+	if (argv.some((token) => ["rsync", "scp", "sftp", "ssh"].includes(executableName(token)))) return true;
 	const curlIndex = argv.findIndex((token) => executableName(token) === "curl");
 	if (curlIndex < 0) return false;
 	return argv.slice(curlIndex + 1).some((token, index, tail) => {
@@ -554,6 +664,14 @@ export type CommandRunner = (
 	signal?: AbortSignal,
 ) => Promise<CommandExecutionResult>;
 
+export function isCommandEvidence(result: CommandExecutionResult): result is CommandEvidence {
+	return !("outcome" in result);
+}
+
+export function isDeniedCommandOutcome(result: CommandExecutionResult): result is DeniedCommandOutcome {
+	return "outcome" in result && result.outcome === "denied";
+}
+
 export function isUncertainCommandOutcome(result: CommandExecutionResult): result is UncertainCommandOutcome {
 	return "outcome" in result && result.outcome === "uncertain";
 }
@@ -609,10 +727,24 @@ export function createAuthorizedCommandTool(
 			try {
 				assertCommandAuthorized(params.command, effectivePolicy);
 			} catch (error) {
+				const timestamp = new Date().toISOString();
+				const denied: DeniedCommandOutcome = {
+					outcome: "denied",
+					id: randomUUID(),
+					command: params.command,
+					exitCode: null,
+					stdout: "",
+					stderr: "",
+					startedAt: timestamp,
+					completedAt: timestamp,
+					reason: error instanceof Error ? error.message : String(error),
+				};
+				onEvidence(denied);
 				return {
-					content: [{ type: "text", text: `Denied: ${(error as Error).message}` }],
-					details: { denied: true },
-					endTurn: false,
+					content: [{ type: "text", text: `Denied: ${denied.reason}` }],
+					details: denied,
+					isError: true,
+					endTurn: true,
 				};
 			}
 			const evidence = await runner(params.command, cwd, effectivePolicy, signal);

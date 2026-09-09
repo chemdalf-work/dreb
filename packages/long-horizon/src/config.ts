@@ -51,6 +51,7 @@ const COUNT_LIMITS = new Set([
 	"maxUnchangedFailureCycles",
 	"failureThreshold",
 ]);
+const RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 function assertKnownKeys(name: string, value: unknown, allowed: readonly string[]): void {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${name} must be an object`);
@@ -120,6 +121,8 @@ export function normalizeRunConfig(input: RunConfigInput): LongHorizonRunConfig 
 	validateSelection("advisor", input.advisor);
 	if (input.verifier !== undefined) validateSelection("verifier", input.verifier);
 	if (input.runId !== undefined && typeof input.runId !== "string") throw new Error("runId must be a string");
+	const runId = input.runId ?? randomUUID();
+	if (!RUN_ID_PATTERN.test(runId)) throw new Error("runId must be a canonical single path component");
 	if (input.cwd !== undefined && typeof input.cwd !== "string") throw new Error("cwd must be a string");
 	if (input.runRoot !== undefined && typeof input.runRoot !== "string") throw new Error("runRoot must be a string");
 	if (
@@ -182,7 +185,7 @@ export function normalizeRunConfig(input: RunConfigInput): LongHorizonRunConfig 
 	}
 	return deepFreeze({
 		schemaVersion: 1,
-		runId: input.runId?.trim() || randomUUID(),
+		runId,
 		objective: input.objective.trim(),
 		cwd,
 		runRoot,
@@ -206,5 +209,5 @@ export function parseRunConfig(value: unknown): LongHorizonRunConfig {
 		throw new Error("persisted configuration requires runId and a valid createdAt timestamp");
 	}
 	const normalized = normalizeRunConfig(raw as RunConfigInput);
-	return deepFreeze({ ...normalized, runId: raw.runId, createdAt: raw.createdAt });
+	return deepFreeze({ ...normalized, createdAt: raw.createdAt });
 }

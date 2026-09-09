@@ -144,6 +144,42 @@ describe("LongHorizonSupervisor", () => {
 		expect(sessions.prompts.filter((prompt) => prompt.sessionId.startsWith("executor-"))).toHaveLength(1);
 	});
 
+	it("durably blocks a policy-denied command before accepting its round report", async () => {
+		const config = testConfig();
+		const now = new Date().toISOString();
+		const denied = {
+			outcome: "denied" as const,
+			id: "denied-command",
+			command: "git push origin main",
+			exitCode: null,
+			stdout: "",
+			stderr: "",
+			startedAt: now,
+			completedAt: now,
+			reason: "remote-state mutation denied",
+		};
+		const sessions = new FakeSessionHost({
+			planner: [promptResult(PLAN)],
+			executor: [promptResult(report("progress"), { commandEvidence: [denied] })],
+		});
+		const supervisor = LongHorizonSupervisor.create(config, { sessionHost: sessions });
+
+		const status = await supervisor.run();
+
+		expect(status.phase).toBe("blocked");
+		expect(status.rounds).toBe(0);
+		expect(status.pendingEffect?.kind).toBe("round");
+		expect(status.blockedReason).toMatch(/command authorization denied.*remote-state mutation denied/);
+		expect(supervisor.store.readRecords().some((record) => record.event.type === "round_completed")).toBe(false);
+		expect(sessions.prompts.filter((prompt) => prompt.sessionId.startsWith("executor-"))).toHaveLength(1);
+
+		const reopened = LongHorizonSupervisor.open(supervisor.store.runDir, { sessionHost: sessions });
+		const reopenedStatus = await reopened.run();
+		expect(reopenedStatus.phase).toBe("blocked");
+		expect(reopenedStatus.pendingEffect?.kind).toBe("round");
+		expect(sessions.prompts.filter((prompt) => prompt.sessionId.startsWith("executor-"))).toHaveLength(1);
+	});
+
 	it("fails closed instead of redispatching an interrupted effect", async () => {
 		const config = testConfig();
 		const supervisor = LongHorizonSupervisor.create(config, { sessionHost: new FakeSessionHost({}) });
