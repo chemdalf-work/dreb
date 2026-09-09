@@ -107,6 +107,43 @@ describe("LongHorizonSupervisor", () => {
 		expect(status.blockedReason).toMatch(/human input/);
 	});
 
+	it("durably blocks a round with an uncertain command outcome before accepting its report", async () => {
+		const config = testConfig();
+		const now = new Date().toISOString();
+		const uncertain = {
+			outcome: "uncertain" as const,
+			id: "uncertain-command",
+			command: "npm test",
+			exitCode: 0,
+			stdout: "side effect completed",
+			stderr: "",
+			startedAt: now,
+			completedAt: now,
+			reconciliationError: "workspace identity failed",
+		};
+		const sessions = new FakeSessionHost({
+			planner: [promptResult(PLAN)],
+			executor: [promptResult(report("progress"), { commandEvidence: [uncertain] })],
+		});
+		const supervisor = LongHorizonSupervisor.create(config, { sessionHost: sessions });
+
+		const status = await supervisor.run();
+
+		expect(status.phase).toBe("blocked");
+		expect(status.rounds).toBe(0);
+		expect(status.pendingEffect?.kind).toBe("round");
+		expect(status.blockedReason).toMatch(/command outcome requires reconciliation/);
+		expect(
+			supervisor.store
+				.readRecords()
+				.some(
+					(record) =>
+						record.event.type === "command_outcome_uncertain" && record.event.evidence.id === "uncertain-command",
+				),
+		).toBe(true);
+		expect(sessions.prompts.filter((prompt) => prompt.sessionId.startsWith("executor-"))).toHaveLength(1);
+	});
+
 	it("fails closed instead of redispatching an interrupted effect", async () => {
 		const config = testConfig();
 		const supervisor = LongHorizonSupervisor.create(config, { sessionHost: new FakeSessionHost({}) });

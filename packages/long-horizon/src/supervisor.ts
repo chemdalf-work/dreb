@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { type CommandRunner, getWorkspaceContext, getWorkspaceIdentity, runAuthorizedCommand } from "./policy.js";
+import {
+	type CommandRunner,
+	getWorkspaceContext,
+	getWorkspaceIdentity,
+	isUncertainCommandOutcome,
+	runAuthorizedCommand,
+} from "./policy.js";
 import {
 	continuationPrompt,
 	escalationPrompt,
@@ -24,6 +30,7 @@ import { isTerminalPhase, replayJournal, selectNextAction } from "./state-machin
 import type {
 	CapturedFailureEvidence,
 	CommandEvidence,
+	CommandExecutionResult,
 	EffectKind,
 	EscalationHistoryEntry,
 	HandoffArtifact,
@@ -279,6 +286,18 @@ export class LongHorizonSupervisor {
 		return result;
 	}
 
+	private recordUncertainCommandOutcomes(effectId: string, result: PromptResult): void {
+		const uncertain = result.commandEvidence.filter(isUncertainCommandOutcome);
+		for (const evidence of uncertain) {
+			this.store.append({ type: "command_outcome_uncertain", effectId, evidence });
+		}
+		if (uncertain.length > 0) {
+			throw new Error(
+				`command outcome requires reconciliation: ${uncertain.map((evidence) => evidence.id).join(", ")}`,
+			);
+		}
+	}
+
 	private async modelEffect<T>(
 		kind: EffectKind,
 		session: HostedSession,
@@ -306,6 +325,7 @@ export class LongHorizonSupervisor {
 		if (result.context) {
 			this.store.append({ type: "context_observed", sessionId: session.reference.id, ...result.context });
 		}
+		this.recordUncertainCommandOutcomes(effectId, result);
 		let value: T;
 		try {
 			value = parse(result.text, result);
@@ -365,7 +385,10 @@ export class LongHorizonSupervisor {
 
 	private capturedFailure(report: TerraRoundReport, result: PromptResult): CapturedFailureEvidence {
 		const command = result.commandEvidence.find(
-			(item) => report.evidenceIds.includes(item.id) && (item.exitCode !== 0 || item.termination !== undefined),
+			(item): item is CommandEvidence =>
+				!isUncertainCommandOutcome(item) &&
+				report.evidenceIds.includes(item.id) &&
+				(item.exitCode !== 0 || item.termination !== undefined),
 		);
 		if (command) return { source: "command", evidence: { ...command } };
 		const tool = result.toolEvidence.find((item) => report.evidenceIds.includes(item.id) && item.isError);
@@ -511,13 +534,17 @@ export class LongHorizonSupervisor {
 				}
 			}, 100);
 			watcher.unref();
-			let result: CommandEvidence;
+			let result: CommandExecutionResult;
 			try {
 				result = await this.commandRunner(command, this.config.cwd, policy, controller.signal);
 			} finally {
 				clearInterval(watcher);
 			}
 			if (watchError) throw new Error(`acceptance control watcher failed: ${watchError.message}`);
+			if (isUncertainCommandOutcome(result)) {
+				this.store.append({ type: "command_outcome_uncertain", effectId, evidence: result });
+				throw new Error(`command outcome requires reconciliation: ${result.id}`);
+			}
 			evidence.push(result);
 			this.store.append({ type: "acceptance_recorded", evidence: result });
 			if (result.exitCode !== 0 || result.termination) {
@@ -840,6 +867,7 @@ export class LongHorizonSupervisor {
 				const beforeRound = this.store.replay();
 				const successfulVerification = effect.result.commandEvidence.some(
 					(item) =>
+						!isUncertainCommandOutcome(item) &&
 						item.exitCode === 0 &&
 						item.termination === undefined &&
 						report.evidenceIds.includes(item.id) &&

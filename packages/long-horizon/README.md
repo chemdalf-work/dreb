@@ -51,7 +51,7 @@ Signals and control requests are applied at safe control points; context thresho
 
 ## Durability and recovery
 
-Each run stores immutable configuration, a checksum-chained append-only journal, an atomically replaced derived snapshot, content-digested artifacts, and parent-linked Dreb sessions under `.dreb/long-runs/<run-id>/`. Journal records bind artifact paths to SHA-256 content digests, and recovered plans, advice, and handoffs are schema-validated before use. A pending side-effect intent after a crash is treated as ambiguous and blocks instead of being repeated. Corrupt journals or artifacts, mismatched snapshots, unsupported schemas, and live writer collisions fail closed.
+Each run stores immutable configuration, a checksum-chained append-only journal, an atomically replaced derived snapshot, content-digested artifacts, and parent-linked Dreb sessions under `.dreb/long-runs/<run-id>/`. Journal records bind artifact paths to SHA-256 content digests, and recovered plans, advice, and handoffs are schema-validated before use. A pending side-effect intent after a crash is treated as ambiguous and blocks instead of being repeated. If an authorized command finishes but workspace-evidence capture fails, the session ends immediately and records an uncertain command outcome that requires operator reconciliation rather than reporting a denial or retrying. Corrupt journals or artifacts, mismatched snapshots, unsupported schemas, and live writer collisions fail closed.
 
 `resume` is deterministic supervisor recovery; restarting the host process remains the responsibility of a service manager.
 

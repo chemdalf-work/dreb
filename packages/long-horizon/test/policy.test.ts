@@ -226,15 +226,30 @@ describe("tool policy", () => {
 
 	it.each([
 		"git reset --hard=HEAD",
+		"git restore file.txt",
+		"git restore --staged file.txt",
 		"git restore --source HEAD file.txt",
 		"git restore --source=HEAD file.txt",
 		"git restore -s HEAD file.txt",
 		"git restore -sHEAD file.txt",
+		"git checkout -f topic",
+		"git checkout --force topic",
+		"git checkout -Btopic HEAD~1",
+		"git checkout --orphan topic",
+		"git switch -f topic",
+		"git switch --discard-changes topic",
+		"git switch -Ctopic HEAD~1",
+		"git switch --force-create topic HEAD~1",
+		"git switch --orphan topic",
 		"git branch -d topic",
 		"git branch -D topic",
+		"git branch -f topic HEAD~1",
+		"git branch --force topic HEAD~1",
 		"git branch --delete --force topic",
 		"git tag -d v1",
 		"git tag --delete v1",
+		"git tag -f v1 HEAD~1",
+		"git tag --force v1 HEAD~1",
 	] as const)("classifies destructive Git option aliases and attached values: %s", (command) => {
 		const policy = { ...testConfig().policy, allowedCommands: [command] };
 		expect(() => assertCommandAuthorized(command, policy)).toThrow(/destructive git/);
@@ -265,6 +280,68 @@ describe("tool policy", () => {
 		const result = await tool.execute("call", { command: "npm publish" }, undefined, undefined, undefined as any);
 		expect(calls).toBe(0);
 		expect(result.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("Denied") });
+	});
+
+	it("returns an uncertain outcome when workspace evidence fails after command execution", async () => {
+		const config = testConfig();
+		const command = `node -e 'require("node:fs").renameSync(".git", ".git-after-command")'`;
+		let result: Awaited<ReturnType<typeof runAuthorizedCommand>>;
+		try {
+			result = await runAuthorizedCommand(command, config.cwd, {
+				...config.policy,
+				allowedCommands: [command],
+			});
+		} finally {
+			renameSync(join(config.cwd, ".git-after-command"), join(config.cwd, ".git"));
+		}
+
+		expect(result).toMatchObject({
+			outcome: "uncertain",
+			command,
+			exitCode: 0,
+			reconciliationError: expect.stringContaining("git rev-parse failed"),
+		});
+	});
+
+	it("ends the turn with error evidence when command finalization is uncertain", async () => {
+		const config = testConfig();
+		const command = "npm test";
+		const observed: unknown[] = [];
+		let executions = 0;
+		const now = new Date().toISOString();
+		const tool = createAuthorizedCommandTool(
+			config.cwd,
+			config.policy,
+			(evidence) => observed.push(evidence),
+			async () => {
+				executions++;
+				return {
+					outcome: "uncertain" as const,
+					id: "uncertain-command",
+					command,
+					exitCode: 0,
+					stdout: "side effect completed",
+					stderr: "",
+					startedAt: now,
+					completedAt: now,
+					reconciliationError: "workspace identity failed",
+				};
+			},
+		);
+
+		const result = await tool.execute("call", { command }, undefined, undefined, undefined as any);
+
+		expect(executions).toBe(1);
+		expect(observed).toEqual([expect.objectContaining({ outcome: "uncertain", id: "uncertain-command" })]);
+		expect(result).toMatchObject({
+			isError: true,
+			endTurn: true,
+			details: { outcome: "uncertain", id: "uncertain-command" },
+		});
+		expect(result.content[0]).toMatchObject({
+			type: "text",
+			text: expect.stringContaining("requires reconciliation"),
+		});
 	});
 
 	it("includes untracked file contents in workspace identity", async () => {

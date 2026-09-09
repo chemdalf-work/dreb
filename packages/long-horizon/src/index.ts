@@ -5,6 +5,7 @@ export {
 	createAuthorizedCommandTool,
 	getWorkspaceContext,
 	getWorkspaceIdentity,
+	isUncertainCommandOutcome,
 	roleToolSurface,
 	runAuthorizedCommand,
 } from "./policy.js";

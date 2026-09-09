@@ -119,6 +119,14 @@ export function applyJournalRecord(
 			next.pendingEffect = undefined;
 			if (event.type === "effect_abandoned") next.blockedReason = event.reason;
 			break;
+		case "command_outcome_uncertain":
+			if (!previous.pendingEffect || previous.pendingEffect.effectId !== event.effectId) {
+				throw new Error(`uncertain command outcome without matching effect intent: ${event.effectId}`);
+			}
+			if (previous.pendingEffect.kind !== "round" && previous.pendingEffect.kind !== "acceptance") {
+				throw new Error(`uncertain command outcome for invalid effect kind: ${previous.pendingEffect.kind}`);
+			}
+			break;
 		case "round_completed": {
 			if (previous.pendingEffect?.effectId !== event.effectId || previous.pendingEffect.kind !== "round") {
 				throw new Error(`round completion without matching effect intent: ${event.effectId}`);

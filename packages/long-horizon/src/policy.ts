@@ -13,7 +13,13 @@ import {
 	createWriteTool,
 	type ToolDefinition,
 } from "@dreb/coding-agent";
-import type { AuthorizationPolicy, CommandEvidence, SessionRole, WorkspaceContext } from "./types.js";
+import type {
+	AuthorizationPolicy,
+	CommandExecutionResult,
+	SessionRole,
+	UncertainCommandOutcome,
+	WorkspaceContext,
+} from "./types.js";
 
 const MUTATING_HTTP_METHODS = new Set(["post", "put", "patch", "delete"]);
 const CREDENTIAL_COMPONENT = /(?:^|[._-])(?:credentials?|secrets?)(?:$|[._-])/i;
@@ -61,22 +67,38 @@ function hasGitSubcommandOption(
 	const gitIndex = argv.findIndex((token) => executableName(token) === "git");
 	if (gitIndex < 0) return false;
 	const subcommandIndex = argv.findIndex((token, index) => index > gitIndex && token.toLowerCase() === subcommand);
-	return subcommandIndex >= 0 && argv.slice(subcommandIndex + 1).some((token) => option(token.toLowerCase()));
+	return subcommandIndex >= 0 && argv.slice(subcommandIndex + 1).some(option);
 }
 
 function isDestructiveGit(argv: readonly string[]): boolean {
 	return (
 		hasCommandSequence(argv, "git", ["push"]) ||
 		hasCommandSequence(argv, "git", ["clean"]) ||
-		hasGitSubcommandOption(argv, "reset", (token) => token === "--hard" || token.startsWith("--hard=")) ||
-		hasCommandSequence(argv, "git", ["checkout", "--"]) ||
-		hasGitSubcommandOption(
-			argv,
-			"restore",
-			(token) => token === "--source" || token.startsWith("--source=") || token === "-s" || /^-s.+/.test(token),
-		) ||
-		hasGitSubcommandOption(argv, "branch", (token) => token === "-d" || token === "--delete") ||
-		hasGitSubcommandOption(argv, "tag", (token) => token === "-d" || token === "--delete")
+		hasCommandSequence(argv, "git", ["reset"]) ||
+		hasCommandSequence(argv, "git", ["restore"]) ||
+		hasCommandSequence(argv, "git", ["checkout"]) ||
+		hasGitSubcommandOption(argv, "switch", (token) => {
+			const lower = token.toLowerCase();
+			return (
+				token === "-f" ||
+				token === "-C" ||
+				token.startsWith("-C") ||
+				lower === "--force" ||
+				lower === "--discard-changes" ||
+				lower === "--force-create" ||
+				lower.startsWith("--force-create=") ||
+				lower === "--orphan" ||
+				lower.startsWith("--orphan=")
+			);
+		}) ||
+		hasGitSubcommandOption(argv, "branch", (token) => {
+			const lower = token.toLowerCase();
+			return ["-d", "-D", "-f", "-M"].includes(token) || lower === "--delete" || lower === "--force";
+		}) ||
+		hasGitSubcommandOption(argv, "tag", (token) => {
+			const lower = token.toLowerCase();
+			return token === "-d" || token === "-f" || lower === "--delete" || lower === "--force";
+		})
 	);
 }
 
@@ -407,21 +429,38 @@ export type CommandRunner = (
 	cwd: string,
 	policy: AuthorizationPolicy,
 	signal?: AbortSignal,
-) => Promise<CommandEvidence>;
+) => Promise<CommandExecutionResult>;
+
+export function isUncertainCommandOutcome(result: CommandExecutionResult): result is UncertainCommandOutcome {
+	return "outcome" in result && result.outcome === "uncertain";
+}
 
 export const runAuthorizedCommand: CommandRunner = async (command, cwd, policy, signal) => {
 	assertCommandAuthorized(command, policy);
 	const [executable, ...args] = parseCommand(command);
 	const startedAt = new Date().toISOString();
 	const result = await executeProcess(executable, args, cwd, policy.commandTimeoutMs, policy.maxOutputBytes, signal);
-	return {
-		id: randomUUID(),
-		command,
-		...result,
-		startedAt,
-		completedAt: new Date().toISOString(),
-		workspaceIdentity: await getWorkspaceIdentity(cwd),
-	};
+	const completedAt = new Date().toISOString();
+	try {
+		return {
+			id: randomUUID(),
+			command,
+			...result,
+			startedAt,
+			completedAt,
+			workspaceIdentity: await getWorkspaceIdentity(cwd),
+		};
+	} catch (error) {
+		return {
+			outcome: "uncertain",
+			id: randomUUID(),
+			command,
+			...result,
+			startedAt,
+			completedAt,
+			reconciliationError: error instanceof Error ? error.message : String(error),
+		};
+	}
 };
 
 const authorizedCommandSchema = Type.Object({ command: Type.String(), timeout: Type.Optional(Type.Number()) });
@@ -429,7 +468,7 @@ const authorizedCommandSchema = Type.Object({ command: Type.String(), timeout: T
 export function createAuthorizedCommandTool(
 	cwd: string,
 	policy: AuthorizationPolicy,
-	onEvidence: (evidence: CommandEvidence) => void,
+	onEvidence: (evidence: CommandExecutionResult) => void,
 	runner: CommandRunner = runAuthorizedCommand,
 ): ToolDefinition<typeof authorizedCommandSchema> {
 	return {
@@ -438,25 +477,14 @@ export function createAuthorizedCommandTool(
 		description: "Run one exact shell-free command from the supervisor's persisted allowlist.",
 		parameters: authorizedCommandSchema,
 		execute: async (_toolCallId, params, signal) => {
+			const effectivePolicy = params.timeout
+				? {
+						...policy,
+						commandTimeoutMs: Math.min(policy.commandTimeoutMs, Math.max(1000, params.timeout * 1000)),
+					}
+				: policy;
 			try {
-				const effectivePolicy = params.timeout
-					? {
-							...policy,
-							commandTimeoutMs: Math.min(policy.commandTimeoutMs, Math.max(1000, params.timeout * 1000)),
-						}
-					: policy;
 				assertCommandAuthorized(params.command, effectivePolicy);
-				const evidence = await runner(params.command, cwd, effectivePolicy, signal);
-				onEvidence(evidence);
-				return {
-					content: [
-						{
-							type: "text",
-							text: `${evidence.stdout}${evidence.stderr ? `\nSTDERR:\n${evidence.stderr}` : ""}\nExit code: ${String(evidence.exitCode)}\nEvidence: ${evidence.id}`,
-						},
-					],
-					details: evidence,
-				};
 			} catch (error) {
 				return {
 					content: [{ type: "text", text: `Denied: ${(error as Error).message}` }],
@@ -464,6 +492,30 @@ export function createAuthorizedCommandTool(
 					endTurn: false,
 				};
 			}
+			const evidence = await runner(params.command, cwd, effectivePolicy, signal);
+			onEvidence(evidence);
+			if (isUncertainCommandOutcome(evidence)) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Command outcome requires reconciliation: ${evidence.reconciliationError}`,
+						},
+					],
+					details: evidence,
+					isError: true,
+					endTurn: true,
+				};
+			}
+			return {
+				content: [
+					{
+						type: "text",
+						text: `${evidence.stdout}${evidence.stderr ? `\nSTDERR:\n${evidence.stderr}` : ""}\nExit code: ${String(evidence.exitCode)}\nEvidence: ${evidence.id}`,
+					},
+				],
+				details: evidence,
+			};
 		},
 	};
 }
