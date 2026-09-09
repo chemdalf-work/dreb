@@ -8,7 +8,9 @@ export default defineConfig({
 	test: {
 		globals: true,
 		environment: "node",
-		testTimeout: 10000,
+		// Browser suites start Vite servers and Chromium; serialize them and retain enough startup headroom on loaded hosts.
+		testTimeout: 30000,
+		fileParallelism: false,
 	},
 	resolve: {
 		conditions: ["development", "browser"],

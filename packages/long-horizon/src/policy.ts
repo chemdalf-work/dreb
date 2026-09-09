@@ -296,15 +296,33 @@ function ghMutatesRemoteState(argv: readonly string[]): boolean {
 
 const GIT_LFS_LOCAL_OR_REMOTE_READ_ACTIONS = new Set(["checkout", "fetch", "install", "ls-files", "pull", "status"]);
 
+function gitLfsMutatesRemoteState(action: ParsedSubcommand | undefined): boolean {
+	return action?.name === "push" || !GIT_LFS_LOCAL_OR_REMOTE_READ_ACTIONS.has(action?.name ?? "");
+}
+
 function gitMutatesRemoteState(argv: readonly string[]): boolean {
 	const subcommand = gitSubcommand(argv);
 	if (!subcommand) return false;
 	if (subcommand.name === "push" || subcommand.name === "send-pack") return true;
 	if (subcommand.name === "lfs") {
-		const action = findPositional(argv, subcommand.index + 1, new Set(), []);
-		return action?.name === "push" || !GIT_LFS_LOCAL_OR_REMOTE_READ_ACTIONS.has(action?.name ?? "");
+		return gitLfsMutatesRemoteState(findPositional(argv, subcommand.index + 1, new Set(), []));
 	}
 	return !GIT_LOCAL_OR_REMOTE_READ_SUBCOMMANDS.has(subcommand.name);
+}
+
+function standaloneGitLfsMutatesRemoteState(argv: readonly string[]): boolean {
+	return gitLfsMutatesRemoteState(findSubcommand(argv, "git-lfs", new Set(), []));
+}
+
+function wgetMutatesRemoteState(argv: readonly string[]): boolean {
+	const wgetIndex = argv.findIndex((token) => executableName(token) === "wget");
+	if (wgetIndex < 0) return false;
+	return argv.slice(wgetIndex + 1).some((token, index, tail) => {
+		const lower = token.toLowerCase();
+		if (/^--post-(?:data|file)(?:=|$)/.test(lower)) return true;
+		if (/^--method=(?:post|put|patch|delete)$/.test(lower)) return true;
+		return lower === "--method" && MUTATING_HTTP_METHODS.has(tail[index + 1]?.toLowerCase());
+	});
 }
 
 const NODE_INLINE_EXECUTION_OPTIONS = new Set(["-e", "--eval", "-p", "--print"]);
@@ -359,9 +377,12 @@ function executesOpaqueInlineCode(argv: readonly string[]): boolean {
 function mutatesRemoteState(argv: readonly string[]): boolean {
 	if (isRelease(argv) || isDeployment(argv)) return true;
 	if (argv.some((token) => executableName(token) === "git") && gitMutatesRemoteState(argv)) return true;
+	if (argv.some((token) => executableName(token) === "git-lfs") && standaloneGitLfsMutatesRemoteState(argv))
+		return true;
 	if (argv.some((token) => executableName(token) === "gh") && ghMutatesRemoteState(argv)) return true;
 	if (executesOpaqueInlineCode(argv)) return true;
-	if (argv.some((token) => ["rsync", "scp", "sftp", "ssh"].includes(executableName(token)))) return true;
+	if (argv.some((token) => ["rclone", "rsync", "scp", "sftp", "ssh"].includes(executableName(token)))) return true;
+	if (wgetMutatesRemoteState(argv)) return true;
 	const curlIndex = argv.findIndex((token) => executableName(token) === "curl");
 	if (curlIndex < 0) return false;
 	return argv.slice(curlIndex + 1).some((token, index, tail) => {
