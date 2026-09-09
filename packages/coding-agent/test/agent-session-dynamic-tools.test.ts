@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AgentTool } from "@dreb/agent-core";
 import { findModel } from "@dreb/ai";
 import { Type } from "@sinclair/typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -143,6 +144,41 @@ describe("AgentSession dynamic tool registration", () => {
 		expect(session.getActiveToolNames()).toContain("repo_graph");
 		expect(session.systemPrompt).toContain("- repo_graph: Bounded repository file dependency traversal");
 		expect(session.systemPrompt).not.toContain("The user launched dreb without the subagent tool");
+		session.dispose();
+	});
+
+	it("forwards explicit base tool override implementations at runtime", async () => {
+		const executeSentinelRead = vi.fn(async () => ({
+			content: [{ type: "text" as const, text: "sentinel read implementation" }],
+			details: {},
+		}));
+		const sentinelReadTool: AgentTool = {
+			name: "read",
+			label: "Sentinel Read",
+			description: "Read tool supplied by SDK caller",
+			parameters: Type.Object({ path: Type.String() }),
+			execute: executeSentinelRead,
+		};
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: findModel("anthropic", "sonnet")!,
+			settingsManager: SettingsManager.inMemory(),
+			sessionManager: SessionManager.inMemory(),
+			tools: [sentinelReadTool],
+			baseToolsOverride: { read: sentinelReadTool },
+		});
+
+		const activeReadTool = session.agent.state.tools.find((tool) => tool.name === "read");
+		expect(activeReadTool).toBeDefined();
+		await expect(
+			activeReadTool!.execute("sentinel-read", { path: "ignored" }, new AbortController().signal, () => {}),
+		).resolves.toMatchObject({ content: [{ type: "text", text: "sentinel read implementation" }] });
+		expect(executeSentinelRead).toHaveBeenCalledOnce();
+		expect(session.getActiveToolNames()).toEqual(expect.arrayContaining(["read"]));
+		for (const name of ["bash", "edit", "write"]) {
+			expect(session.getActiveToolNames()).not.toContain(name);
+		}
 		session.dispose();
 	});
 

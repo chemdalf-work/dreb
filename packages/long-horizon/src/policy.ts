@@ -15,8 +15,24 @@ import {
 } from "@dreb/coding-agent";
 import type { AuthorizationPolicy, CommandEvidence, SessionRole, WorkspaceContext } from "./types.js";
 
-const CREDENTIALS = /(?:^|[\s/])(?:\.env|credentials?|secrets?|id_rsa|id_ed25519)(?:\s|$)/i;
 const MUTATING_HTTP_METHODS = new Set(["post", "put", "patch", "delete"]);
+const CREDENTIAL_COMPONENT = /(?:^|[._-])(?:credentials?|secrets?)(?:$|[._-])/i;
+const OPENSSH_PRIVATE_KEY = /(?:^|[._-])id_(?:rsa|dsa|ecdsa|ed25519)(?:$|[._-])/i;
+const CREDENTIAL_EXTENSION = /\.(?:pem|key|p12|pfx)$/i;
+
+/** Match sensitive credential filenames and path segments without accepting ordinary substrings. */
+function isSensitiveCredentialPath(value: string): boolean {
+	for (const attachedValue of value.split("=")) {
+		for (const segment of attachedValue.split(/[\\/]+/)) {
+			if (!segment) continue;
+			if (/^\.env(?:$|[.-])/i.test(segment)) return true;
+			if (CREDENTIAL_COMPONENT.test(segment)) return true;
+			if (OPENSSH_PRIVATE_KEY.test(segment)) return true;
+			if (CREDENTIAL_EXTENSION.test(segment)) return true;
+		}
+	}
+	return false;
+}
 
 function executableName(token: string): string {
 	return token.split(/[\\/]/).at(-1)?.toLowerCase() ?? token.toLowerCase();
@@ -37,15 +53,30 @@ function hasCommandSequence(argv: readonly string[], executable: string, sequenc
 	return false;
 }
 
+function hasGitSubcommandOption(
+	argv: readonly string[],
+	subcommand: string,
+	option: (token: string) => boolean,
+): boolean {
+	const gitIndex = argv.findIndex((token) => executableName(token) === "git");
+	if (gitIndex < 0) return false;
+	const subcommandIndex = argv.findIndex((token, index) => index > gitIndex && token.toLowerCase() === subcommand);
+	return subcommandIndex >= 0 && argv.slice(subcommandIndex + 1).some((token) => option(token.toLowerCase()));
+}
+
 function isDestructiveGit(argv: readonly string[]): boolean {
 	return (
 		hasCommandSequence(argv, "git", ["push"]) ||
 		hasCommandSequence(argv, "git", ["clean"]) ||
-		hasCommandSequence(argv, "git", ["reset", "--hard"]) ||
+		hasGitSubcommandOption(argv, "reset", (token) => token === "--hard" || token.startsWith("--hard=")) ||
 		hasCommandSequence(argv, "git", ["checkout", "--"]) ||
-		hasCommandSequence(argv, "git", ["restore", "--source"]) ||
-		hasCommandSequence(argv, "git", ["branch", "-d"]) ||
-		hasCommandSequence(argv, "git", ["tag", "-d"])
+		hasGitSubcommandOption(
+			argv,
+			"restore",
+			(token) => token === "--source" || token.startsWith("--source=") || token === "-s" || /^-s.+/.test(token),
+		) ||
+		hasGitSubcommandOption(argv, "branch", (token) => token === "-d" || token === "--delete") ||
+		hasGitSubcommandOption(argv, "tag", (token) => token === "-d" || token === "--delete")
 	);
 }
 
@@ -156,7 +187,7 @@ export function assertCommandAuthorized(command: string, policy: AuthorizationPo
 	if (!policy.allowDestructiveGit && isDestructiveGit(argv)) throw new Error("destructive git command denied");
 	if (!policy.allowRelease && isRelease(argv)) throw new Error("release command denied");
 	if (!policy.allowDeploy && isDeployment(argv)) throw new Error("deployment command denied");
-	if (!policy.allowCredentials && CREDENTIALS.test(normalized)) throw new Error("credential access denied");
+	if (!policy.allowCredentials && argv.some(isSensitiveCredentialPath)) throw new Error("credential access denied");
 	if (!policy.allowRemoteState && mutatesRemoteState(argv)) throw new Error("remote-state mutation denied");
 }
 
@@ -554,13 +585,34 @@ function assertReadWorkspacePath(cwd: string, requestedPath: string): void {
 	assertResolvedWorkspacePath(cwd, candidates.find((candidate) => existsSync(candidate)) ?? requested);
 }
 
-function confineRoleTool<T extends RoleTool>(tool: T, cwd: string, protectedMutationPaths: readonly string[] = []): T {
+export interface RoleToolSurfaceOptions {
+	protectedMutationPaths?: readonly string[];
+	allowCredentials?: boolean;
+}
+
+function assertCredentialAccessAllowed(requestedPath: string, allowCredentials: boolean): void {
+	if (!allowCredentials && isSensitiveCredentialPath(normalizeToolPath(requestedPath))) {
+		throw new Error("credential access denied");
+	}
+}
+
+function confineRoleTool<T extends RoleTool>(
+	tool: T,
+	cwd: string,
+	{ protectedMutationPaths = [], allowCredentials = false }: RoleToolSurfaceOptions = {},
+): T {
 	const execute = tool.execute.bind(tool);
 	return {
 		...tool,
 		execute: (async (toolCallId: string, params: { path?: string }, signal?: AbortSignal, onUpdate?: unknown) => {
-			if (tool.name === "read") assertReadWorkspacePath(cwd, params.path ?? ".");
-			else if (tool.name === "edit" || tool.name === "write") {
+			if (tool.name === "read") {
+				assertCredentialAccessAllowed(params.path ?? ".", allowCredentials);
+				assertReadWorkspacePath(cwd, params.path ?? ".");
+			} else if (tool.name === "grep") {
+				assertCredentialAccessAllowed(params.path ?? ".", allowCredentials);
+				assertWorkspacePath(cwd, params.path ?? ".");
+			} else if (tool.name === "edit" || tool.name === "write") {
+				assertCredentialAccessAllowed(params.path ?? ".", allowCredentials);
 				assertMutableWorkspacePath(cwd, params.path ?? ".", protectedMutationPaths);
 			} else assertWorkspacePath(cwd, params.path ?? ".");
 			return execute(toolCallId, params as never, signal, onUpdate as never);
@@ -568,19 +620,16 @@ function confineRoleTool<T extends RoleTool>(tool: T, cwd: string, protectedMuta
 	};
 }
 
-export function roleToolSurface(
-	role: SessionRole,
-	cwd: string,
-	protectedMutationPaths: readonly string[] = [],
-): RoleTool[] {
+export function roleToolSurface(role: SessionRole, cwd: string, options: RoleToolSurfaceOptions = {}): RoleTool[] {
+	const { protectedMutationPaths = [] } = options;
 	const readOnly: RoleTool[] = [createReadTool(cwd), createGrepTool(cwd), createFindTool(cwd), createLsTool(cwd)].map(
-		(tool) => confineRoleTool(tool, cwd),
+		(tool) => confineRoleTool(tool, cwd, options),
 	);
 	if (role !== "executor") return readOnly;
 	const protectedPaths = [...gitControlPaths(cwd), ...protectedMutationPaths];
 	return [
 		...readOnly,
-		confineRoleTool(createEditTool(cwd), cwd, protectedPaths),
-		confineRoleTool(createWriteTool(cwd), cwd, protectedPaths),
+		confineRoleTool(createEditTool(cwd), cwd, { ...options, protectedMutationPaths: protectedPaths }),
+		confineRoleTool(createWriteTool(cwd), cwd, { ...options, protectedMutationPaths: protectedPaths }),
 	];
 }

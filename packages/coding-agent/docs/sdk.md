@@ -406,44 +406,28 @@ const { session } = await createAgentSession({
 });
 ```
 
-#### Tools with Custom cwd
+#### Tool implementations and custom runtimes
 
-**Important:** The pre-built tool instances (`readTool`, `bashTool`, etc.) use `process.cwd()` for path resolution. When you specify a custom `cwd` AND provide explicit `tools`, you must use the tool factory functions to ensure paths resolve correctly:
+The `tools` option selects active built-in tool names. `AgentSession` normally rebuilds their implementations for the configured `cwd`, so selecting `readTool` does not install that exact object.
+
+Constrained runtimes that wrap or replace built-in implementations must pass the replacement set explicitly through `baseToolsOverride` as well as selecting the active tools:
 
 ```typescript
-import {
-  createCodingTools,    // Creates [read, bash, edit, write] for specific cwd
-  createReadOnlyTools,  // Creates [read, grep, find, ls] for specific cwd
-  createReadTool,
-  createBashTool,
-  createEditTool,
-  createWriteTool,
-  createGrepTool,
-  createFindTool,
-  createLsTool,
-} from "@dreb/coding-agent";
+import { createAgentSession, createReadOnlyTools } from "@dreb/coding-agent";
 
 const cwd = "/path/to/project";
+const tools = createReadOnlyTools(cwd).map((tool) => wrapForMySandbox(tool));
 
-// Use factory for tool sets
 const { session } = await createAgentSession({
   cwd,
-  tools: createCodingTools(cwd),  // Tools resolve paths relative to cwd
-});
-
-// Or pick specific tools
-const { session } = await createAgentSession({
-  cwd,
-  tools: [createReadTool(cwd), createBashTool(cwd), createGrepTool(cwd)],
+  tools,
+  baseToolsOverride: Object.fromEntries(tools.map((tool) => [tool.name, tool])),
 });
 ```
 
-**When you don't need factories:**
-- If you omit `tools`, dreb automatically creates them with the correct `cwd`
-- If you use `process.cwd()` as your `cwd`, the pre-built instances work fine
+`baseToolsOverride` replaces the standard base-tool registry. Tools omitted from the replacement set are unavailable, including normally always-active tools. Custom tools supplied through `customTools` and extension-registered tools remain separate.
 
-**When you must use factories:**
-- When you specify both `cwd` (different from `process.cwd()`) AND `tools`
+If you only need the standard tools to resolve against a custom working directory, set `cwd`; no base-tool override is required.
 
 > See [examples/sdk/05-tools.ts](../examples/sdk/05-tools.ts)
 
