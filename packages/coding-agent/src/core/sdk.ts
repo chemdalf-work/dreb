@@ -70,6 +70,8 @@ export interface CreateAgentSessionOptions {
 
 	/** Built-in tools to use. Default: all standard tools [read, bash, edit, write, grep, find, ls, web_search, web_fetch, subagent, wait, watch_github_ci, ask_user]. `skill`, `tasks_update`, `search`, and `repo_graph` are always active regardless of this setting. */
 	tools?: Tool[];
+	/** Replacement base-tool set for constrained or custom runtimes. This bypasses the standard base tools. */
+	baseToolsOverride?: Record<string, Tool>;
 	/** Custom tools to register (in addition to built-in tools). */
 	customTools?: ToolDefinition[];
 
@@ -314,7 +316,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const initialActiveToolNames: string[] = options.tools
 		? [...options.tools.map((t) => t.name).filter((n): n is ToolName => n in allTools), ...alwaysActiveBuiltins]
 		: [...defaultActiveToolNames, ...alwaysActiveBuiltins];
-
 	let agent: Agent;
 
 	// Create convertToLlm wrapper that filters images if blockImages is enabled (defense-in-depth)
@@ -453,6 +454,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		customTools: options.customTools,
 		modelRegistry,
 		initialActiveToolNames,
+		baseToolsOverride: options.baseToolsOverride,
 		maxConcurrentSubagents: settingsManager.getMaxConcurrentSubagents(),
 		extensionRunnerRef,
 		uiType: options.uiType,

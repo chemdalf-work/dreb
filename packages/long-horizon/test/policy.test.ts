@@ -58,12 +58,12 @@ describe("tool policy", () => {
 
 	it("rejects read fallback to an external symlink with a normalized filename", async () => {
 		const config = testConfig();
-		const outside = join(dirname(config.cwd), "outside-secret.txt");
-		writeFileSync(outside, "secret\n");
-		symlinkSync(outside, join(config.cwd, "owner’s-secret.txt"));
+		const outside = join(dirname(config.cwd), "outside-external.txt");
+		writeFileSync(outside, "external\n");
+		symlinkSync(outside, join(config.cwd, "owner’s-external.txt"));
 		const read = roleToolSurface("planner", config.cwd).find((tool) => tool.name === "read");
 		if (!read) throw new Error("missing read tool");
-		await expect(read.execute("call", { path: "owner's-secret.txt" } as never)).rejects.toThrow(/symlink/);
+		await expect(read.execute("call", { path: "owner's-external.txt" } as never)).rejects.toThrow(/symlink/);
 	});
 
 	it("rejects writes through a workspace symlink to an outside directory", async () => {
@@ -93,7 +93,7 @@ describe("tool policy", () => {
 		linkSync(gitConfig, hardLinkedGitConfig);
 		linkSync(journal, hardLinkedJournal);
 
-		const tools = roleToolSurface("executor", config.cwd, [runDir]);
+		const tools = roleToolSurface("executor", config.cwd, { protectedMutationPaths: [runDir] });
 		const edit = tools.find((tool) => tool.name === "edit");
 		const write = tools.find((tool) => tool.name === "write");
 		if (!edit || !write) throw new Error("missing executor mutation tools");
@@ -127,6 +127,78 @@ describe("tool policy", () => {
 		expect(readFileSync(gitConfig, "utf8")).toBe(before);
 	});
 
+	it("denies credential file read and mutation tools by default, while leaving ordinary files available", async () => {
+		const config = testConfig();
+		const credentials = join(config.cwd, ".env.production");
+		const privateKey = join(config.cwd, "keys", "id_ed25519_backup");
+		const ordinary = join(config.cwd, "secretary.txt");
+		mkdirSync(dirname(privateKey), { recursive: true });
+		writeFileSync(credentials, "TOKEN=secret\n");
+		writeFileSync(privateKey, "private key\n");
+		writeFileSync(ordinary, "ordinary\n");
+
+		const denied = roleToolSurface("executor", config.cwd);
+		const deniedRead = denied.find((tool) => tool.name === "read");
+		const deniedGrep = denied.find((tool) => tool.name === "grep");
+		const deniedEdit = denied.find((tool) => tool.name === "edit");
+		const deniedWrite = denied.find((tool) => tool.name === "write");
+		if (!deniedRead || !deniedGrep || !deniedEdit || !deniedWrite) throw new Error("missing executor file tools");
+
+		await expect(deniedRead.execute("call", { path: credentials } as never)).rejects.toThrow(
+			/credential access denied/,
+		);
+		await expect(deniedGrep.execute("call", { pattern: "TOKEN", path: credentials } as never)).rejects.toThrow(
+			/credential access denied/,
+		);
+		await expect(
+			deniedEdit.execute("call", { path: credentials, oldText: "TOKEN=secret", newText: "TOKEN=changed" } as never),
+		).rejects.toThrow(/credential access denied/);
+		await expect(deniedWrite.execute("call", { path: privateKey, content: "changed\n" } as never)).rejects.toThrow(
+			/credential access denied/,
+		);
+		await expect(deniedRead.execute("call", { path: ordinary } as never)).resolves.toBeDefined();
+		await expect(deniedGrep.execute("call", { pattern: "ordinary", path: ordinary } as never)).resolves.toBeDefined();
+
+		const allowed = roleToolSurface("executor", config.cwd, { allowCredentials: true });
+		const allowedRead = allowed.find((tool) => tool.name === "read");
+		const allowedGrep = allowed.find((tool) => tool.name === "grep");
+		const allowedEdit = allowed.find((tool) => tool.name === "edit");
+		const allowedWrite = allowed.find((tool) => tool.name === "write");
+		if (!allowedRead || !allowedGrep || !allowedEdit || !allowedWrite) throw new Error("missing executor file tools");
+		await expect(allowedRead.execute("call", { path: credentials } as never)).resolves.toBeDefined();
+		await expect(
+			allowedGrep.execute("call", { pattern: "TOKEN", path: credentials } as never),
+		).resolves.toBeDefined();
+		await expect(
+			allowedEdit.execute("call", { path: credentials, oldText: "TOKEN=secret", newText: "TOKEN=changed" } as never),
+		).resolves.toBeDefined();
+		await expect(
+			allowedWrite.execute("call", { path: privateKey, content: "changed\n" } as never),
+		).resolves.toBeDefined();
+		expect(readFileSync(credentials, "utf8")).toContain("TOKEN=changed");
+		expect(readFileSync(privateKey, "utf8")).toBe("changed\n");
+	});
+
+	it.each([
+		"cat config/.env/production",
+		"node --env-file=.env.production test.js",
+		"cat deploy.credentials.json",
+		"cat secrets-prod",
+		"cat keys/id_ed25519_backup",
+		"cat certificates/server.pem",
+	] as const)("denies exact-listed credential command by default: %s", (command) => {
+		const policy = { ...testConfig().policy, allowedCommands: [command] };
+		expect(() => assertCommandAuthorized(command, policy)).toThrow(/credential access denied/);
+		expect(() => assertCommandAuthorized(command, { ...policy, allowCredentials: true })).not.toThrow();
+	});
+
+	it("does not classify ordinary secretary filenames as credentials", () => {
+		const command = "cat secretary.txt";
+		expect(() =>
+			assertCommandAuthorized(command, { ...testConfig().policy, allowedCommands: [command] }),
+		).not.toThrow();
+	});
+
 	it("default-denies commands outside the exact allowlist and hazardous categories", () => {
 		const policy = testConfig().policy;
 		expect(() => assertCommandAuthorized("rm -rf /", policy)).toThrow(/explicitly authorized/);
@@ -150,6 +222,23 @@ describe("tool policy", () => {
 	] as const)("does not let executable-global options bypass category policy: %s", (command, category) => {
 		const policy = { ...testConfig().policy, allowedCommands: [command] };
 		expect(() => assertCommandAuthorized(command, policy)).toThrow(category);
+	});
+
+	it.each([
+		"git reset --hard=HEAD",
+		"git restore --source HEAD file.txt",
+		"git restore --source=HEAD file.txt",
+		"git restore -s HEAD file.txt",
+		"git restore -sHEAD file.txt",
+		"git branch -d topic",
+		"git branch -D topic",
+		"git branch --delete --force topic",
+		"git tag -d v1",
+		"git tag --delete v1",
+	] as const)("classifies destructive Git option aliases and attached values: %s", (command) => {
+		const policy = { ...testConfig().policy, allowedCommands: [command] };
+		expect(() => assertCommandAuthorized(command, policy)).toThrow(/destructive git/);
+		expect(() => assertCommandAuthorized(command, { ...policy, allowDestructiveGit: true })).not.toThrow();
 	});
 
 	it.each([

@@ -240,6 +240,10 @@ export class DrebSessionHost implements SessionHost {
 			noThemes: true,
 		});
 		await resourceLoader.reload();
+		const roleTools = roleToolSurface(role, this.config.cwd, {
+			protectedMutationPaths: [resolve(this.config.runRoot, this.config.runId)],
+			allowCredentials: this.config.policy.allowCredentials,
+		});
 		const { session } = await createAgentSession({
 			cwd: this.config.cwd,
 			agentDir,
@@ -249,7 +253,8 @@ export class DrebSessionHost implements SessionHost {
 			sessionManager,
 			settingsManager,
 			resourceLoader,
-			tools: roleToolSurface(role, this.config.cwd, [resolve(this.config.runRoot, this.config.runId)]),
+			tools: roleTools,
+			baseToolsOverride: Object.fromEntries(roleTools.map((tool) => [tool.name, tool])),
 			customTools: role === "executor" ? [commandTool as import("@dreb/coding-agent").ToolDefinition<any, any>] : [],
 			uiType: "long-horizon",
 		});
