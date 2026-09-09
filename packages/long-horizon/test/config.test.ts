@@ -35,6 +35,15 @@ describe("run configuration", () => {
 		).toThrow(/shell operators/);
 	});
 
+	it.each(["../escaped-run", "nested/run", "/absolute-run", ".", "..", "run id"])(
+		"rejects a runId that is not a canonical path component: %s",
+		(runId) => {
+			expect(() =>
+				normalizeRunConfig({ objective: "work", runId, ...roles, acceptanceCommands: ["npm test"] }),
+			).toThrow(/runId/);
+		},
+	);
+
 	it("rejects malformed JSON values and unknown fields at runtime", () => {
 		expect(() =>
 			normalizeRunConfig({

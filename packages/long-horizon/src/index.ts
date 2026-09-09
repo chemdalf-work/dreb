@@ -5,6 +5,8 @@ export {
 	createAuthorizedCommandTool,
 	getWorkspaceContext,
 	getWorkspaceIdentity,
+	isCommandEvidence,
+	isDeniedCommandOutcome,
 	isUncertainCommandOutcome,
 	roleToolSurface,
 	runAuthorizedCommand,

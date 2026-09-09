@@ -115,7 +115,20 @@ export interface UncertainCommandOutcome {
 	termination?: "timeout" | "aborted";
 }
 
-export type CommandExecutionResult = CommandEvidence | UncertainCommandOutcome;
+export interface DeniedCommandOutcome {
+	outcome: "denied";
+	id: string;
+	command: string;
+	exitCode: null;
+	stdout: string;
+	stderr: string;
+	startedAt: string;
+	completedAt: string;
+	reason: string;
+	termination?: "timeout" | "aborted";
+}
+
+export type CommandExecutionResult = CommandEvidence | UncertainCommandOutcome | DeniedCommandOutcome;
 
 export interface AcceptanceProgress {
 	round: number;

@@ -283,6 +283,30 @@ describe("tool policy", () => {
 	});
 
 	it.each([
+		"git push origin main",
+		"git -C . send-pack origin main",
+		"git lfs push origin main",
+		`node -e 'fetch("https://api.example.invalid/resource", { method: "POST" })'`,
+		`nodejs -e 'fetch("https://api.example.invalid/resource", { method: "POST" })'`,
+		`python3 -c 'print("opaque command")'`,
+		`python3.12 -c 'print("opaque command")'`,
+		"rsync ./artifact deploy@example.invalid:/srv/releases/",
+		"npm publish",
+		"kubectl apply -f deployment.yml",
+	] as const)("requires remote-state authorization independently: %s", (command) => {
+		const policy = {
+			...testConfig().policy,
+			allowedCommands: [command],
+			allowDestructiveGit: true,
+			allowRelease: true,
+			allowDeploy: true,
+			allowCredentials: true,
+		};
+		expect(() => assertCommandAuthorized(command, policy)).toThrow(/remote-state/);
+		expect(() => assertCommandAuthorized(command, { ...policy, allowRemoteState: true })).not.toThrow();
+	});
+
+	it.each([
 		"git -C . status --short",
 		"git diff --check",
 		"git log -1 --oneline",
@@ -300,12 +324,13 @@ describe("tool policy", () => {
 		expect(() => assertCommandAuthorized(command, policy)).not.toThrow();
 	});
 
-	it("enforces policy before calling an injected command runner", async () => {
+	it("returns turn-ending error evidence before calling a denied command runner", async () => {
 		let calls = 0;
+		const observed: unknown[] = [];
 		const tool = createAuthorizedCommandTool(
 			process.cwd(),
-			testConfig().policy,
-			() => undefined,
+			{ ...testConfig().policy, allowedCommands: ["npm publish"] },
+			(evidence) => observed.push(evidence),
 			async () => {
 				calls++;
 				throw new Error("must not run");
@@ -313,6 +338,18 @@ describe("tool policy", () => {
 		);
 		const result = await tool.execute("call", { command: "npm publish" }, undefined, undefined, undefined as any);
 		expect(calls).toBe(0);
+		expect(observed).toEqual([
+			expect.objectContaining({
+				outcome: "denied",
+				command: "npm publish",
+				reason: expect.stringContaining("release"),
+			}),
+		]);
+		expect(result).toMatchObject({
+			isError: true,
+			endTurn: true,
+			details: { outcome: "denied", command: "npm publish" },
+		});
 		expect(result.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("Denied") });
 	});
 
@@ -324,6 +361,7 @@ describe("tool policy", () => {
 			result = await runAuthorizedCommand(command, config.cwd, {
 				...config.policy,
 				allowedCommands: [command],
+				allowRemoteState: true,
 			});
 		} finally {
 			renameSync(join(config.cwd, ".git-after-command"), join(config.cwd, ".git"));
@@ -398,7 +436,7 @@ describe("tool policy", () => {
 		const result = await runAuthorizedCommand(
 			command,
 			config.cwd,
-			{ ...config.policy, allowedCommands: [command] },
+			{ ...config.policy, allowedCommands: [command], allowRemoteState: true },
 			controller.signal,
 		);
 
@@ -410,6 +448,7 @@ describe("tool policy", () => {
 		const policy = {
 			...testConfig().policy,
 			allowedCommands: ["node -e 'setInterval(() => {}, 1000)'"],
+			allowRemoteState: true,
 			commandTimeoutMs: 25,
 		};
 		const result = await runAuthorizedCommand("node -e 'setInterval(() => {}, 1000)'", process.cwd(), policy);
