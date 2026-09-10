@@ -185,6 +185,37 @@ describe("tool policy", () => {
 		expect(readFileSync(privateKey, "utf8")).toBe("changed\n");
 	});
 
+	it("treats standard credential containers as sensitive across role tools, Git, and advisor context", async () => {
+		const config = testConfig();
+		const credentialPath = join(config.cwd, ".npmrc");
+		writeFileSync(credentialPath, "//registry.example.invalid/:_authToken=container-secret\\n");
+		const read = roleToolSurface("executor", config.cwd).find((tool) => tool.name === "read");
+		if (!read) throw new Error("missing read tool");
+		await expect(read.execute("call", { path: credentialPath } as never)).rejects.toThrow(/credential access denied/);
+		execFileSync("git", ["add", ".npmrc"], { cwd: config.cwd });
+		execFileSync(
+			"git",
+			[
+				"-c",
+				"user.name=Dreb Test",
+				"-c",
+				"user.email=dreb@example.invalid",
+				"commit",
+				"-qm",
+				"track npm credential",
+			],
+			{ cwd: config.cwd },
+		);
+		writeFileSync(credentialPath, "//registry.example.invalid/:_authToken=changed-container-secret\\n");
+		const context = await getWorkspaceContext(config.cwd);
+		expect(context.status).not.toContain(".npmrc");
+		expect(context.diff).not.toContain(".npmrc");
+		expect(context.diff).not.toContain("changed-container-secret");
+		const command = "git show HEAD:.npmrc";
+		const policy = { ...config.policy, allowedCommands: [command] };
+		expect(() => assertCommandAuthorized(command, policy)).toThrow(/credential access denied/);
+	});
+
 	it("omits both sides of a credential-sensitive staged rename from workspace context", async () => {
 		const config = testConfig();
 		const credentialPath = join(config.cwd, ".env.production");
@@ -215,6 +246,9 @@ describe("tool policy", () => {
 		"cat secrets-prod",
 		"cat keys/id_ed25519_backup",
 		"cat certificates/server.pem",
+		"cat .npmrc",
+		"cat .netrc",
+		"cat .pypirc",
 		"git show HEAD:.env.production",
 		"git show :.env.production",
 		"git show refs/heads/main:keys/id_ed25519_backup",
@@ -236,7 +270,7 @@ describe("tool policy", () => {
 		);
 		writeFileSync(credentialPath, "TOKEN=changed-secret\\n");
 
-		const command = "git diff HEAD -- .";
+		const command = "git diff HEAD --exit-code -- .";
 		const policy = { ...config.policy, allowedCommands: [command] };
 		const observed: unknown[] = [];
 		const tool = createAuthorizedCommandTool(config.cwd, policy, (evidence) => observed.push(evidence));
@@ -244,6 +278,30 @@ describe("tool policy", () => {
 
 		expect(result).toMatchObject({ isError: true, endTurn: true, details: { outcome: "denied", command } });
 		expect(JSON.stringify(result)).not.toContain("changed-secret");
+		expect(observed).toEqual([
+			expect.objectContaining({ outcome: "denied", command, reason: expect.stringContaining("credential access") }),
+		]);
+		expect(() => assertCommandAuthorized(command, { ...policy, allowCredentials: true })).not.toThrow();
+	});
+
+	it("does not treat summary output options as suppressing a requested Git patch", () => {
+		const command = "git diff HEAD --stat -p -- .";
+		const policy = { ...testConfig().policy, allowedCommands: [command] };
+		expect(() => assertCommandAuthorized(command, policy)).toThrow(/credential access denied/);
+		expect(() => assertCommandAuthorized(command, { ...policy, allowCredentials: true })).not.toThrow();
+	});
+
+	it("denies an exact-allowed recursive external grep before it reaches credential descendants", async () => {
+		const config = testConfig();
+		writeFileSync(join(config.cwd, ".env.production"), "TOKEN=recursive-command-secret\\n");
+		const command = "grep -R TOKEN .";
+		const policy = { ...config.policy, allowedCommands: [command] };
+		const observed: unknown[] = [];
+		const tool = createAuthorizedCommandTool(config.cwd, policy, (evidence) => observed.push(evidence));
+		const result = await tool.execute("call", { command }, undefined, undefined, undefined as any);
+
+		expect(result).toMatchObject({ isError: true, endTurn: true, details: { outcome: "denied", command } });
+		expect(JSON.stringify(result)).not.toContain("recursive-command-secret");
 		expect(observed).toEqual([
 			expect.objectContaining({ outcome: "denied", command, reason: expect.stringContaining("credential access") }),
 		]);
