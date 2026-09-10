@@ -816,7 +816,12 @@ export class LongHorizonSupervisor {
 				}
 				state = this.store.replay();
 			}
-			const target = this.loadPlan() ? "executing" : "planning";
+			const target =
+				state.phase === "paused" && state.pausedFromPhase === "handoff"
+					? "handoff"
+					: this.loadPlan()
+						? "executing"
+						: "planning";
 			this.store.append({ type: "phase_changed", from: state.phase, to: target, reason: "resume" });
 			state = this.store.replay();
 		}

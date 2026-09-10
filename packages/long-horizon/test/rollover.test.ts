@@ -156,9 +156,17 @@ describe("safe-edge rollover", () => {
 			artifactDigest: store.artifactDigest(handoffArtifact),
 		});
 
-		const sessions = new FakeSessionHost({ executor: [promptResult(report("complete"))] });
 		const commandRunner = async (command: string, cwd: string) =>
 			commandEvidence(command, await getWorkspaceIdentity(cwd));
+		store.requestControl("pause");
+		const paused = await new LongHorizonSupervisor(RunStore.open(store.runDir), {
+			sessionHost: new FakeSessionHost({}),
+			commandRunner,
+		}).run();
+		expect(paused.phase).toBe("paused");
+		store.requestControl("resume");
+
+		const sessions = new FakeSessionHost({ executor: [promptResult(report("complete"))] });
 		const status = await new LongHorizonSupervisor(RunStore.open(store.runDir), {
 			sessionHost: sessions,
 			commandRunner,

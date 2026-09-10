@@ -101,6 +101,31 @@ function findSubcommand(
 		: findPositional(argv, executableIndex + 1, optionsWithValues, attachedValuePrefixes);
 }
 
+/**
+ * An unrecognized option before the parsed subcommand may consume the token we
+ * would otherwise treat as that subcommand. Fail closed for category gates.
+ */
+function hasUnknownOptionBeforeSubcommand(
+	argv: readonly string[],
+	executable: string,
+	subcommand: ParsedSubcommand,
+	optionsWithValues: ReadonlySet<string>,
+	attachedValuePrefixes: readonly string[],
+): boolean {
+	const executableIndex = argv.findIndex((token) => executableName(token) === executable);
+	for (let index = executableIndex + 1; index < subcommand.index; index++) {
+		const token = argv[index];
+		if (token === "--") return false;
+		if (optionsWithValues.has(token)) {
+			index++;
+			continue;
+		}
+		if (attachedValuePrefixes.some((prefix) => token.startsWith(prefix))) continue;
+		if (token.startsWith("-")) return true;
+	}
+	return false;
+}
+
 const GIT_OPTIONS_WITH_VALUES = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]);
 const GIT_ATTACHED_VALUE_PREFIXES = ["-C", "-c", "--git-dir=", "--work-tree=", "--namespace=", "--exec-path="];
 
@@ -218,13 +243,135 @@ function isRelease(argv: readonly string[]): boolean {
 	);
 }
 
+const KUBECTL_OPTIONS_WITH_VALUES = new Set([
+	"--as",
+	"--as-group",
+	"--as-uid",
+	"--cache-dir",
+	"--cluster",
+	"--context",
+	"--kubeconfig",
+	"--namespace",
+	"--request-timeout",
+	"--server",
+	"--tls-server-name",
+	"--token",
+	"--user",
+	"-n",
+]);
+const KUBECTL_ATTACHED_VALUE_PREFIXES = [
+	"--as=",
+	"--as-group=",
+	"--as-uid=",
+	"--cache-dir=",
+	"--cluster=",
+	"--context=",
+	"--kubeconfig=",
+	"--namespace=",
+	"--request-timeout=",
+	"--server=",
+	"--tls-server-name=",
+	"--token=",
+	"--user=",
+	"-n",
+];
+const KUBECTL_READ_ONLY_COMMANDS = new Set([
+	"api-resources",
+	"api-versions",
+	"cluster-info",
+	"completion",
+	"describe",
+	"diff",
+	"explain",
+	"get",
+	"help",
+	"logs",
+	"options",
+	"top",
+	"version",
+]);
+
+const HELM_OPTIONS_WITH_VALUES = new Set([
+	"--burst-limit",
+	"--kube-apiserver",
+	"--kube-as-group",
+	"--kube-as-user",
+	"--kube-ca-file",
+	"--kube-context",
+	"--kube-tls-server-name",
+	"--kube-token",
+	"--kubeconfig",
+	"--namespace",
+	"--qps",
+	"--registry-config",
+	"--repository-cache",
+	"--repository-config",
+	"-n",
+]);
+const HELM_ATTACHED_VALUE_PREFIXES = [
+	"--burst-limit=",
+	"--kube-apiserver=",
+	"--kube-as-group=",
+	"--kube-as-user=",
+	"--kube-ca-file=",
+	"--kube-context=",
+	"--kube-tls-server-name=",
+	"--kube-token=",
+	"--kubeconfig=",
+	"--namespace=",
+	"--qps=",
+	"--registry-config=",
+	"--repository-cache=",
+	"--repository-config=",
+	"-n",
+];
+const HELM_READ_ONLY_COMMANDS = new Set([
+	"completion",
+	"env",
+	"get",
+	"help",
+	"history",
+	"lint",
+	"list",
+	"search",
+	"show",
+	"status",
+	"template",
+	"verify",
+	"version",
+]);
+
+function mutatesDeployment(
+	argv: readonly string[],
+	executable: string,
+	optionsWithValues: ReadonlySet<string>,
+	attachedValuePrefixes: readonly string[],
+	readOnlyCommands: ReadonlySet<string>,
+): boolean {
+	const command = findSubcommand(argv, executable, optionsWithValues, attachedValuePrefixes);
+	return (
+		command !== undefined &&
+		(hasUnknownOptionBeforeSubcommand(argv, executable, command, optionsWithValues, attachedValuePrefixes) ||
+			!readOnlyCommands.has(command.name))
+	);
+}
+
 function isDeployment(argv: readonly string[]): boolean {
 	return (
-		hasCommandSequence(argv, "kubectl", ["apply"]) ||
-		hasCommandSequence(argv, "kubectl", ["delete"]) ||
-		hasCommandSequence(argv, "helm", ["install"]) ||
-		hasCommandSequence(argv, "helm", ["upgrade"]) ||
-		hasCommandSequence(argv, "helm", ["uninstall"]) ||
+		mutatesDeployment(
+			argv,
+			"kubectl",
+			KUBECTL_OPTIONS_WITH_VALUES,
+			KUBECTL_ATTACHED_VALUE_PREFIXES,
+			KUBECTL_READ_ONLY_COMMANDS,
+		) ||
+		mutatesDeployment(
+			argv,
+			"helm",
+			HELM_OPTIONS_WITH_VALUES,
+			HELM_ATTACHED_VALUE_PREFIXES,
+			HELM_READ_ONLY_COMMANDS,
+		) ||
 		hasCommandSequence(argv, "terraform", ["apply"]) ||
 		hasCommandSequence(argv, "terraform", ["destroy"]) ||
 		hasCommandSequence(argv, "vercel", ["deploy"])
