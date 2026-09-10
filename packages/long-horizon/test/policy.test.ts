@@ -224,6 +224,70 @@ describe("tool policy", () => {
 		expect(() => assertCommandAuthorized(command, { ...policy, allowCredentials: true })).not.toThrow();
 	});
 
+	it("denies a recursive Git diff before credential content reaches command evidence", async () => {
+		const config = testConfig();
+		const credentialPath = join(config.cwd, ".env.production");
+		writeFileSync(credentialPath, "TOKEN=initial-secret\\n");
+		execFileSync("git", ["add", ".env.production"], { cwd: config.cwd });
+		execFileSync(
+			"git",
+			["-c", "user.name=Dreb Test", "-c", "user.email=dreb@example.invalid", "commit", "-qm", "track credential"],
+			{ cwd: config.cwd },
+		);
+		writeFileSync(credentialPath, "TOKEN=changed-secret\\n");
+
+		const command = "git diff HEAD -- .";
+		const policy = { ...config.policy, allowedCommands: [command] };
+		const observed: unknown[] = [];
+		const tool = createAuthorizedCommandTool(config.cwd, policy, (evidence) => observed.push(evidence));
+		const result = await tool.execute("call", { command }, undefined, undefined, undefined as any);
+
+		expect(result).toMatchObject({ isError: true, endTurn: true, details: { outcome: "denied", command } });
+		expect(JSON.stringify(result)).not.toContain("changed-secret");
+		expect(observed).toEqual([
+			expect.objectContaining({ outcome: "denied", command, reason: expect.stringContaining("credential access") }),
+		]);
+		expect(() => assertCommandAuthorized(command, { ...policy, allowCredentials: true })).not.toThrow();
+	});
+
+	it.each(["env", "printenv"] as const)(
+		"denies explicit environment dumping without credential access: %s",
+		(command) => {
+			const policy = { ...testConfig().policy, allowedCommands: [command] };
+			expect(() => assertCommandAuthorized(command, policy)).toThrow(/credential access denied/);
+			expect(() => assertCommandAuthorized(command, { ...policy, allowCredentials: true })).not.toThrow();
+		},
+	);
+
+	it("scrubs provider-style credentials from authorized interpreter and workspace-script environments", async () => {
+		const config = testConfig();
+		const environmentKey = "DREB_TEST_PROVIDER_API_KEY";
+		const original = process.env[environmentKey];
+		const canary = "provider-canary-must-not-reach-child";
+		const script = join(config.cwd, "print-env.cjs");
+		const inlineCommand = `node -e "console.log(process.env.${environmentKey} ?? 'missing')"`;
+		const scriptCommand = "node print-env.cjs";
+		writeFileSync(script, `console.log(process.env.${environmentKey} ?? "missing")\n`);
+		process.env[environmentKey] = canary;
+		try {
+			const policy = {
+				...config.policy,
+				allowedCommands: [inlineCommand, scriptCommand],
+				allowRemoteState: true,
+			};
+			const [inline, workspaceScript] = await Promise.all([
+				runAuthorizedCommand(inlineCommand, config.cwd, policy),
+				runAuthorizedCommand(scriptCommand, config.cwd, policy),
+			]);
+			expect(inline.stdout).toBe("missing\n");
+			expect(workspaceScript.stdout).toBe("missing\n");
+			expect(`${inline.stdout}${workspaceScript.stdout}`).not.toContain(canary);
+		} finally {
+			if (original === undefined) delete process.env[environmentKey];
+			else process.env[environmentKey] = original;
+		}
+	});
+
 	it("does not classify ordinary secretary filenames as credentials", () => {
 		const command = "cat secretary.txt";
 		expect(() =>

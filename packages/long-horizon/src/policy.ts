@@ -209,6 +209,37 @@ const GIT_LOCAL_OR_REMOTE_READ_SUBCOMMANDS = new Set([
 	"worktree",
 ]);
 
+/** Git forms that may render blob or patch content rather than only metadata. */
+const GIT_CONTENT_EMITTING_SUBCOMMANDS = new Set([
+	"cat-file",
+	"diff",
+	"diff-files",
+	"diff-index",
+	"diff-tree",
+	"grep",
+	"log",
+	"range-diff",
+	"show",
+	"whatchanged",
+]);
+
+const GIT_CONTENT_SUPPRESSING_OPTIONS = new Set([
+	"--check",
+	"--compact-summary",
+	"--dirstat",
+	"--exit-code",
+	"--name-only",
+	"--name-status",
+	"--no-patch",
+	"--numstat",
+	"--quiet",
+	"--raw",
+	"--shortstat",
+	"--stat",
+	"--summary",
+	"-s",
+]);
+
 function gitSubcommand(argv: readonly string[]): ParsedSubcommand | undefined {
 	return findSubcommand(argv, "git", GIT_OPTIONS_WITH_VALUES, GIT_ATTACHED_VALUE_PREFIXES);
 }
@@ -243,6 +274,43 @@ function isDestructiveGit(argv: readonly string[]): boolean {
 	}
 	if (GIT_READ_ONLY_SUBCOMMANDS.has(subcommand.name)) return false;
 	return !isReadOnlyGitFamily(argv, subcommand);
+}
+
+/**
+ * A broad Git pathspec can select every tracked credential without naming it in
+ * argv. Permit content output only when Git is explicitly restricted to ordinary
+ * literal paths; otherwise credential-disabled runs fail closed.
+ */
+function gitMayEmitCredentialContent(argv: readonly string[]): boolean {
+	const subcommand = gitSubcommand(argv);
+	if (!subcommand || !GIT_CONTENT_EMITTING_SUBCOMMANDS.has(subcommand.name)) return false;
+	const args = argv.slice(subcommand.index + 1);
+	if (args.some((argument) => argument === "--output" || argument.startsWith("--output="))) return false;
+	if (args.some((argument) => GIT_CONTENT_SUPPRESSING_OPTIONS.has(argument.toLowerCase()))) return false;
+	if (subcommand.name === "log" && !args.some((argument) => ["-p", "-u", "--patch"].includes(argument))) {
+		return false;
+	}
+	const separator = args.lastIndexOf("--");
+	if (separator < 0) return true;
+	const paths = args.slice(separator + 1);
+	return !(
+		paths.length > 0 &&
+		paths.every(
+			(path) =>
+				path !== "." &&
+				path !== "./" &&
+				!/[!*?[]/.test(path) &&
+				!path.startsWith(":") &&
+				!isSensitiveCredentialPath(path),
+		)
+	);
+}
+
+function isEnvironmentDump(argv: readonly string[]): boolean {
+	const executable = executableName(argv[0] ?? "");
+	if (executable === "printenv") return true;
+	if (executable !== "env") return false;
+	return argv.slice(1).every((argument) => argument.startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(argument));
 }
 
 function isRelease(argv: readonly string[]): boolean {
@@ -625,6 +693,8 @@ export function assertCommandAuthorized(command: string, policy: AuthorizationPo
 		!policy.allowCredentials &&
 		(argv.some(isSensitiveCredentialPath) ||
 			(gitSubcommand(argv) !== undefined && argv.some(isSensitiveGitRevisionPath)) ||
+			gitMayEmitCredentialContent(argv) ||
+			isEnvironmentDump(argv) ||
 			accessesGhCredentials(argv))
 	) {
 		throw new Error("credential access denied");
@@ -638,6 +708,18 @@ function bounded(value: string, maxBytes: number): string {
 	return `${bytes.subarray(0, maxBytes).toString("utf8")}\n[output truncated at ${maxBytes} bytes]`;
 }
 
+const CREDENTIAL_ENVIRONMENT_VARIABLE =
+	/(?:^|_)(?:access_?key|api_?key|auth(?:orization)?|credential|password|private_?key|secret|token)(?:_|$)/i;
+
+function commandEnvironment(policy: AuthorizationPolicy): NodeJS.ProcessEnv {
+	if (policy.allowCredentials) return process.env;
+	const environment = { ...process.env };
+	for (const name of Object.keys(environment)) {
+		if (CREDENTIAL_ENVIRONMENT_VARIABLE.test(name)) delete environment[name];
+	}
+	return environment;
+}
+
 interface ProcessResult {
 	exitCode: number | null;
 	stdout: string;
@@ -649,6 +731,7 @@ function executeProcess(
 	executable: string,
 	args: string[],
 	cwd: string,
+	environment: NodeJS.ProcessEnv,
 	timeoutMs: number,
 	maxOutputBytes: number,
 	signal?: AbortSignal,
@@ -660,7 +743,7 @@ function executeProcess(
 		const grouped = process.platform !== "win32";
 		const child = spawn(executable, args, {
 			cwd,
-			env: process.env,
+			env: environment,
 			stdio: ["ignore", "pipe", "pipe"],
 			detached: grouped,
 		});
@@ -914,7 +997,15 @@ export const runAuthorizedCommand: CommandRunner = async (command, cwd, policy, 
 	assertCommandAuthorized(command, policy);
 	const [executable, ...args] = parseCommand(command);
 	const startedAt = new Date().toISOString();
-	const result = await executeProcess(executable, args, cwd, policy.commandTimeoutMs, policy.maxOutputBytes, signal);
+	const result = await executeProcess(
+		executable,
+		args,
+		cwd,
+		commandEnvironment(policy),
+		policy.commandTimeoutMs,
+		policy.maxOutputBytes,
+		signal,
+	);
 	const completedAt = new Date().toISOString();
 	try {
 		return {
