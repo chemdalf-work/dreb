@@ -372,6 +372,8 @@ function isDeployment(argv: readonly string[]): boolean {
 			HELM_ATTACHED_VALUE_PREFIXES,
 			HELM_READ_ONLY_COMMANDS,
 		) ||
+		// AWS service-specific mutation syntax is broad; classify the entire CLI family conservatively.
+		argv.some((token) => executableName(token) === "aws") ||
 		hasCommandSequence(argv, "terraform", ["apply"]) ||
 		hasCommandSequence(argv, "terraform", ["destroy"]) ||
 		hasCommandSequence(argv, "vercel", ["deploy"])
@@ -1096,10 +1098,15 @@ function confineRoleTool<T extends RoleTool>(
 }
 
 export function roleToolSurface(role: SessionRole, cwd: string, options: RoleToolSurfaceOptions = {}): RoleTool[] {
-	const { protectedMutationPaths = [] } = options;
-	const readOnly: RoleTool[] = [createReadTool(cwd), createGrepTool(cwd), createFindTool(cwd), createLsTool(cwd)].map(
-		(tool) => confineRoleTool(tool, cwd, options),
-	);
+	const { protectedMutationPaths = [], allowCredentials = false } = options;
+	const readOnly: RoleTool[] = [
+		createReadTool(cwd),
+		createGrepTool(cwd, {
+			excludePath: allowCredentials ? undefined : (path) => isSensitiveCredentialPath(relative(cwd, path)),
+		}),
+		createFindTool(cwd),
+		createLsTool(cwd),
+	].map((tool) => confineRoleTool(tool, cwd, options));
 	if (role !== "executor") return readOnly;
 	const protectedPaths = [...gitControlPaths(cwd), ...protectedMutationPaths];
 	return [

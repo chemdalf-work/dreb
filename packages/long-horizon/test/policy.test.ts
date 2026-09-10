@@ -159,6 +159,10 @@ describe("tool policy", () => {
 		await expect(deniedRead.execute("call", { path: ordinary } as never)).resolves.toBeDefined();
 		await expect(deniedGrep.execute("call", { pattern: "ordinary", path: ordinary } as never)).resolves.toBeDefined();
 
+		const recursiveDenied = await deniedGrep.execute("call", { pattern: "TOKEN", path: "." } as never);
+		expect(JSON.stringify(recursiveDenied)).not.toContain("TOKEN=secret");
+		expect(JSON.stringify(recursiveDenied)).not.toContain(".env.production");
+
 		const allowed = roleToolSurface("executor", config.cwd, { allowCredentials: true });
 		const allowedRead = allowed.find((tool) => tool.name === "read");
 		const allowedGrep = allowed.find((tool) => tool.name === "grep");
@@ -316,6 +320,16 @@ describe("tool policy", () => {
 		"kubectl scale deployment app --replicas=0",
 		"helm rollback app 1",
 	] as const)("requires deployment and remote-state authorization independently: %s", (command) => {
+		const policy = { ...testConfig().policy, allowedCommands: [command] };
+		expect(() => assertCommandAuthorized(command, { ...policy, allowRemoteState: true })).toThrow(/deployment/);
+		expect(() => assertCommandAuthorized(command, { ...policy, allowDeploy: true })).toThrow(/remote-state/);
+		expect(() =>
+			assertCommandAuthorized(command, { ...policy, allowDeploy: true, allowRemoteState: true }),
+		).not.toThrow();
+	});
+
+	it("requires deployment and remote-state authorization independently for AWS deployment commands", () => {
+		const command = "aws ecs update-service --cluster prod --service app --force-new-deployment";
 		const policy = { ...testConfig().policy, allowedCommands: [command] };
 		expect(() => assertCommandAuthorized(command, { ...policy, allowRemoteState: true })).toThrow(/deployment/);
 		expect(() => assertCommandAuthorized(command, { ...policy, allowDeploy: true })).toThrow(/remote-state/);
