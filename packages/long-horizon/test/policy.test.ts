@@ -310,6 +310,21 @@ describe("tool policy", () => {
 	});
 
 	it.each([
+		"kubectl create deployment app --image=nginx",
+		"kubectl --profile-output get delete deployment app",
+		"kubectl patch deployment app --type=merge --patch={}",
+		"kubectl scale deployment app --replicas=0",
+		"helm rollback app 1",
+	] as const)("requires deployment and remote-state authorization independently: %s", (command) => {
+		const policy = { ...testConfig().policy, allowedCommands: [command] };
+		expect(() => assertCommandAuthorized(command, { ...policy, allowRemoteState: true })).toThrow(/deployment/);
+		expect(() => assertCommandAuthorized(command, { ...policy, allowDeploy: true })).toThrow(/remote-state/);
+		expect(() =>
+			assertCommandAuthorized(command, { ...policy, allowDeploy: true, allowRemoteState: true }),
+		).not.toThrow();
+	});
+
+	it.each([
 		"git -C . status --short",
 		"git diff --check",
 		"git log -1 --oneline",

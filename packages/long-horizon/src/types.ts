@@ -304,6 +304,8 @@ export interface RunState {
 	sessions: SessionReference[];
 	pendingEffect?: { effectId: string; kind: EffectKind; sessionId?: string };
 	pendingControl?: ControlAction;
+	/** Durable source phase so resume can restore a paused handoff safely. */
+	pausedFromPhase?: RunPhase;
 	blockedReason?: string;
 	lastWorkUnitId?: string;
 	lastStrategyId?: string;

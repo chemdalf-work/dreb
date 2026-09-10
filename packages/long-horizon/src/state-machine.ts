@@ -71,6 +71,8 @@ export function applyJournalRecord(
 				throw new Error(`phase_changed expected ${previous.phase}, got ${event.from}`);
 			requireTransition(event.from, event.to);
 			next.phase = event.to;
+			if (event.to === "paused") next.pausedFromPhase = event.from;
+			else next.pausedFromPhase = undefined;
 			if (event.to !== "blocked") next.blockedReason = undefined;
 			if ((event.to === "paused" || event.reason === "resume") && previous.pendingControl !== "abort") {
 				next.pendingControl = undefined;
