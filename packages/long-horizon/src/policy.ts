@@ -27,6 +27,7 @@ const MUTATING_HTTP_METHODS = new Set(["post", "put", "patch", "delete"]);
 const CREDENTIAL_COMPONENT = /(?:^|[._-])(?:credentials?|secrets?)(?:$|[._-])/i;
 const OPENSSH_PRIVATE_KEY = /(?:^|[._-])id_(?:rsa|dsa|ecdsa|ed25519)(?:$|[._-])/i;
 const CREDENTIAL_EXTENSION = /\.(?:pem|key|p12|pfx)$/i;
+const STANDARD_CREDENTIAL_FILENAMES = new Set([".netrc", ".npmrc", ".pypirc"]);
 
 /** Match sensitive credential filenames and path segments without accepting ordinary substrings. */
 function isSensitiveCredentialPath(value: string): boolean {
@@ -34,6 +35,7 @@ function isSensitiveCredentialPath(value: string): boolean {
 		for (const segment of attachedValue.split(/[\\/]+/)) {
 			if (!segment) continue;
 			if (/^\.env(?:$|[.-])/i.test(segment)) return true;
+			if (STANDARD_CREDENTIAL_FILENAMES.has(segment.toLowerCase())) return true;
 			if (CREDENTIAL_COMPONENT.test(segment)) return true;
 			if (OPENSSH_PRIVATE_KEY.test(segment)) return true;
 			if (CREDENTIAL_EXTENSION.test(segment)) return true;
@@ -225,9 +227,7 @@ const GIT_CONTENT_EMITTING_SUBCOMMANDS = new Set([
 
 const GIT_CONTENT_SUPPRESSING_OPTIONS = new Set([
 	"--check",
-	"--compact-summary",
 	"--dirstat",
-	"--exit-code",
 	"--name-only",
 	"--name-status",
 	"--no-patch",
@@ -286,10 +286,10 @@ function gitMayEmitCredentialContent(argv: readonly string[]): boolean {
 	if (!subcommand || !GIT_CONTENT_EMITTING_SUBCOMMANDS.has(subcommand.name)) return false;
 	const args = argv.slice(subcommand.index + 1);
 	if (args.some((argument) => argument === "--output" || argument.startsWith("--output="))) return false;
-	if (args.some((argument) => GIT_CONTENT_SUPPRESSING_OPTIONS.has(argument.toLowerCase()))) return false;
-	if (subcommand.name === "log" && !args.some((argument) => ["-p", "-u", "--patch"].includes(argument))) {
+	const requestsPatch = args.some((argument) => ["-p", "-u", "--patch"].includes(argument));
+	if (subcommand.name === "log" && !requestsPatch) return false;
+	if (!requestsPatch && args.some((argument) => GIT_CONTENT_SUPPRESSING_OPTIONS.has(argument.toLowerCase())))
 		return false;
-	}
 	const separator = args.lastIndexOf("--");
 	if (separator < 0) return true;
 	const paths = args.slice(separator + 1);
@@ -311,6 +311,14 @@ function isEnvironmentDump(argv: readonly string[]): boolean {
 	if (executable === "printenv") return true;
 	if (executable !== "env") return false;
 	return argv.slice(1).every((argument) => argument.startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(argument));
+}
+
+/** External grep commands bypass role-tool descendant filtering, so recursive forms fail closed. */
+function isRecursiveContentSearch(argv: readonly string[]): boolean {
+	const executable = executableName(argv[0] ?? "");
+	if (executable === "rg" || executable === "ripgrep") return true;
+	if (executable !== "grep") return false;
+	return argv.slice(1).some((argument) => argument === "--recursive" || /^-[^-]*[rR]/.test(argument));
 }
 
 function isRelease(argv: readonly string[]): boolean {
@@ -695,6 +703,7 @@ export function assertCommandAuthorized(command: string, policy: AuthorizationPo
 			(gitSubcommand(argv) !== undefined && argv.some(isSensitiveGitRevisionPath)) ||
 			gitMayEmitCredentialContent(argv) ||
 			isEnvironmentDump(argv) ||
+			isRecursiveContentSearch(argv) ||
 			accessesGhCredentials(argv))
 	) {
 		throw new Error("credential access denied");
