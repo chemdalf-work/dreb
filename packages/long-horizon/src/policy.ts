@@ -42,6 +42,14 @@ function isSensitiveCredentialPath(value: string): boolean {
 	return false;
 }
 
+/** Git accepts a revision and repository path in one operand, e.g. HEAD:.env.production. */
+function isSensitiveGitRevisionPath(value: string): boolean {
+	return value.split("=").some((attachedValue) => {
+		const separator = attachedValue.indexOf(":");
+		return separator >= 0 && isSensitiveCredentialPath(attachedValue.slice(separator + 1));
+	});
+}
+
 function executableName(token: string): string {
 	return token.split(/[\\/]/).at(-1)?.toLowerCase() ?? token.toLowerCase();
 }
@@ -230,6 +238,9 @@ function isReadOnlyGitFamily(argv: readonly string[], subcommand: ParsedSubcomma
 function isDestructiveGit(argv: readonly string[]): boolean {
 	const subcommand = gitSubcommand(argv);
 	if (!subcommand) return false;
+	if (argv.slice(subcommand.index + 1).some((token) => token === "--output" || token.startsWith("--output="))) {
+		return true;
+	}
 	if (GIT_READ_ONLY_SUBCOMMANDS.has(subcommand.name)) return false;
 	return !isReadOnlyGitFamily(argv, subcommand);
 }
@@ -610,7 +621,12 @@ export function assertCommandAuthorized(command: string, policy: AuthorizationPo
 	if (!policy.allowDestructiveGit && isDestructiveGit(argv)) throw new Error("destructive git command denied");
 	if (!policy.allowRelease && isRelease(argv)) throw new Error("release command denied");
 	if (!policy.allowDeploy && isDeployment(argv)) throw new Error("deployment command denied");
-	if (!policy.allowCredentials && (argv.some(isSensitiveCredentialPath) || accessesGhCredentials(argv))) {
+	if (
+		!policy.allowCredentials &&
+		(argv.some(isSensitiveCredentialPath) ||
+			(gitSubcommand(argv) !== undefined && argv.some(isSensitiveGitRevisionPath)) ||
+			accessesGhCredentials(argv))
+	) {
 		throw new Error("credential access denied");
 	}
 	if (!policy.allowRemoteState && mutatesRemoteState(argv)) throw new Error("remote-state mutation denied");
@@ -814,15 +830,63 @@ export async function getWorkspaceIdentity(cwd: string): Promise<string> {
 	return hash.digest("hex");
 }
 
-export async function getWorkspaceContext(cwd: string, maxSectionBytes = 32 * 1024): Promise<WorkspaceContext> {
+function zeroDelimitedPaths(output: Buffer): string[] {
+	return output.toString("utf8").split("\0").filter(Boolean);
+}
+
+function changedPathGroups(output: Buffer): string[][] {
+	const tokens = zeroDelimitedPaths(output);
+	const groups: string[][] = [];
+	for (let index = 0; index < tokens.length; ) {
+		const status = tokens[index++];
+		const count = status.startsWith("R") || status.startsWith("C") ? 2 : 1;
+		const paths = tokens.slice(index, index + count);
+		if (paths.length !== count) throw new Error("git diff name-status output is truncated");
+		groups.push(paths);
+		index += count;
+	}
+	return groups;
+}
+
+async function credentialExclusionPathspecs(cwd: string): Promise<string[]> {
+	const [tracked, untracked, committed, changed] = await Promise.all([
+		gitOutput(cwd, ["ls-files", "-z"]),
+		gitOutput(cwd, ["ls-files", "--others", "--exclude-standard", "-z"]),
+		gitOutput(cwd, ["ls-tree", "-r", "-z", "--name-only", "HEAD"]),
+		gitOutput(cwd, ["diff", "--name-status", "-z", "--find-renames", "HEAD", "--"]),
+	]);
+	const sensitiveChangedPaths = changedPathGroups(changed)
+		.filter((paths) => paths.some(isSensitiveCredentialPath))
+		.flat();
+	return [
+		...new Set([...zeroDelimitedPaths(tracked), ...zeroDelimitedPaths(untracked), ...zeroDelimitedPaths(committed)]),
+	]
+		.filter(isSensitiveCredentialPath)
+		.concat(sensitiveChangedPaths)
+		.filter((path, index, paths) => paths.indexOf(path) === index)
+		.map((path) => `:(exclude,top)${path}`);
+}
+
+export async function getWorkspaceContext(
+	cwd: string,
+	maxSectionBytes = 32 * 1024,
+	options: { allowCredentials?: boolean } = {},
+): Promise<WorkspaceContext> {
 	if (!Number.isSafeInteger(maxSectionBytes) || maxSectionBytes <= 0) {
 		throw new Error("workspace context limit must be a positive safe integer");
 	}
 	const root = resolve(cwd);
+	const exclusions = options.allowCredentials ? [] : await credentialExclusionPathspecs(root);
+	const statusPathspec = exclusions.length > 0 ? ["--", ".", ...exclusions] : [];
+	const diffPathspec = exclusions.length > 0 ? statusPathspec : ["--"];
 	const [workspaceIdentity, status, diff] = await Promise.all([
 		getWorkspaceIdentity(root),
-		gitOutputPreview(root, ["status", "--short", "--branch", "--untracked-files=all"], maxSectionBytes),
-		gitOutputPreview(root, ["diff", "--no-ext-diff", "--unified=3", "HEAD", "--"], maxSectionBytes),
+		gitOutputPreview(
+			root,
+			["status", "--short", "--branch", "--untracked-files=all", ...statusPathspec],
+			maxSectionBytes,
+		),
+		gitOutputPreview(root, ["diff", "--no-ext-diff", "--unified=3", "HEAD", ...diffPathspec], maxSectionBytes),
 	]);
 	return { workspaceIdentity, status, diff };
 }

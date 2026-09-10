@@ -1,9 +1,11 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, linkSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	assertCommandAuthorized,
 	createAuthorizedCommandTool,
+	getWorkspaceContext,
 	getWorkspaceIdentity,
 	roleToolSurface,
 	runAuthorizedCommand,
@@ -183,6 +185,29 @@ describe("tool policy", () => {
 		expect(readFileSync(privateKey, "utf8")).toBe("changed\n");
 	});
 
+	it("omits both sides of a credential-sensitive staged rename from workspace context", async () => {
+		const config = testConfig();
+		const credentialPath = join(config.cwd, ".env.production");
+		const ordinaryPath = join(config.cwd, "config.txt");
+		writeFileSync(credentialPath, "TOKEN=tracked-secret\n");
+		execFileSync("git", ["add", ".env.production"], { cwd: config.cwd });
+		execFileSync(
+			"git",
+			["-c", "user.name=Dreb Test", "-c", "user.email=dreb@example.invalid", "commit", "-qm", "track credential"],
+			{ cwd: config.cwd },
+		);
+		renameSync(credentialPath, ordinaryPath);
+		execFileSync("git", ["add", "-A"], { cwd: config.cwd });
+
+		const context = await getWorkspaceContext(config.cwd);
+
+		expect(context.status).not.toContain(".env.production");
+		expect(context.status).not.toContain("config.txt");
+		expect(context.diff).not.toContain(".env.production");
+		expect(context.diff).not.toContain("config.txt");
+		expect(context.diff).not.toContain("TOKEN=tracked-secret");
+	});
+
 	it.each([
 		"cat config/.env/production",
 		"node --env-file=.env.production test.js",
@@ -190,6 +215,9 @@ describe("tool policy", () => {
 		"cat secrets-prod",
 		"cat keys/id_ed25519_backup",
 		"cat certificates/server.pem",
+		"git show HEAD:.env.production",
+		"git show :.env.production",
+		"git show refs/heads/main:keys/id_ed25519_backup",
 	] as const)("denies exact-listed credential command by default: %s", (command) => {
 		const policy = { ...testConfig().policy, allowedCommands: [command] };
 		expect(() => assertCommandAuthorized(command, policy)).toThrow(/credential access denied/);
@@ -236,6 +264,8 @@ describe("tool policy", () => {
 	});
 
 	it.each([
+		"git diff --output=workspace.patch",
+		"git diff --output .git/config",
 		"git reset --hard=HEAD",
 		"git restore file.txt",
 		"git restore --staged file.txt",

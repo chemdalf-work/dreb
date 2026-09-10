@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -74,6 +75,42 @@ describe("failure escalation", () => {
 		expect(sessions.prompts.filter((item) => item.sessionId.startsWith("executor-")).at(-1)?.text).toContain(
 			"Advisor guidance",
 		);
+	});
+
+	it("excludes tracked credential diffs from the advisor escalation prompt by default", async () => {
+		const base = testConfig();
+		const config = { ...base, limits: { ...base.limits, maxEscalations: 1 } };
+		const credentialPath = join(config.cwd, ".env.production");
+		writeFileSync(credentialPath, "TOKEN=committed-secret\n");
+		execFileSync("git", ["add", ".env.production"], { cwd: config.cwd });
+		execFileSync(
+			"git",
+			["-c", "user.name=Dreb Test", "-c", "user.email=dreb@example.invalid", "commit", "-qm", "track credential"],
+			{ cwd: config.cwd },
+		);
+		writeFileSync(credentialPath, "TOKEN=changed-secret\n");
+		const failureEvidence = commandEvidence("npm test", "workspace", 1);
+		const failed = promptResult(
+			report("verification-failed", failure).replace('"evidenceIds":[]', `"evidenceIds":["${failureEvidence.id}"]`),
+			{ commandEvidence: [failureEvidence] },
+		);
+		const sessions = new FakeSessionHost({
+			planner: [promptResult(PLAN)],
+			executor: [failed, failed, failed, failed, promptResult(report("complete"))],
+			advisor: [promptResult(advice)],
+		});
+		echoAdvisorSignature(sessions);
+		const commandRunner = async (command: string, cwd: string) =>
+			commandEvidence(command, await getWorkspaceIdentity(cwd));
+
+		const status = await LongHorizonSupervisor.create(config, { sessionHost: sessions, commandRunner }).run();
+		const advisorPrompt = sessions.prompts.find((item) => item.sessionId.startsWith("advisor-"))?.text;
+
+		expect(status.phase).toBe("completed");
+		expect(advisorPrompt).toBeDefined();
+		expect(advisorPrompt).not.toContain(".env.production");
+		expect(advisorPrompt).not.toContain("TOKEN=committed-secret");
+		expect(advisorPrompt).not.toContain("TOKEN=changed-secret");
 	});
 
 	it("does not reset equivalent failures for a successful non-verification command", async () => {
