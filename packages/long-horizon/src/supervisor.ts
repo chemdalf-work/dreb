@@ -439,7 +439,9 @@ export class LongHorizonSupervisor {
 	): Promise<SolAdvice> {
 		const advisor = await this.createSession("advisor");
 		try {
-			const workspace = await getWorkspaceContext(this.config.cwd);
+			const workspace = await getWorkspaceContext(this.config.cwd, undefined, {
+				allowCredentials: this.config.policy.allowCredentials,
+			});
 			const effect = await this.modelEffect(
 				"advice",
 				advisor,
