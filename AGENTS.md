@@ -24,6 +24,7 @@ This builds all packages in dependency order: tui → ai → agent → semantic-
 - `packages/ai` — Model registry, provider APIs, types
 - `packages/agent` — Core agent loop, event system, types
 - `packages/coding-agent` — CLI tool, tools, model resolution, TUI
+- `packages/long-horizon` — Durable SDK supervisor, run journal, recovery, and autonomous CLI
 - `packages/tui` — Terminal UI components
 - `packages/telegram` — Telegram bot integration
 - `packages/semantic-search` — Semantic codebase search engine + MCP server

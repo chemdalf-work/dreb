@@ -310,6 +310,8 @@ export interface AgentToolResult<T> {
 	content: (TextContent | ImageContent)[];
 	// Details to be displayed in a UI or logged
 	details: T;
+	/** Mark a structured tool result as an error without discarding its details. */
+	isError?: boolean;
 	/**
 	 * When true, the agent loop will stop after processing all tool results
 	 * from the current assistant message. No further LLM call is made.

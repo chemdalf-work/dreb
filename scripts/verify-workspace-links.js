@@ -12,6 +12,7 @@ const workspacePackages = [
 	"@dreb/agent-core",
 	"@dreb/ai",
 	"@dreb/coding-agent",
+	"@dreb/long-horizon",
 	"@dreb/semantic-search",
 	"@dreb/telegram",
 	"@dreb/tui",

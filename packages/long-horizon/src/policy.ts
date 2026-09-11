@@ -1,0 +1,1371 @@
+import { spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import { createReadStream, existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
+import { Type } from "@dreb/ai";
+import {
+	createEditTool,
+	createFindTool,
+	createGrepTool,
+	createLsTool,
+	createReadTool,
+	createWriteTool,
+	type ToolDefinition,
+} from "@dreb/coding-agent";
+import type {
+	AuthorizationPolicy,
+	CommandEvidence,
+	CommandExecutionResult,
+	DeniedCommandOutcome,
+	SessionRole,
+	UncertainCommandOutcome,
+	WorkspaceContext,
+} from "./types.js";
+
+const MUTATING_HTTP_METHODS = new Set(["post", "put", "patch", "delete"]);
+const CREDENTIAL_COMPONENT = /(?:^|[._-])(?:credentials?|secrets?)(?:$|[._-])/i;
+const OPENSSH_PRIVATE_KEY = /(?:^|[._-])id_(?:rsa|dsa|ecdsa|ed25519)(?:$|[._-])/i;
+const CREDENTIAL_EXTENSION = /\.(?:pem|key|p12|pfx)$/i;
+const STANDARD_CREDENTIAL_FILENAMES = new Set([".netrc", ".npmrc", ".pypirc"]);
+
+/** Match sensitive credential filenames and path segments without accepting ordinary substrings. */
+function isSensitiveCredentialPath(value: string): boolean {
+	for (const attachedValue of value.split("=")) {
+		for (const segment of attachedValue.split(/[\\/]+/)) {
+			if (!segment) continue;
+			if (/^\.env(?:$|[.-])/i.test(segment)) return true;
+			if (STANDARD_CREDENTIAL_FILENAMES.has(segment.toLowerCase())) return true;
+			if (CREDENTIAL_COMPONENT.test(segment)) return true;
+			if (OPENSSH_PRIVATE_KEY.test(segment)) return true;
+			if (CREDENTIAL_EXTENSION.test(segment)) return true;
+		}
+	}
+	return false;
+}
+
+/** Git accepts a revision and repository path in one operand, e.g. HEAD:.env.production. */
+function isSensitiveGitRevisionPath(value: string): boolean {
+	return value.split("=").some((attachedValue) => {
+		const separator = attachedValue.indexOf(":");
+		return separator >= 0 && isSensitiveCredentialPath(attachedValue.slice(separator + 1));
+	});
+}
+
+function executableName(token: string): string {
+	return token.split(/[\\/]/).at(-1)?.toLowerCase() ?? token.toLowerCase();
+}
+
+/** Find an ordered command/subcommand sequence in parsed argv, ignoring interleaved global options. */
+function hasCommandSequence(argv: readonly string[], executable: string, sequence: readonly string[]): boolean {
+	for (let start = 0; start < argv.length; start++) {
+		if (executableName(argv[start]) !== executable) continue;
+		let next = start + 1;
+		for (const expected of sequence) {
+			next = argv.findIndex((token, index) => index >= next && token.toLowerCase() === expected);
+			if (next < 0) break;
+			next++;
+		}
+		if (next > start + sequence.length) return true;
+	}
+	return false;
+}
+
+interface ParsedSubcommand {
+	name: string;
+	index: number;
+}
+
+function findPositional(
+	argv: readonly string[],
+	start: number,
+	optionsWithValues: ReadonlySet<string>,
+	attachedValuePrefixes: readonly string[],
+): ParsedSubcommand | undefined {
+	for (let index = start; index < argv.length; index++) {
+		const token = argv[index];
+		if (token === "--") {
+			const name = argv[index + 1];
+			return name ? { name: name.toLowerCase(), index: index + 1 } : undefined;
+		}
+		if (optionsWithValues.has(token)) {
+			index++;
+			continue;
+		}
+		if (attachedValuePrefixes.some((prefix) => token.startsWith(prefix))) continue;
+		if (token.startsWith("-")) continue;
+		return { name: token.toLowerCase(), index };
+	}
+	return undefined;
+}
+
+function findSubcommand(
+	argv: readonly string[],
+	executable: string,
+	optionsWithValues: ReadonlySet<string>,
+	attachedValuePrefixes: readonly string[],
+): ParsedSubcommand | undefined {
+	const executableIndex = argv.findIndex((token) => executableName(token) === executable);
+	return executableIndex < 0
+		? undefined
+		: findPositional(argv, executableIndex + 1, optionsWithValues, attachedValuePrefixes);
+}
+
+/**
+ * An unrecognized option before the parsed subcommand may consume the token we
+ * would otherwise treat as that subcommand. Fail closed for category gates.
+ */
+function hasUnknownOptionBeforeSubcommand(
+	argv: readonly string[],
+	executable: string,
+	subcommand: ParsedSubcommand,
+	optionsWithValues: ReadonlySet<string>,
+	attachedValuePrefixes: readonly string[],
+): boolean {
+	const executableIndex = argv.findIndex((token) => executableName(token) === executable);
+	for (let index = executableIndex + 1; index < subcommand.index; index++) {
+		const token = argv[index];
+		if (token === "--") return false;
+		if (optionsWithValues.has(token)) {
+			index++;
+			continue;
+		}
+		if (attachedValuePrefixes.some((prefix) => token.startsWith(prefix))) continue;
+		if (token.startsWith("-")) return true;
+	}
+	return false;
+}
+
+const GIT_OPTIONS_WITH_VALUES = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]);
+const GIT_ATTACHED_VALUE_PREFIXES = ["-C", "-c", "--git-dir=", "--work-tree=", "--namespace=", "--exec-path="];
+
+const GIT_READ_ONLY_SUBCOMMANDS = new Set([
+	"annotate",
+	"blame",
+	"cat-file",
+	"check-attr",
+	"check-ignore",
+	"check-mailmap",
+	"check-ref-format",
+	"describe",
+	"diff",
+	"diff-files",
+	"diff-index",
+	"diff-tree",
+	"for-each-ref",
+	"grep",
+	"log",
+	"ls-files",
+	"ls-remote",
+	"ls-tree",
+	"merge-base",
+	"name-rev",
+	"range-diff",
+	"rev-list",
+	"rev-parse",
+	"shortlog",
+	"show",
+	"show-branch",
+	"status",
+	"version",
+	"whatchanged",
+]);
+
+const GIT_LOCAL_OR_REMOTE_READ_SUBCOMMANDS = new Set([
+	...GIT_READ_ONLY_SUBCOMMANDS,
+	"add",
+	"am",
+	"apply",
+	"archive",
+	"bisect",
+	"branch",
+	"checkout",
+	"cherry",
+	"cherry-pick",
+	"clean",
+	"clone",
+	"commit",
+	"config",
+	"fetch",
+	"gc",
+	"init",
+	"maintenance",
+	"merge",
+	"mergetool",
+	"mv",
+	"notes",
+	"pull",
+	"rebase",
+	"reflog",
+	"remote",
+	"reset",
+	"restore",
+	"revert",
+	"rm",
+	"stash",
+	"submodule",
+	"switch",
+	"tag",
+	"update-index",
+	"update-ref",
+	"worktree",
+]);
+
+/** Git forms that may render blob or patch content rather than only metadata. */
+const GIT_CONTENT_EMITTING_SUBCOMMANDS = new Set([
+	"archive",
+	"cat-file",
+	"diff",
+	"diff-files",
+	"diff-index",
+	"diff-tree",
+	"grep",
+	"log",
+	"range-diff",
+	"show",
+	"whatchanged",
+]);
+
+const GIT_CONTENT_SUPPRESSING_OPTIONS = new Set([
+	"--check",
+	"--dirstat",
+	"--name-only",
+	"--name-status",
+	"--no-patch",
+	"--numstat",
+	"--quiet",
+	"--raw",
+	"--shortstat",
+	"--stat",
+	"--summary",
+	"-s",
+]);
+
+function gitSubcommand(argv: readonly string[]): ParsedSubcommand | undefined {
+	return findSubcommand(argv, "git", GIT_OPTIONS_WITH_VALUES, GIT_ATTACHED_VALUE_PREFIXES);
+}
+
+function isReadOnlyGitFamily(argv: readonly string[], subcommand: ParsedSubcommand): boolean {
+	const args = argv.slice(subcommand.index + 1).map((token) => token.toLowerCase());
+	if (subcommand.name === "stash") return args[0] === "list" || args[0] === "show";
+	if (subcommand.name === "worktree") return args[0] === "list";
+	if (subcommand.name === "remote")
+		return args.length === 0 || args[0] === "-v" || args[0] === "show" || args[0] === "get-url";
+	if (subcommand.name === "branch") {
+		return args.length === 0 || args.some((token) => token === "--list" || token === "--show-current");
+	}
+	if (subcommand.name === "tag") {
+		return (
+			args.length === 0 ||
+			args.some((token) =>
+				["-l", "--list", "--contains", "--no-contains", "--merged", "--no-merged", "--points-at"].includes(
+					token.split("=")[0],
+				),
+			)
+		);
+	}
+	return false;
+}
+
+function isDestructiveGit(argv: readonly string[]): boolean {
+	const subcommand = gitSubcommand(argv);
+	if (!subcommand) return false;
+	if (argv.slice(subcommand.index + 1).some((token) => token === "--output" || token.startsWith("--output="))) {
+		return true;
+	}
+	if (GIT_READ_ONLY_SUBCOMMANDS.has(subcommand.name)) return false;
+	return !isReadOnlyGitFamily(argv, subcommand);
+}
+
+/**
+ * A broad Git pathspec can select every tracked credential without naming it in
+ * argv. Permit content output only when Git is explicitly restricted to ordinary
+ * literal paths; otherwise credential-disabled runs fail closed.
+ */
+function gitMayEmitCredentialContent(argv: readonly string[]): boolean {
+	const subcommand = gitSubcommand(argv);
+	if (!subcommand || !GIT_CONTENT_EMITTING_SUBCOMMANDS.has(subcommand.name)) return false;
+	const args = argv.slice(subcommand.index + 1);
+	if (subcommand.name === "archive") return true;
+	const requestsPatch = args.some((argument) => {
+		const option = argument.toLowerCase();
+		return (
+			[
+				"-p",
+				"-u",
+				"-W",
+				"--binary",
+				"--function-context",
+				"--patch",
+				"--patch-with-raw",
+				"--patch-with-stat",
+			].includes(argument) ||
+			/^-[^-]*[puW]/.test(argument) ||
+			option.startsWith("--color-words=") ||
+			option === "--color-words" ||
+			option.startsWith("--unified=") ||
+			option.startsWith("--word-diff=") ||
+			option === "--word-diff" ||
+			option.startsWith("--word-diff-regex=")
+		);
+	});
+	if (subcommand.name === "log" && !requestsPatch) return false;
+	if (!requestsPatch && args.some((argument) => GIT_CONTENT_SUPPRESSING_OPTIONS.has(argument.toLowerCase())))
+		return false;
+	const separator = args.lastIndexOf("--");
+	if (separator < 0) return true;
+	const paths = args.slice(separator + 1);
+	return !(
+		paths.length > 0 &&
+		paths.every(
+			(path) =>
+				path !== "." &&
+				path !== "./" &&
+				!/[!*?[]/.test(path) &&
+				!path.startsWith(":") &&
+				!isSensitiveCredentialPath(path),
+		)
+	);
+}
+
+function isEnvironmentDump(argv: readonly string[]): boolean {
+	const executable = executableName(argv[0] ?? "");
+	if (executable === "printenv") return true;
+	if (executable !== "env") return false;
+	return argv.slice(1).every((argument) => argument.startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(argument));
+}
+
+/** External grep commands bypass role-tool descendant filtering, so recursive forms fail closed. */
+function isRecursiveContentSearch(argv: readonly string[]): boolean {
+	const executable = executableName(argv[0] ?? "");
+	if (executable === "rg" || executable === "ripgrep") return true;
+	if (executable !== "grep") return false;
+	return argv.slice(1).some((argument, index, args) => {
+		if (argument === "--recursive" || /^-[^-]*[rR]/.test(argument)) return true;
+		if (argument.toLowerCase() === "--directories=recurse") return true;
+		return ["--directories", "-d"].includes(argument.toLowerCase()) && args[index + 1]?.toLowerCase() === "recurse";
+	});
+}
+
+function isRelease(argv: readonly string[]): boolean {
+	return (
+		hasCommandSequence(argv, "npm", ["publish"]) ||
+		hasCommandSequence(argv, "pnpm", ["publish"]) ||
+		hasCommandSequence(argv, "yarn", ["npm", "publish"]) ||
+		hasCommandSequence(argv, "gh", ["release"])
+	);
+}
+
+const KUBECTL_OPTIONS_WITH_VALUES = new Set([
+	"--as",
+	"--as-group",
+	"--as-uid",
+	"--cache-dir",
+	"--cluster",
+	"--context",
+	"--kubeconfig",
+	"--namespace",
+	"--request-timeout",
+	"--server",
+	"--tls-server-name",
+	"--token",
+	"--user",
+	"-n",
+]);
+const KUBECTL_ATTACHED_VALUE_PREFIXES = [
+	"--as=",
+	"--as-group=",
+	"--as-uid=",
+	"--cache-dir=",
+	"--cluster=",
+	"--context=",
+	"--kubeconfig=",
+	"--namespace=",
+	"--request-timeout=",
+	"--server=",
+	"--tls-server-name=",
+	"--token=",
+	"--user=",
+	"-n",
+];
+const KUBECTL_READ_ONLY_COMMANDS = new Set([
+	"api-resources",
+	"api-versions",
+	"cluster-info",
+	"completion",
+	"describe",
+	"diff",
+	"explain",
+	"get",
+	"help",
+	"logs",
+	"options",
+	"top",
+	"version",
+]);
+
+const HELM_OPTIONS_WITH_VALUES = new Set([
+	"--burst-limit",
+	"--kube-apiserver",
+	"--kube-as-group",
+	"--kube-as-user",
+	"--kube-ca-file",
+	"--kube-context",
+	"--kube-tls-server-name",
+	"--kube-token",
+	"--kubeconfig",
+	"--namespace",
+	"--qps",
+	"--registry-config",
+	"--repository-cache",
+	"--repository-config",
+	"-n",
+]);
+const HELM_ATTACHED_VALUE_PREFIXES = [
+	"--burst-limit=",
+	"--kube-apiserver=",
+	"--kube-as-group=",
+	"--kube-as-user=",
+	"--kube-ca-file=",
+	"--kube-context=",
+	"--kube-tls-server-name=",
+	"--kube-token=",
+	"--kubeconfig=",
+	"--namespace=",
+	"--qps=",
+	"--registry-config=",
+	"--repository-cache=",
+	"--repository-config=",
+	"-n",
+];
+const HELM_READ_ONLY_COMMANDS = new Set([
+	"completion",
+	"env",
+	"get",
+	"help",
+	"history",
+	"lint",
+	"list",
+	"search",
+	"show",
+	"status",
+	"template",
+	"verify",
+	"version",
+]);
+
+function mutatesDeployment(
+	argv: readonly string[],
+	executable: string,
+	optionsWithValues: ReadonlySet<string>,
+	attachedValuePrefixes: readonly string[],
+	readOnlyCommands: ReadonlySet<string>,
+): boolean {
+	const command = findSubcommand(argv, executable, optionsWithValues, attachedValuePrefixes);
+	return (
+		command !== undefined &&
+		(hasUnknownOptionBeforeSubcommand(argv, executable, command, optionsWithValues, attachedValuePrefixes) ||
+			!readOnlyCommands.has(command.name))
+	);
+}
+
+function isDeployment(argv: readonly string[]): boolean {
+	return (
+		mutatesDeployment(
+			argv,
+			"kubectl",
+			KUBECTL_OPTIONS_WITH_VALUES,
+			KUBECTL_ATTACHED_VALUE_PREFIXES,
+			KUBECTL_READ_ONLY_COMMANDS,
+		) ||
+		mutatesDeployment(
+			argv,
+			"helm",
+			HELM_OPTIONS_WITH_VALUES,
+			HELM_ATTACHED_VALUE_PREFIXES,
+			HELM_READ_ONLY_COMMANDS,
+		) ||
+		// AWS service-specific mutation syntax is broad; classify the entire CLI family conservatively.
+		argv.some((token) => executableName(token) === "aws") ||
+		hasCommandSequence(argv, "terraform", ["apply"]) ||
+		hasCommandSequence(argv, "terraform", ["destroy"]) ||
+		hasCommandSequence(argv, "vercel", ["deploy"])
+	);
+}
+
+const GH_READ_ONLY_ACTIONS = new Map<string, ReadonlySet<string>>([
+	["alias", new Set(["list"])],
+	["auth", new Set(["status", "token"])],
+	["config", new Set(["get", "list"])],
+	["extension", new Set(["list", "search"])],
+	["issue", new Set(["list", "status", "view"])],
+	["pr", new Set(["checks", "diff", "list", "status", "view"])],
+	["release", new Set(["download", "list", "view"])],
+	["repo", new Set(["list", "view"])],
+	["run", new Set(["list", "view", "watch"])],
+	["workflow", new Set(["list", "view"])],
+]);
+const GH_READ_ONLY_COMMANDS = new Set(["browse", "completion", "help", "search", "status", "version"]);
+const GH_OPTIONS_WITH_VALUES = new Set(["-R", "--repo", "--hostname"]);
+const GH_ATTACHED_VALUE_PREFIXES = ["-R", "--repo=", "--hostname="];
+
+function ghApiMutatesRemoteState(args: readonly string[]): boolean {
+	let method: string | undefined;
+	let suppliesInput = false;
+	for (let index = 0; index < args.length; index++) {
+		const token = args[index];
+		const lower = token.toLowerCase();
+		if (lower === "-x" || lower === "--method") {
+			method = args[index + 1]?.toLowerCase();
+			index++;
+			continue;
+		}
+		const attachedMethod = token.match(/^(?:-X|--method=)(.+)$/i)?.[1];
+		if (attachedMethod) {
+			method = attachedMethod.toLowerCase();
+			continue;
+		}
+		if (/^(?:-f|-F)(?:.|$)|^--(?:raw-)?field(?:=|$)|^--input(?:=|$)/.test(token)) suppliesInput = true;
+	}
+	const effectiveMethod = method ?? (suppliesInput ? "post" : "get");
+	return effectiveMethod !== "get" && effectiveMethod !== "head";
+}
+
+function ghCommand(argv: readonly string[]): { command: ParsedSubcommand; action?: ParsedSubcommand } | undefined {
+	const command = findSubcommand(argv, "gh", GH_OPTIONS_WITH_VALUES, GH_ATTACHED_VALUE_PREFIXES);
+	if (!command) return undefined;
+	return {
+		command,
+		action: findPositional(argv, command.index + 1, GH_OPTIONS_WITH_VALUES, GH_ATTACHED_VALUE_PREFIXES),
+	};
+}
+
+function accessesGhCredentials(argv: readonly string[]): boolean {
+	const parsed = ghCommand(argv);
+	return parsed?.command.name === "auth" && parsed.action?.name === "token";
+}
+
+function ghMutatesRemoteState(argv: readonly string[]): boolean {
+	const parsed = ghCommand(argv);
+	if (!parsed) return false;
+	const args = argv.slice(parsed.command.index + 1);
+	if (parsed.command.name === "api") return ghApiMutatesRemoteState(args);
+	if (GH_READ_ONLY_COMMANDS.has(parsed.command.name)) return false;
+	const allowedActions = GH_READ_ONLY_ACTIONS.get(parsed.command.name);
+	if (!allowedActions) return true;
+	return parsed.action === undefined || !allowedActions.has(parsed.action.name);
+}
+
+const GIT_LFS_LOCAL_OR_REMOTE_READ_ACTIONS = new Set(["checkout", "fetch", "install", "ls-files", "pull", "status"]);
+
+function gitLfsMutatesRemoteState(action: ParsedSubcommand | undefined): boolean {
+	return action?.name === "push" || !GIT_LFS_LOCAL_OR_REMOTE_READ_ACTIONS.has(action?.name ?? "");
+}
+
+function gitMutatesRemoteState(argv: readonly string[]): boolean {
+	const subcommand = gitSubcommand(argv);
+	if (!subcommand) return false;
+	if (subcommand.name === "push" || subcommand.name === "send-pack") return true;
+	if (subcommand.name === "lfs") {
+		return gitLfsMutatesRemoteState(findPositional(argv, subcommand.index + 1, new Set(), []));
+	}
+	return !GIT_LOCAL_OR_REMOTE_READ_SUBCOMMANDS.has(subcommand.name);
+}
+
+function standaloneGitLfsMutatesRemoteState(argv: readonly string[]): boolean {
+	return gitLfsMutatesRemoteState(findSubcommand(argv, "git-lfs", new Set(), []));
+}
+
+function wgetMutatesRemoteState(argv: readonly string[]): boolean {
+	const wgetIndex = argv.findIndex((token) => executableName(token) === "wget");
+	if (wgetIndex < 0) return false;
+	return argv.slice(wgetIndex + 1).some((token, index, tail) => {
+		const lower = token.toLowerCase();
+		if (/^--post-(?:data|file)(?:=|$)/.test(lower)) return true;
+		if (/^--method=(?:post|put|patch|delete)$/.test(lower)) return true;
+		return lower === "--method" && MUTATING_HTTP_METHODS.has(tail[index + 1]?.toLowerCase());
+	});
+}
+
+const NODE_INLINE_EXECUTION_OPTIONS = new Set(["-e", "--eval", "-p", "--print"]);
+const PYTHON_INLINE_EXECUTION_OPTIONS = new Set(["-c"]);
+const RUBY_INLINE_EXECUTION_OPTIONS = new Set(["-e"]);
+const PERL_INLINE_EXECUTION_OPTIONS = new Set(["-e"]);
+const PHP_INLINE_EXECUTION_OPTIONS = new Set(["-r"]);
+const OPAQUE_INLINE_EXECUTION_OPTIONS = new Map<string, ReadonlySet<string>>([
+	["bash", new Set(["-c"])],
+	["bun", NODE_INLINE_EXECUTION_OPTIONS],
+	["dash", new Set(["-c"])],
+	["deno", new Set(["eval"])],
+	["fish", new Set(["-c"])],
+	["node", NODE_INLINE_EXECUTION_OPTIONS],
+	["nodejs", NODE_INLINE_EXECUTION_OPTIONS],
+	["perl", PERL_INLINE_EXECUTION_OPTIONS],
+	["php", PHP_INLINE_EXECUTION_OPTIONS],
+	["powershell", new Set(["-command", "-encodedcommand"])],
+	["pwsh", new Set(["-command", "-encodedcommand"])],
+	["python", PYTHON_INLINE_EXECUTION_OPTIONS],
+	["python3", PYTHON_INLINE_EXECUTION_OPTIONS],
+	["ruby", RUBY_INLINE_EXECUTION_OPTIONS],
+	["sh", new Set(["-c"])],
+	["zsh", new Set(["-c"])],
+]);
+
+function inlineExecutionOptions(executable: string): ReadonlySet<string> | undefined {
+	const exact = OPAQUE_INLINE_EXECUTION_OPTIONS.get(executable);
+	if (exact) return exact;
+	if (/^python\d+(?:\.\d+)*$/.test(executable)) return PYTHON_INLINE_EXECUTION_OPTIONS;
+	if (/^ruby\d+(?:\.\d+)*$/.test(executable)) return RUBY_INLINE_EXECUTION_OPTIONS;
+	if (/^perl\d+(?:\.\d+)*$/.test(executable)) return PERL_INLINE_EXECUTION_OPTIONS;
+	if (/^php\d+(?:\.\d+)*$/.test(executable)) return PHP_INLINE_EXECUTION_OPTIONS;
+	return undefined;
+}
+
+function executesOpaqueInlineCode(argv: readonly string[]): boolean {
+	for (let index = 0; index < argv.length; index++) {
+		const options = inlineExecutionOptions(executableName(argv[index]));
+		if (!options) continue;
+		for (const token of argv.slice(index + 1)) {
+			const lower = token.toLowerCase();
+			if (options.has(lower)) return true;
+			if ([...options].some((option) => option.startsWith("--") && lower.startsWith(`${option}=`))) return true;
+			if ([...options].some((option) => option.length === 2 && lower.startsWith(option) && lower.length > 2))
+				return true;
+		}
+	}
+	return false;
+}
+
+function mutatesRemoteState(argv: readonly string[]): boolean {
+	if (isRelease(argv) || isDeployment(argv)) return true;
+	if (argv.some((token) => executableName(token) === "git") && gitMutatesRemoteState(argv)) return true;
+	if (argv.some((token) => executableName(token) === "git-lfs") && standaloneGitLfsMutatesRemoteState(argv))
+		return true;
+	if (argv.some((token) => executableName(token) === "gh") && ghMutatesRemoteState(argv)) return true;
+	if (executesOpaqueInlineCode(argv)) return true;
+	if (argv.some((token) => ["rclone", "rsync", "scp", "sftp", "ssh"].includes(executableName(token)))) return true;
+	if (wgetMutatesRemoteState(argv)) return true;
+	const curlIndex = argv.findIndex((token) => executableName(token) === "curl");
+	if (curlIndex < 0) return false;
+	return argv.slice(curlIndex + 1).some((token, index, tail) => {
+		const lower = token.toLowerCase();
+		if (MUTATING_HTTP_METHODS.has(lower)) return true;
+		if (/^-x(?:post|put|patch|delete)$/i.test(token) || /^--request=(?:post|put|patch|delete)$/i.test(token))
+			return true;
+		if ((lower === "-x" || lower === "--request") && MUTATING_HTTP_METHODS.has(tail[index + 1]?.toLowerCase())) {
+			return true;
+		}
+		return /^(?:-d(?:.|$)|-F(?:.|$)|-T(?:.|$)|--data(?:-|=|$)|--form(?:-|=|$)|--json(?:=|$)|--upload-file(?:=|$))/.test(
+			token,
+		);
+	});
+}
+
+/** Parse a command into executable/argv without invoking a shell. */
+export function parseCommand(command: string): string[] {
+	const result: string[] = [];
+	let token = "";
+	let quote: "'" | '"' | undefined;
+	let escaped = false;
+	let started = false;
+	for (const character of command.trim()) {
+		if (escaped) {
+			token += character;
+			escaped = false;
+			started = true;
+			continue;
+		}
+		if (character === "\\" && quote !== "'") {
+			escaped = true;
+			started = true;
+			continue;
+		}
+		if (quote) {
+			if (character === quote) quote = undefined;
+			else token += character;
+			started = true;
+			continue;
+		}
+		if (character === "'" || character === '"') {
+			quote = character;
+			started = true;
+			continue;
+		}
+		if (/\s/.test(character)) {
+			if (started) {
+				result.push(token);
+				token = "";
+				started = false;
+			}
+			continue;
+		}
+		if (";&|<>`".includes(character) || (character === "$" && command.includes("$("))) {
+			throw new Error("shell operators and substitutions are not supported");
+		}
+		token += character;
+		started = true;
+	}
+	if (escaped || quote) throw new Error("unterminated command quote or escape");
+	if (started) result.push(token);
+	if (result.length === 0 || !result[0]) throw new Error("empty command is not authorized");
+	return result;
+}
+
+function commandKey(command: string): string {
+	return JSON.stringify(parseCommand(command));
+}
+
+export function assertCommandAuthorized(command: string, policy: AuthorizationPolicy): void {
+	const argv = parseCommand(command);
+	const normalized = argv.join(" ");
+	const allowed = new Set(policy.allowedCommands.map(commandKey));
+	if (!allowed.has(JSON.stringify(argv))) throw new Error(`command is not explicitly authorized: ${normalized}`);
+	if (!policy.allowDestructiveGit && isDestructiveGit(argv)) throw new Error("destructive git command denied");
+	if (!policy.allowRelease && isRelease(argv)) throw new Error("release command denied");
+	if (!policy.allowDeploy && isDeployment(argv)) throw new Error("deployment command denied");
+	if (
+		!policy.allowCredentials &&
+		(argv.some(isSensitiveCredentialPath) ||
+			(gitSubcommand(argv) !== undefined && argv.some(isSensitiveGitRevisionPath)) ||
+			gitMayEmitCredentialContent(argv) ||
+			isEnvironmentDump(argv) ||
+			isRecursiveContentSearch(argv) ||
+			accessesGhCredentials(argv))
+	) {
+		throw new Error("credential access denied");
+	}
+	if (!policy.allowRemoteState && mutatesRemoteState(argv)) throw new Error("remote-state mutation denied");
+}
+
+function bounded(value: string, maxBytes: number): string {
+	const bytes = Buffer.from(value);
+	if (bytes.length <= maxBytes) return value;
+	return `${bytes.subarray(0, maxBytes).toString("utf8")}\n[output truncated at ${maxBytes} bytes]`;
+}
+
+const CREDENTIAL_ENVIRONMENT_VARIABLE =
+	/(?:^|_)(?:access_?key|api_?key|auth(?:orization)?|connection_?string|credential|database_url|dsn|openssl_conf|password|private_?key|redis_url|secret|token)(?:_|$)/i;
+
+function commandEnvironment(policy: AuthorizationPolicy, source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+	if (policy.allowCredentials) return source;
+	const environment = { ...source };
+	for (const name of Object.keys(environment)) {
+		if (CREDENTIAL_ENVIRONMENT_VARIABLE.test(name)) delete environment[name];
+	}
+	return environment;
+}
+
+interface ProcessResult {
+	exitCode: number | null;
+	stdout: string;
+	stderr: string;
+	termination?: "timeout" | "aborted";
+}
+
+function executeProcess(
+	executable: string,
+	args: string[],
+	cwd: string,
+	environment: NodeJS.ProcessEnv,
+	timeoutMs: number,
+	maxOutputBytes: number,
+	signal?: AbortSignal,
+): Promise<ProcessResult> {
+	if (signal?.aborted) {
+		return Promise.resolve({ exitCode: null, stdout: "", stderr: "", termination: "aborted" });
+	}
+	return new Promise((resolvePromise, reject) => {
+		const grouped = process.platform !== "win32";
+		const child = spawn(executable, args, {
+			cwd,
+			env: environment,
+			stdio: ["ignore", "pipe", "pipe"],
+			detached: grouped,
+		});
+		let stdout = "";
+		let stderr = "";
+		let termination: ProcessResult["termination"];
+		let killTimer: NodeJS.Timeout | undefined;
+		child.stdout.on("data", (chunk) => {
+			stdout = bounded(stdout + String(chunk), maxOutputBytes);
+		});
+		child.stderr.on("data", (chunk) => {
+			stderr = bounded(stderr + String(chunk), maxOutputBytes);
+		});
+		const kill = (signalName: NodeJS.Signals) => {
+			if (!child.pid) return;
+			try {
+				if (grouped) process.kill(-child.pid, signalName);
+				else child.kill(signalName);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+			}
+		};
+		const terminate = (reason: "timeout" | "aborted") => {
+			if (termination) return;
+			termination = reason;
+			kill("SIGTERM");
+			killTimer = setTimeout(() => kill("SIGKILL"), 1000);
+			killTimer.unref();
+		};
+		const timer = setTimeout(() => terminate("timeout"), timeoutMs);
+		const abort = () => terminate("aborted");
+		signal?.addEventListener("abort", abort, { once: true });
+		child.on("error", (error) => {
+			clearTimeout(timer);
+			if (killTimer) clearTimeout(killTimer);
+			signal?.removeEventListener("abort", abort);
+			reject(error);
+		});
+		child.on("close", (exitCode) => {
+			clearTimeout(timer);
+			if (killTimer) clearTimeout(killTimer);
+			signal?.removeEventListener("abort", abort);
+			resolvePromise({
+				exitCode,
+				stdout: bounded(stdout, maxOutputBytes),
+				stderr: bounded(stderr, maxOutputBytes),
+				termination,
+			});
+		});
+	});
+}
+
+function gitOutput(cwd: string, args: string[], maxBytes = 16 * 1024 * 1024): Promise<Buffer> {
+	return new Promise((resolvePromise, reject) => {
+		const child = spawn("git", args, { cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+		const chunks: Buffer[] = [];
+		let bytes = 0;
+		let stderr = "";
+		child.stdout.on("data", (chunk: Buffer) => {
+			bytes += chunk.length;
+			if (bytes > maxBytes) {
+				child.kill("SIGTERM");
+				return;
+			}
+			chunks.push(chunk);
+		});
+		child.stderr.on("data", (chunk) => {
+			stderr = bounded(stderr + String(chunk), 64 * 1024);
+		});
+		child.on("error", reject);
+		child.on("close", (exitCode) => {
+			if (bytes > maxBytes) {
+				reject(new Error(`git ${args[0]} output exceeded ${maxBytes} bytes`));
+				return;
+			}
+			if (exitCode !== 0) {
+				reject(new Error(`git ${args[0]} failed (${String(exitCode)}): ${stderr.trim()}`));
+				return;
+			}
+			resolvePromise(Buffer.concat(chunks));
+		});
+	});
+}
+
+function gitOutputPreview(cwd: string, args: string[], maxBytes: number): Promise<string> {
+	return new Promise((resolvePromise, reject) => {
+		const child = spawn("git", args, { cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+		const chunks: Buffer[] = [];
+		let capturedBytes = 0;
+		let truncated = false;
+		let stderr = "";
+		child.stdout.on("data", (chunk: Buffer) => {
+			if (capturedBytes < maxBytes) {
+				const remaining = maxBytes - capturedBytes;
+				const captured = chunk.subarray(0, remaining);
+				chunks.push(captured);
+				capturedBytes += captured.length;
+			}
+			if (capturedBytes >= maxBytes && (chunk.length > 0 || chunks.length > 0)) {
+				truncated = true;
+				child.kill("SIGTERM");
+			}
+		});
+		child.stderr.on("data", (chunk) => {
+			stderr = bounded(stderr + String(chunk), 64 * 1024);
+		});
+		child.on("error", reject);
+		child.on("close", (exitCode) => {
+			if (exitCode !== 0 && !truncated) {
+				reject(new Error(`git ${args[0]} failed (${String(exitCode)}): ${stderr.trim()}`));
+				return;
+			}
+			const preview = Buffer.concat(chunks).toString("utf8");
+			resolvePromise(truncated ? `${preview}\n[truncated at ${maxBytes} bytes]` : preview);
+		});
+	});
+}
+
+function gitOutputDigest(cwd: string, args: string[]): Promise<string> {
+	return new Promise((resolvePromise, reject) => {
+		const child = spawn("git", args, { cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+		const hash = createHash("sha256");
+		let stderr = "";
+		child.stdout.on("data", (chunk) => hash.update(chunk));
+		child.stderr.on("data", (chunk) => {
+			stderr = bounded(stderr + String(chunk), 64 * 1024);
+		});
+		child.on("error", reject);
+		child.on("close", (exitCode) => {
+			if (exitCode !== 0) {
+				reject(new Error(`git ${args[0]} failed (${String(exitCode)}): ${stderr.trim()}`));
+				return;
+			}
+			resolvePromise(hash.digest("hex"));
+		});
+	});
+}
+
+function hashFile(hash: ReturnType<typeof createHash>, path: string): Promise<void> {
+	return new Promise((resolvePromise, reject) => {
+		const stream = createReadStream(path);
+		stream.on("data", (chunk) => hash.update(chunk));
+		stream.on("error", reject);
+		stream.on("end", resolvePromise);
+	});
+}
+
+export async function getWorkspaceIdentity(cwd: string): Promise<string> {
+	const root = resolve(cwd);
+	const head = await gitOutput(root, ["rev-parse", "HEAD"]);
+	const trackedDiff = await gitOutputDigest(root, ["diff", "--binary", "--no-ext-diff", "HEAD", "--"]);
+	const untrackedOutput = await gitOutput(root, ["ls-files", "--others", "--exclude-standard", "-z"]);
+	const untracked = untrackedOutput.toString("utf8").split("\0").filter(Boolean).sort();
+	const hash = createHash("sha256").update(head).update("\0tracked\0").update(trackedDiff);
+	for (const name of untracked) {
+		const path = resolve(root, name);
+		const contained = relative(root, path);
+		if (!contained || contained === ".." || contained.startsWith(`..${sep}`) || isAbsolute(contained)) {
+			throw new Error(`git returned an invalid untracked path: ${name}`);
+		}
+		const stat = lstatSync(path);
+		hash.update("\0untracked\0").update(name).update(`\0${stat.mode}\0${stat.size}\0`);
+		if (stat.isSymbolicLink()) hash.update(readlinkSync(path));
+		else if (stat.isFile()) await hashFile(hash, path);
+		else throw new Error(`unsupported untracked workspace entry: ${name}`);
+	}
+	return hash.digest("hex");
+}
+
+function zeroDelimitedPaths(output: Buffer): string[] {
+	return output.toString("utf8").split("\0").filter(Boolean);
+}
+
+function changedPathGroups(output: Buffer): string[][] {
+	const tokens = zeroDelimitedPaths(output);
+	const groups: string[][] = [];
+	for (let index = 0; index < tokens.length; ) {
+		const status = tokens[index++];
+		const count = status.startsWith("R") || status.startsWith("C") ? 2 : 1;
+		const paths = tokens.slice(index, index + count);
+		if (paths.length !== count) throw new Error("git diff name-status output is truncated");
+		groups.push(paths);
+		index += count;
+	}
+	return groups;
+}
+
+async function credentialWorkspacePaths(cwd: string): Promise<string[]> {
+	const [tracked, untracked, committed, changed] = await Promise.all([
+		gitOutput(cwd, ["ls-files", "-z"]),
+		gitOutput(cwd, ["ls-files", "--others", "--exclude-standard", "-z"]),
+		gitOutput(cwd, ["ls-tree", "-r", "-z", "--name-only", "HEAD"]),
+		gitOutput(cwd, ["diff", "--name-status", "-z", "--find-renames", "HEAD", "--"]),
+	]);
+	const sensitiveChangedPaths = changedPathGroups(changed)
+		.filter((paths) => paths.some(isSensitiveCredentialPath))
+		.flat();
+	return [
+		...new Set([...zeroDelimitedPaths(tracked), ...zeroDelimitedPaths(untracked), ...zeroDelimitedPaths(committed)]),
+	]
+		.filter(isSensitiveCredentialPath)
+		.concat(sensitiveChangedPaths)
+		.filter((path, index, paths) => paths.indexOf(path) === index);
+}
+
+async function credentialExclusionPathspecs(cwd: string): Promise<string[]> {
+	return (await credentialWorkspacePaths(cwd)).map((path) => `:(exclude,top)${path}`);
+}
+
+export async function getWorkspaceContext(
+	cwd: string,
+	maxSectionBytes = 32 * 1024,
+	options: { allowCredentials?: boolean } = {},
+): Promise<WorkspaceContext> {
+	if (!Number.isSafeInteger(maxSectionBytes) || maxSectionBytes <= 0) {
+		throw new Error("workspace context limit must be a positive safe integer");
+	}
+	const root = resolve(cwd);
+	const exclusions = options.allowCredentials ? [] : await credentialExclusionPathspecs(root);
+	const statusPathspec = exclusions.length > 0 ? ["--", ".", ...exclusions] : [];
+	const diffPathspec = exclusions.length > 0 ? statusPathspec : ["--"];
+	const [workspaceIdentity, status, diff] = await Promise.all([
+		getWorkspaceIdentity(root),
+		gitOutputPreview(
+			root,
+			["status", "--short", "--branch", "--untracked-files=all", ...statusPathspec],
+			maxSectionBytes,
+		),
+		gitOutputPreview(root, ["diff", "--no-ext-diff", "--unified=3", "HEAD", ...diffPathspec], maxSectionBytes),
+	]);
+	return { workspaceIdentity, status, diff };
+}
+
+export type CommandRunner = (
+	command: string,
+	cwd: string,
+	policy: AuthorizationPolicy,
+	signal?: AbortSignal,
+) => Promise<CommandExecutionResult>;
+
+export function isCommandEvidence(result: CommandExecutionResult): result is CommandEvidence {
+	return !("outcome" in result);
+}
+
+export function isDeniedCommandOutcome(result: CommandExecutionResult): result is DeniedCommandOutcome {
+	return "outcome" in result && result.outcome === "denied";
+}
+
+export function isUncertainCommandOutcome(result: CommandExecutionResult): result is UncertainCommandOutcome {
+	return "outcome" in result && result.outcome === "uncertain";
+}
+
+function shellQuoteArg(value: string): string {
+	return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function canonicalExistingPath(path: string): string | undefined {
+	const absolute = resolve(path);
+	return existsSync(absolute) ? realpathSync(absolute) : undefined;
+}
+
+async function sandboxedCommand(
+	argv: readonly string[],
+	cwd: string,
+	policy: AuthorizationPolicy,
+	signal?: AbortSignal,
+): Promise<{ executable: string; args: string[]; environment: NodeJS.ProcessEnv; cleanup?: () => void }> {
+	if (policy.allowCredentials) {
+		return { executable: argv[0], args: argv.slice(1), environment: commandEnvironment(policy) };
+	}
+	if (!SandboxManager.isSupportedPlatform()) {
+		throw new Error(`credential-disabled command sandbox is unsupported on ${process.platform}`);
+	}
+	const dependencies = await SandboxManager.checkDependenciesAsync();
+	if (dependencies.errors.length > 0) {
+		throw new Error(`credential-disabled command sandbox is unavailable: ${dependencies.errors.join("; ")}`);
+	}
+
+	const workspace = realpathSync(resolve(cwd));
+	const broadDenyRoots = [homedir(), tmpdir(), dirname(workspace), "/Users", "/home", "/root"]
+		.map(canonicalExistingPath)
+		.filter((path): path is string => path !== undefined && path !== workspace);
+	const workspaceCredentials = (await credentialWorkspacePaths(workspace)).map((path) => resolve(workspace, path));
+	const filesystem: SandboxRuntimeConfig["filesystem"] = {
+		denyRead: [...new Set([...broadDenyRoots, ...workspaceCredentials])],
+		allowRead: [workspace],
+		allowWrite: [workspace],
+		denyWrite: workspaceCredentials,
+	};
+	const commandText = argv.map(shellQuoteArg).join(" ");
+	const wrapped = await SandboxManager.wrapWithSandboxArgv(
+		commandText,
+		process.platform === "win32" ? undefined : "/bin/sh",
+		{ filesystem },
+		signal,
+		workspace,
+		{ commandId: randomUUID(), commandText: argv.join(" ") },
+	);
+	return {
+		executable: wrapped.argv[0],
+		args: wrapped.argv.slice(1),
+		environment: commandEnvironment(policy, wrapped.env),
+		cleanup: () => SandboxManager.cleanupAfterCommand(),
+	};
+}
+
+export const runAuthorizedCommand: CommandRunner = async (command, cwd, policy, signal) => {
+	assertCommandAuthorized(command, policy);
+	const argv = parseCommand(command);
+	const prepared = await sandboxedCommand(argv, cwd, policy, signal);
+	const startedAt = new Date().toISOString();
+	let result: ProcessResult;
+	try {
+		result = await executeProcess(
+			prepared.executable,
+			prepared.args,
+			cwd,
+			prepared.environment,
+			policy.commandTimeoutMs,
+			policy.maxOutputBytes,
+			signal,
+		);
+	} finally {
+		prepared.cleanup?.();
+	}
+	const completedAt = new Date().toISOString();
+	try {
+		return {
+			id: randomUUID(),
+			command,
+			...result,
+			startedAt,
+			completedAt,
+			workspaceIdentity: await getWorkspaceIdentity(cwd),
+		};
+	} catch (error) {
+		return {
+			outcome: "uncertain",
+			id: randomUUID(),
+			command,
+			...result,
+			startedAt,
+			completedAt,
+			reconciliationError: error instanceof Error ? error.message : String(error),
+		};
+	}
+};
+
+const authorizedCommandSchema = Type.Object({ command: Type.String(), timeout: Type.Optional(Type.Number()) });
+
+export function createAuthorizedCommandTool(
+	cwd: string,
+	policy: AuthorizationPolicy,
+	onEvidence: (evidence: CommandExecutionResult) => void,
+	runner: CommandRunner = runAuthorizedCommand,
+): ToolDefinition<typeof authorizedCommandSchema> {
+	return {
+		name: "run_command",
+		label: "Run authorized command",
+		description: "Run one exact shell-free command from the supervisor's persisted allowlist.",
+		parameters: authorizedCommandSchema,
+		execute: async (_toolCallId, params, signal) => {
+			const effectivePolicy = params.timeout
+				? {
+						...policy,
+						commandTimeoutMs: Math.min(policy.commandTimeoutMs, Math.max(1000, params.timeout * 1000)),
+					}
+				: policy;
+			try {
+				assertCommandAuthorized(params.command, effectivePolicy);
+			} catch (error) {
+				const timestamp = new Date().toISOString();
+				const denied: DeniedCommandOutcome = {
+					outcome: "denied",
+					id: randomUUID(),
+					command: params.command,
+					exitCode: null,
+					stdout: "",
+					stderr: "",
+					startedAt: timestamp,
+					completedAt: timestamp,
+					reason: error instanceof Error ? error.message : String(error),
+				};
+				onEvidence(denied);
+				return {
+					content: [{ type: "text", text: `Denied: ${denied.reason}` }],
+					details: denied,
+					isError: true,
+					endTurn: true,
+				};
+			}
+			const evidence = await runner(params.command, cwd, effectivePolicy, signal);
+			onEvidence(evidence);
+			if (isUncertainCommandOutcome(evidence)) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Command outcome requires reconciliation: ${evidence.reconciliationError}`,
+						},
+					],
+					details: evidence,
+					isError: true,
+					endTurn: true,
+				};
+			}
+			return {
+				content: [
+					{
+						type: "text",
+						text: `${evidence.stdout}${evidence.stderr ? `\nSTDERR:\n${evidence.stderr}` : ""}\nExit code: ${String(evidence.exitCode)}\nEvidence: ${evidence.id}`,
+					},
+				],
+				details: evidence,
+			};
+		},
+	};
+}
+
+type RoleTool =
+	| ReturnType<typeof createReadTool>
+	| ReturnType<typeof createGrepTool>
+	| ReturnType<typeof createFindTool>
+	| ReturnType<typeof createLsTool>
+	| ReturnType<typeof createEditTool>
+	| ReturnType<typeof createWriteTool>;
+
+function isContained(root: string, candidate: string): boolean {
+	const path = relative(root, candidate);
+	return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
+}
+
+function normalizeToolPath(requestedPath: string): string {
+	let normalized = requestedPath;
+	if (
+		normalized.length >= 2 &&
+		((normalized.startsWith('"') && normalized.endsWith('"')) ||
+			(normalized.startsWith("'") && normalized.endsWith("'")))
+	) {
+		normalized = normalized.slice(1, -1);
+	}
+	if (normalized.startsWith("@")) normalized = normalized.slice(1);
+	normalized = normalized.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ");
+	if (normalized === "~") return homedir();
+	if (normalized.startsWith("~/")) return `${homedir()}${normalized.slice(1)}`;
+	return normalized;
+}
+
+function assertResolvedWorkspacePath(cwd: string, candidate: string): string {
+	const lexicalRoot = resolve(cwd);
+	if (!isContained(lexicalRoot, candidate)) throw new Error("file tool path escapes configured workspace");
+
+	const realRoot = realpathSync(lexicalRoot);
+	let existing = candidate;
+	while (true) {
+		try {
+			lstatSync(existing);
+			break;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			const parent = dirname(existing);
+			if (parent === existing) throw new Error("file tool path has no existing workspace ancestor");
+			existing = parent;
+		}
+	}
+	let realExisting: string;
+	try {
+		realExisting = realpathSync(existing);
+	} catch {
+		throw new Error("file tool path contains an unresolved symbolic link");
+	}
+	if (!isContained(realRoot, realExisting)) throw new Error("file tool path escapes configured workspace via symlink");
+	return realExisting;
+}
+
+/** Validate both lexical traversal and existing symlink ancestors before a stock file tool runs. */
+export function assertWorkspacePath(cwd: string, requestedPath: string): void {
+	assertResolvedWorkspacePath(cwd, resolve(cwd, normalizeToolPath(requestedPath || ".")));
+}
+
+function gitControlPaths(cwd: string): string[] {
+	const dotGit = resolve(cwd, ".git");
+	const paths = [dotGit];
+	if (!existsSync(dotGit) || !lstatSync(dotGit).isFile()) return paths;
+	const match = /^gitdir:\s*(.+)\s*$/m.exec(readFileSync(dotGit, "utf8"));
+	if (!match?.[1]) throw new Error("Git control file does not name a git directory");
+	const gitDir = resolve(dirname(dotGit), match[1].trim());
+	paths.push(gitDir);
+	const commonDirFile = join(gitDir, "commondir");
+	if (existsSync(commonDirFile)) {
+		const commonDir = readFileSync(commonDirFile, "utf8").trim();
+		if (!commonDir) throw new Error("Git common-dir file is empty");
+		paths.push(resolve(gitDir, commonDir));
+	}
+	return paths;
+}
+
+function assertMutableWorkspacePath(cwd: string, requestedPath: string, protectedPaths: readonly string[]): void {
+	const candidate = resolve(cwd, normalizeToolPath(requestedPath || "."));
+	const realCandidate = assertResolvedWorkspacePath(cwd, candidate);
+	if (existsSync(candidate)) {
+		const candidateStat = lstatSync(candidate);
+		if (candidateStat.isFile() && candidateStat.nlink > 1) {
+			throw new Error("file tool mutation targets a protected control-plane path through a hard link");
+		}
+	}
+	for (const path of protectedPaths) {
+		const protectedPath = resolve(cwd, path);
+		if (isContained(protectedPath, candidate))
+			throw new Error("file tool mutation targets a protected control-plane path");
+		if (!existsSync(protectedPath)) continue;
+		let realProtectedPath: string;
+		try {
+			realProtectedPath = realpathSync(protectedPath);
+		} catch {
+			throw new Error("protected control-plane path cannot be resolved");
+		}
+		if (isContained(realProtectedPath, realCandidate)) {
+			throw new Error("file tool mutation targets a protected control-plane path");
+		}
+	}
+}
+
+function assertReadWorkspacePath(cwd: string, requestedPath: string): void {
+	const requested = resolve(cwd, normalizeToolPath(requestedPath));
+	const nfd = requested.normalize("NFD");
+	const candidates = [
+		requested,
+		requested.replace(/ (AM|PM)\./g, "\u202F$1."),
+		nfd,
+		requested.replace(/'/g, "\u2019"),
+		nfd.replace(/'/g, "\u2019"),
+	];
+	assertResolvedWorkspacePath(cwd, candidates.find((candidate) => existsSync(candidate)) ?? requested);
+}
+
+export interface RoleToolSurfaceOptions {
+	protectedMutationPaths?: readonly string[];
+	allowCredentials?: boolean;
+}
+
+function assertCredentialAccessAllowed(requestedPath: string, allowCredentials: boolean): void {
+	if (!allowCredentials && isSensitiveCredentialPath(normalizeToolPath(requestedPath))) {
+		throw new Error("credential access denied");
+	}
+}
+
+function confineRoleTool<T extends RoleTool>(
+	tool: T,
+	cwd: string,
+	{ protectedMutationPaths = [], allowCredentials = false }: RoleToolSurfaceOptions = {},
+): T {
+	const execute = tool.execute.bind(tool);
+	return {
+		...tool,
+		execute: (async (toolCallId: string, params: { path?: string }, signal?: AbortSignal, onUpdate?: unknown) => {
+			if (tool.name === "read") {
+				assertCredentialAccessAllowed(params.path ?? ".", allowCredentials);
+				assertReadWorkspacePath(cwd, params.path ?? ".");
+			} else if (tool.name === "grep") {
+				assertCredentialAccessAllowed(params.path ?? ".", allowCredentials);
+				assertWorkspacePath(cwd, params.path ?? ".");
+			} else if (tool.name === "edit" || tool.name === "write") {
+				assertCredentialAccessAllowed(params.path ?? ".", allowCredentials);
+				assertMutableWorkspacePath(cwd, params.path ?? ".", protectedMutationPaths);
+			} else assertWorkspacePath(cwd, params.path ?? ".");
+			return execute(toolCallId, params as never, signal, onUpdate as never);
+		}) as T["execute"],
+	};
+}
+
+export function roleToolSurface(role: SessionRole, cwd: string, options: RoleToolSurfaceOptions = {}): RoleTool[] {
+	const { protectedMutationPaths = [], allowCredentials = false } = options;
+	const readOnly: RoleTool[] = [
+		createReadTool(cwd),
+		createGrepTool(cwd, {
+			excludePath: allowCredentials ? undefined : (path) => isSensitiveCredentialPath(relative(cwd, path)),
+		}),
+		createFindTool(cwd),
+		createLsTool(cwd),
+	].map((tool) => confineRoleTool(tool, cwd, options));
+	if (role !== "executor") return readOnly;
+	const protectedPaths = [...gitControlPaths(cwd), ...protectedMutationPaths];
+	return [
+		...readOnly,
+		confineRoleTool(createEditTool(cwd), cwd, { ...options, protectedMutationPaths: protectedPaths }),
+		confineRoleTool(createWriteTool(cwd), cwd, { ...options, protectedMutationPaths: protectedPaths }),
+	];
+}

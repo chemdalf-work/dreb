@@ -2,11 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	flushRawStdout,
 	isStdoutTakenOver,
+	MAX_NO_DRAIN_GRACE_MS,
 	MAX_QUEUED_STDOUT_BYTES,
+	resetOutputGuardForTests,
 	restoreStdout,
 	takeOverStdout,
 	writeRawStdout,
 } from "../src/core/output-guard.js";
+
+const LARGE_PROTOCOL_FRAME_BYTES = 16 * 1024 * 1024 + 1;
 
 /** Install a fake process.stdout.write; returns captured chunks and a backpressure switch. */
 function fakeStdoutWrite(impl?: (chunk: string) => boolean) {
@@ -25,6 +29,14 @@ function fakeStdoutWrite(impl?: (chunk: string) => boolean) {
 function flushModuleQueue(): void {
 	fakeStdoutWrite();
 	process.stdout.emit("drain");
+	resetOutputGuardForTests();
+}
+
+/** Spy process.exit so a guard abort cannot kill the test process. */
+function spyProcessExit(): ReturnType<typeof vi.spyOn> {
+	return vi.spyOn(process, "exit").mockImplementation((() => {
+		throw new Error("process.exit");
+	}) as never);
 }
 
 describe("output-guard", () => {
@@ -35,6 +47,7 @@ describe("output-guard", () => {
 		originalStdoutWrite = process.stdout.write;
 		originalStderrWrite = process.stderr.write;
 		restoreStdout();
+		resetOutputGuardForTests();
 	});
 
 	afterEach(() => {
@@ -168,7 +181,7 @@ describe("output-guard", () => {
 		expect(chunks).toEqual(["one", "two", "three"]);
 	});
 
-	it("allows one oversized protocol frame to drain without treating it as accumulated backlog", () => {
+	it("allows one large protocol frame below the hard cap to drain", () => {
 		let writable = false;
 		const chunks = fakeStdoutWrite(() => writable);
 		const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
@@ -176,99 +189,169 @@ describe("output-guard", () => {
 		}) as never);
 
 		writeRawStdout("trigger"); // accepted, signals backpressure
-		const oversized = "x".repeat(MAX_QUEUED_STDOUT_BYTES + 1);
-		writeRawStdout(oversized);
+		const largeFrame = "x".repeat(LARGE_PROTOCOL_FRAME_BYTES);
+		writeRawStdout(largeFrame);
 
 		expect(chunks).toEqual(["trigger"]);
 		expect(exitSpy).not.toHaveBeenCalled();
 
 		writable = true;
 		process.stdout.emit("drain");
-		expect(chunks).toEqual(["trigger", oversized]);
+		expect(chunks).toEqual(["trigger", largeFrame]);
 		expect(exitSpy).not.toHaveBeenCalled();
 	});
 
-	it("rejects a write queued behind one allowed oversized frame", () => {
-		const stderrChunks: string[] = [];
-		let stderrCallback: ((error?: Error | null) => void) | undefined;
+	/** Fake stderr.write that captures chunks and the flush callback (never flushes). */
+	function fakeStderrWrite(): { chunks: string[]; callback: () => ((e?: Error | null) => void) | undefined } {
+		const chunks: string[] = [];
+		let callback: ((e?: Error | null) => void) | undefined;
 		process.stderr.write = ((
 			chunk: string | Uint8Array,
 			encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
-			callback?: (error?: Error | null) => void,
+			cb?: (error?: Error | null) => void,
 		) => {
-			stderrChunks.push(String(chunk));
-			stderrCallback = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+			chunks.push(String(chunk));
+			callback = typeof encodingOrCallback === "function" ? encodingOrCallback : cb;
 			return false;
 		}) as typeof process.stderr.write;
-		const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-			throw new Error("process.exit");
-		}) as never);
+		return { chunks, callback: () => callback };
+	}
+
+	it("rejects a write before the queued-byte hard cap can be exceeded", () => {
+		const stderr = fakeStderrWrite();
+		const exitSpy = spyProcessExit();
 
 		let writable = false;
-		fakeStdoutWrite(() => writable);
+		const chunks = fakeStdoutWrite(() => writable);
 		writeRawStdout("trigger"); // accepted, signals backpressure
-		writeRawStdout("x".repeat(MAX_QUEUED_STDOUT_BYTES + 1)); // one oversized frame is allowed
-		writeRawStdout("next"); // accumulated backlog beyond that frame must fail loudly
+		const atLimit = "x".repeat(MAX_QUEUED_STDOUT_BYTES);
+		writeRawStdout(atLimit);
+		writeRawStdout("rejected");
 
-		expect(exitSpy).not.toHaveBeenCalled();
-		expect(stderrChunks.join("")).toContain("stdout write queue exceeded");
-		expect(stderrCallback).toBeTypeOf("function");
-		expect(() => stderrCallback?.()).toThrow("process.exit");
-		expect(exitSpy).toHaveBeenCalledWith(1);
+		expect(stderr.chunks.join("")).toContain("stdout write queue exceeded");
+		expect(stderr.callback()).toBeTypeOf("function");
 
 		writable = true;
 		process.stdout.emit("drain");
+		expect(chunks).toEqual(["trigger", atLimit]);
+
+		expect(() => stderr.callback()!()).toThrow("process.exit");
+		expect(exitSpy).toHaveBeenCalledWith(1);
 	});
 
-	it("keeps takeover queueing bounded and flushes the fatal diagnostic before exit", () => {
-		const stderrChunks: string[] = [];
-		let stderrCallback: ((error?: Error | null) => void) | undefined;
-		process.stderr.write = ((
-			chunk: string | Uint8Array,
-			encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
-			callback?: (error?: Error | null) => void,
-		) => {
-			stderrChunks.push(String(chunk));
-			stderrCallback = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
-			return false;
-		}) as typeof process.stderr.write;
-		const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-			throw new Error("process.exit");
-		}) as never);
+	it("keeps a watchdog armed for a sole large queued frame", () => {
+		vi.useFakeTimers();
+		try {
+			const stderr = fakeStderrWrite();
+			const exitSpy = spyProcessExit();
 
-		let writable = false;
-		fakeStdoutWrite(() => writable);
-		takeOverStdout();
-		writeRawStdout("trigger"); // accepted, signals backpressure
-		writeRawStdout("small"); // queued
+			fakeStdoutWrite(() => false);
+			writeRawStdout("trigger");
+			writeRawStdout("x".repeat(LARGE_PROTOCOL_FRAME_BYTES));
 
-		const oversized = "x".repeat(MAX_QUEUED_STDOUT_BYTES);
-		writeRawStdout(oversized);
-		expect(exitSpy).not.toHaveBeenCalled();
-		expect(stderrChunks.join("")).toContain("stdout write queue exceeded");
-		expect(stderrCallback).toBeTypeOf("function");
-		expect(() => stderrCallback?.()).toThrow("process.exit");
-		expect(exitSpy).toHaveBeenCalledWith(1);
+			vi.advanceTimersByTime(MAX_NO_DRAIN_GRACE_MS);
+			expect(stderr.chunks.join("")).toContain("stdout remained backpressured");
+			expect(() => stderr.callback()!()).toThrow("process.exit");
+			expect(exitSpy).toHaveBeenCalledWith(1);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 
-		writable = true;
-		process.stdout.emit("drain");
+	it("does not kill a slow consumer that drains before the watchdog expires", () => {
+		vi.useFakeTimers();
+		try {
+			const stderr = fakeStderrWrite();
+			const exitSpy = spyProcessExit();
+
+			let writable = false;
+			const chunks = fakeStdoutWrite(() => writable);
+			const largeFrame = "x".repeat(LARGE_PROTOCOL_FRAME_BYTES);
+			writeRawStdout("trigger"); // accepted, signals backpressure
+			writeRawStdout(largeFrame);
+			writeRawStdout("next");
+
+			vi.advanceTimersByTime(MAX_NO_DRAIN_GRACE_MS - 1_000);
+			expect(exitSpy).not.toHaveBeenCalled();
+			writable = true;
+			process.stdout.emit("drain");
+			expect(chunks).toEqual(["trigger", largeFrame, "next"]);
+
+			vi.advanceTimersByTime(MAX_NO_DRAIN_GRACE_MS);
+			expect(exitSpy).not.toHaveBeenCalled();
+			expect(stderr.chunks).toHaveLength(0);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("re-arms the watchdog when a partial drain backpressures again", () => {
+		vi.useFakeTimers();
+		try {
+			const stderr = fakeStderrWrite();
+			const exitSpy = spyProcessExit();
+
+			let writes = 0;
+			fakeStdoutWrite(() => {
+				writes += 1;
+				return writes === 2;
+			});
+
+			writeRawStdout("trigger"); // first write reports backpressure
+			writeRawStdout("accepted-on-drain");
+			writeRawStdout("reblocks-on-drain");
+			writeRawStdout("still-queued");
+
+			vi.advanceTimersByTime(MAX_NO_DRAIN_GRACE_MS / 2);
+			process.stdout.emit("drain");
+
+			// The drain made progress, so it receives a fresh watchdog window.
+			vi.advanceTimersByTime(MAX_NO_DRAIN_GRACE_MS - 1);
+			expect(exitSpy).not.toHaveBeenCalled();
+			vi.advanceTimersByTime(1);
+
+			expect(stderr.chunks.join("")).toContain("stdout remained backpressured");
+			expect(() => stderr.callback()!()).toThrow("process.exit");
+			expect(exitSpy).toHaveBeenCalledWith(1);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("keeps the stall watchdog active while stdout is taken over", () => {
+		vi.useFakeTimers();
+		try {
+			const stderr = fakeStderrWrite();
+			const exitSpy = spyProcessExit();
+
+			fakeStdoutWrite(() => false);
+			takeOverStdout();
+			writeRawStdout("trigger");
+			writeRawStdout("small");
+
+			vi.advanceTimersByTime(MAX_NO_DRAIN_GRACE_MS);
+			expect(stderr.chunks.join("")).toContain("stdout remained backpressured");
+			expect(stderr.callback()).toBeTypeOf("function");
+			expect(() => stderr.callback()!()).toThrow("process.exit");
+			expect(exitSpy).toHaveBeenCalledWith(1);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("forces a bounded exit when the fatal stderr diagnostic never flushes", () => {
 		vi.useFakeTimers();
 		try {
 			process.stderr.write = (() => false) as typeof process.stderr.write;
-			const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-				throw new Error("process.exit");
-			}) as never);
+			const exitSpy = spyProcessExit();
 
 			fakeStdoutWrite(() => false);
 			writeRawStdout("trigger");
 			writeRawStdout("small");
-			writeRawStdout("x".repeat(MAX_QUEUED_STDOUT_BYTES));
 
 			expect(exitSpy).not.toHaveBeenCalled();
-			expect(() => vi.advanceTimersByTime(1_000)).toThrow("process.exit");
+			vi.advanceTimersByTime(MAX_NO_DRAIN_GRACE_MS); // stall watchdog expires
+			expect(() => vi.advanceTimersByTime(1_000)).toThrow("process.exit"); // forced exit after flush timeout
 			expect(exitSpy).toHaveBeenCalledWith(1);
 		} finally {
 			vi.useRealTimers();
