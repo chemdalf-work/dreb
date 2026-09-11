@@ -276,7 +276,7 @@ See [FORK.md](FORK.md) for details.
 | [`@dreb/agent-core`](packages/agent/) | General-purpose agent runtime: tool loop, state, streaming, hooks, steering/follow-up queue semantics |
 | [`@dreb/tui`](packages/tui/) | Terminal UI library with differential rendering, markdown/syntax rendering, editor/input components, overlays, keybindings |
 | [`@dreb/semantic-search`](packages/semantic-search/) | Semantic codebase search engine with AST chunking, embeddings, POEM ranking, library API, and MCP server |
-| [`@dreb/long-horizon`](packages/long-horizon/) | Durable SDK supervisor with role-based rounds, recovery, safe rollover, command policy, and acceptance gates |
+| [`@dreb/long-horizon`](packages/long-horizon/) | Durable SDK supervisor with role-based rounds, recovery, safe rollover, OS-sandboxed credential-disabled commands, and acceptance gates |
 | [`@dreb/telegram`](packages/telegram/) | Telegram bot frontend for dreb over the native RPC protocol |
 | [`@dreb/dashboard`](packages/dashboard/) | Web dashboard frontend with fleet overview, chat steering, subagent observability, host file browser, and Tailscale/rotating-code pairing |
 

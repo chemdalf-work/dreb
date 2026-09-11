@@ -30,6 +30,7 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
+		"@anthropic-ai/sandbox-runtime": "^0.0.76",
 		"@dreb/ai": "*",
 		"@dreb/coding-agent": "*"
 	},

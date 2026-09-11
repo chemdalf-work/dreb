@@ -453,6 +453,7 @@ export class LongHorizonSupervisor {
 				type: "escalation_completed",
 				workUnitId: report.workUnitId,
 				signature,
+				strategyId: effect.value.strategyId,
 				adviceArtifact: effect.artifact,
 				adviceArtifactDigest: effect.artifactDigest,
 			});
@@ -497,6 +498,7 @@ export class LongHorizonSupervisor {
 				type: "escalation_completed",
 				workUnitId: failure.workUnitId,
 				signature: failure.signature,
+				strategyId: existing.strategyId,
 				adviceArtifact: artifact.path,
 				adviceArtifactDigest: artifact.digest,
 			});

@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { Type } from "@dreb/ai";
 import {
 	createEditTool,
@@ -213,6 +214,7 @@ const GIT_LOCAL_OR_REMOTE_READ_SUBCOMMANDS = new Set([
 
 /** Git forms that may render blob or patch content rather than only metadata. */
 const GIT_CONTENT_EMITTING_SUBCOMMANDS = new Set([
+	"archive",
 	"cat-file",
 	"diff",
 	"diff-files",
@@ -285,8 +287,29 @@ function gitMayEmitCredentialContent(argv: readonly string[]): boolean {
 	const subcommand = gitSubcommand(argv);
 	if (!subcommand || !GIT_CONTENT_EMITTING_SUBCOMMANDS.has(subcommand.name)) return false;
 	const args = argv.slice(subcommand.index + 1);
-	if (args.some((argument) => argument === "--output" || argument.startsWith("--output="))) return false;
-	const requestsPatch = args.some((argument) => ["-p", "-u", "--patch"].includes(argument));
+	if (subcommand.name === "archive") return true;
+	const requestsPatch = args.some((argument) => {
+		const option = argument.toLowerCase();
+		return (
+			[
+				"-p",
+				"-u",
+				"-W",
+				"--binary",
+				"--function-context",
+				"--patch",
+				"--patch-with-raw",
+				"--patch-with-stat",
+			].includes(argument) ||
+			/^-[^-]*[puW]/.test(argument) ||
+			option.startsWith("--color-words=") ||
+			option === "--color-words" ||
+			option.startsWith("--unified=") ||
+			option.startsWith("--word-diff=") ||
+			option === "--word-diff" ||
+			option.startsWith("--word-diff-regex=")
+		);
+	});
 	if (subcommand.name === "log" && !requestsPatch) return false;
 	if (!requestsPatch && args.some((argument) => GIT_CONTENT_SUPPRESSING_OPTIONS.has(argument.toLowerCase())))
 		return false;
@@ -318,7 +341,11 @@ function isRecursiveContentSearch(argv: readonly string[]): boolean {
 	const executable = executableName(argv[0] ?? "");
 	if (executable === "rg" || executable === "ripgrep") return true;
 	if (executable !== "grep") return false;
-	return argv.slice(1).some((argument) => argument === "--recursive" || /^-[^-]*[rR]/.test(argument));
+	return argv.slice(1).some((argument, index, args) => {
+		if (argument === "--recursive" || /^-[^-]*[rR]/.test(argument)) return true;
+		if (argument.toLowerCase() === "--directories=recurse") return true;
+		return ["--directories", "-d"].includes(argument.toLowerCase()) && args[index + 1]?.toLowerCase() === "recurse";
+	});
 }
 
 function isRelease(argv: readonly string[]): boolean {
@@ -718,11 +745,11 @@ function bounded(value: string, maxBytes: number): string {
 }
 
 const CREDENTIAL_ENVIRONMENT_VARIABLE =
-	/(?:^|_)(?:access_?key|api_?key|auth(?:orization)?|credential|password|private_?key|secret|token)(?:_|$)/i;
+	/(?:^|_)(?:access_?key|api_?key|auth(?:orization)?|connection_?string|credential|database_url|dsn|openssl_conf|password|private_?key|redis_url|secret|token)(?:_|$)/i;
 
-function commandEnvironment(policy: AuthorizationPolicy): NodeJS.ProcessEnv {
-	if (policy.allowCredentials) return process.env;
-	const environment = { ...process.env };
+function commandEnvironment(policy: AuthorizationPolicy, source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+	if (policy.allowCredentials) return source;
+	const environment = { ...source };
 	for (const name of Object.keys(environment)) {
 		if (CREDENTIAL_ENVIRONMENT_VARIABLE.test(name)) delete environment[name];
 	}
@@ -940,7 +967,7 @@ function changedPathGroups(output: Buffer): string[][] {
 	return groups;
 }
 
-async function credentialExclusionPathspecs(cwd: string): Promise<string[]> {
+async function credentialWorkspacePaths(cwd: string): Promise<string[]> {
 	const [tracked, untracked, committed, changed] = await Promise.all([
 		gitOutput(cwd, ["ls-files", "-z"]),
 		gitOutput(cwd, ["ls-files", "--others", "--exclude-standard", "-z"]),
@@ -955,8 +982,11 @@ async function credentialExclusionPathspecs(cwd: string): Promise<string[]> {
 	]
 		.filter(isSensitiveCredentialPath)
 		.concat(sensitiveChangedPaths)
-		.filter((path, index, paths) => paths.indexOf(path) === index)
-		.map((path) => `:(exclude,top)${path}`);
+		.filter((path, index, paths) => paths.indexOf(path) === index);
+}
+
+async function credentialExclusionPathspecs(cwd: string): Promise<string[]> {
+	return (await credentialWorkspacePaths(cwd)).map((path) => `:(exclude,top)${path}`);
 }
 
 export async function getWorkspaceContext(
@@ -1002,19 +1032,79 @@ export function isUncertainCommandOutcome(result: CommandExecutionResult): resul
 	return "outcome" in result && result.outcome === "uncertain";
 }
 
+function shellQuoteArg(value: string): string {
+	return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function canonicalExistingPath(path: string): string | undefined {
+	const absolute = resolve(path);
+	return existsSync(absolute) ? realpathSync(absolute) : undefined;
+}
+
+async function sandboxedCommand(
+	argv: readonly string[],
+	cwd: string,
+	policy: AuthorizationPolicy,
+	signal?: AbortSignal,
+): Promise<{ executable: string; args: string[]; environment: NodeJS.ProcessEnv; cleanup?: () => void }> {
+	if (policy.allowCredentials) {
+		return { executable: argv[0], args: argv.slice(1), environment: commandEnvironment(policy) };
+	}
+	if (!SandboxManager.isSupportedPlatform()) {
+		throw new Error(`credential-disabled command sandbox is unsupported on ${process.platform}`);
+	}
+	const dependencies = await SandboxManager.checkDependenciesAsync();
+	if (dependencies.errors.length > 0) {
+		throw new Error(`credential-disabled command sandbox is unavailable: ${dependencies.errors.join("; ")}`);
+	}
+
+	const workspace = realpathSync(resolve(cwd));
+	const broadDenyRoots = [homedir(), tmpdir(), dirname(workspace), "/Users", "/home", "/root"]
+		.map(canonicalExistingPath)
+		.filter((path): path is string => path !== undefined && path !== workspace);
+	const workspaceCredentials = (await credentialWorkspacePaths(workspace)).map((path) => resolve(workspace, path));
+	const filesystem: SandboxRuntimeConfig["filesystem"] = {
+		denyRead: [...new Set([...broadDenyRoots, ...workspaceCredentials])],
+		allowRead: [workspace],
+		allowWrite: [workspace],
+		denyWrite: workspaceCredentials,
+	};
+	const commandText = argv.map(shellQuoteArg).join(" ");
+	const wrapped = await SandboxManager.wrapWithSandboxArgv(
+		commandText,
+		process.platform === "win32" ? undefined : "/bin/sh",
+		{ filesystem },
+		signal,
+		workspace,
+		{ commandId: randomUUID(), commandText: argv.join(" ") },
+	);
+	return {
+		executable: wrapped.argv[0],
+		args: wrapped.argv.slice(1),
+		environment: commandEnvironment(policy, wrapped.env),
+		cleanup: () => SandboxManager.cleanupAfterCommand(),
+	};
+}
+
 export const runAuthorizedCommand: CommandRunner = async (command, cwd, policy, signal) => {
 	assertCommandAuthorized(command, policy);
-	const [executable, ...args] = parseCommand(command);
+	const argv = parseCommand(command);
+	const prepared = await sandboxedCommand(argv, cwd, policy, signal);
 	const startedAt = new Date().toISOString();
-	const result = await executeProcess(
-		executable,
-		args,
-		cwd,
-		commandEnvironment(policy),
-		policy.commandTimeoutMs,
-		policy.maxOutputBytes,
-		signal,
-	);
+	let result: ProcessResult;
+	try {
+		result = await executeProcess(
+			prepared.executable,
+			prepared.args,
+			cwd,
+			prepared.environment,
+			policy.commandTimeoutMs,
+			policy.maxOutputBytes,
+			signal,
+		);
+	} finally {
+		prepared.cleanup?.();
+	}
 	const completedAt = new Date().toISOString();
 	try {
 		return {

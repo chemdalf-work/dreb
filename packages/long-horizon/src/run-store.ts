@@ -366,9 +366,15 @@ function validateJournalEvent(value: unknown): JournalEventData {
 			enumString(event.reason, `${name}.reason`, new Set(["verification", "strategy_changed"]));
 			break;
 		case "escalation_completed":
-			exactKeys(event, name, ["type", "workUnitId", "signature", "adviceArtifact", "adviceArtifactDigest"]);
+			exactKeys(
+				event,
+				name,
+				["type", "workUnitId", "signature", "adviceArtifact", "adviceArtifactDigest"],
+				["strategyId"],
+			);
 			nonEmptyString(event.workUnitId, `${name}.workUnitId`);
 			nonEmptyString(event.signature, `${name}.signature`);
+			optionalString(event.strategyId, `${name}.strategyId`);
 			nonEmptyString(event.adviceArtifact, `${name}.adviceArtifact`);
 			artifactDigest(event.adviceArtifactDigest, `${name}.adviceArtifactDigest`);
 			break;
