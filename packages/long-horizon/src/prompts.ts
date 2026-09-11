@@ -22,11 +22,11 @@ export function planningPrompt(config: LongHorizonRunConfig): string {
 }
 
 export function initialExecutionPrompt(config: LongHorizonRunConfig, plan: SolPlan): string {
-	return `${AUTHORITY}\nObjective:\n${config.objective}\n\nValidated plan:\n${JSON.stringify(plan)}\n\nWork autonomously on one coherent work unit. End with exactly one <dreb-report> JSON object using schemaVersion 1, status progress|complete|blocked|verification-failed, stable workUnitId and strategyId, progress, evidenceIds, failure {operation,command,exitCode,diagnostic} only for verification-failed, handoffReady, and nextAction.`;
+	return `${AUTHORITY}\nObjective:\n${config.objective}\n\nValidated plan:\n${JSON.stringify(plan)}\n\nWork autonomously on one coherent work unit. Keep strategyId stable unless adopting a persisted advisor-proposed strategy. End with exactly one <dreb-report> JSON object using schemaVersion 1, status progress|complete|blocked|verification-failed, stable workUnitId and strategyId, progress, evidenceIds, failure {operation,command,exitCode,diagnostic} only for verification-failed, handoffReady, and nextAction.`;
 }
 
 export function continuationPrompt(previous: TerraRoundReport, wrapping: boolean, advice?: SolAdvice): string {
-	return `${AUTHORITY}\nPrevious validated report:\n${JSON.stringify(previous)}${advice ? `\nAdvisor guidance:\n${JSON.stringify(advice)}` : ""}\n${wrapping ? "Context is in the wrap-up band. Finish the current coherent unit, verify where practical, leave the workspace consistent, and do not begin substantial new work." : "Continue with the next bounded action."}\nEnd with one valid <dreb-report> object.`;
+	return `${AUTHORITY}\nPrevious validated report:\n${JSON.stringify(previous)}${advice ? `\nAdvisor guidance:\n${JSON.stringify(advice)}` : ""}\n${wrapping ? "Context is in the wrap-up band. Finish the current coherent unit, verify where practical, leave the workspace consistent, and do not begin substantial new work." : "Continue with the next bounded action."}\nKeep strategyId stable unless adopting the persisted advisor-proposed strategy. End with one valid <dreb-report> object.`;
 }
 
 export function escalationPrompt(

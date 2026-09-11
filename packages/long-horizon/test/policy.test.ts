@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, linkSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
+import { describe, expect, it, vi } from "vitest";
 import {
 	assertCommandAuthorized,
 	createAuthorizedCommandTool,
@@ -284,29 +285,51 @@ describe("tool policy", () => {
 		expect(() => assertCommandAuthorized(command, { ...policy, allowCredentials: true })).not.toThrow();
 	});
 
-	it("does not treat summary output options as suppressing a requested Git patch", () => {
-		const command = "git diff HEAD --stat -p -- .";
-		const policy = { ...testConfig().policy, allowedCommands: [command] };
+	it.each([
+		"git diff HEAD --stat -p -- .",
+		"git diff HEAD --stat --patch-with-stat -- .",
+		"git diff HEAD --shortstat --patch-with-raw -- .",
+		"git diff --output=workspace.patch HEAD -- .",
+	] as const)("does not treat summary output options as suppressing a requested Git patch: %s", (command) => {
+		const policy = { ...testConfig().policy, allowedCommands: [command], allowDestructiveGit: true };
 		expect(() => assertCommandAuthorized(command, policy)).toThrow(/credential access denied/);
 		expect(() => assertCommandAuthorized(command, { ...policy, allowCredentials: true })).not.toThrow();
 	});
 
-	it("denies an exact-allowed recursive external grep before it reaches credential descendants", async () => {
-		const config = testConfig();
-		writeFileSync(join(config.cwd, ".env.production"), "TOKEN=recursive-command-secret\\n");
-		const command = "grep -R TOKEN .";
-		const policy = { ...config.policy, allowedCommands: [command] };
-		const observed: unknown[] = [];
-		const tool = createAuthorizedCommandTool(config.cwd, policy, (evidence) => observed.push(evidence));
-		const result = await tool.execute("call", { command }, undefined, undefined, undefined as any);
-
-		expect(result).toMatchObject({ isError: true, endTurn: true, details: { outcome: "denied", command } });
-		expect(JSON.stringify(result)).not.toContain("recursive-command-secret");
-		expect(observed).toEqual([
-			expect.objectContaining({ outcome: "denied", command, reason: expect.stringContaining("credential access") }),
-		]);
+	it("denies Git archives independently of destructive-Git authorization", () => {
+		const command = "git archive --format=tar HEAD";
+		const policy = { ...testConfig().policy, allowedCommands: [command], allowDestructiveGit: true };
+		expect(() => assertCommandAuthorized(command, policy)).toThrow(/credential access denied/);
 		expect(() => assertCommandAuthorized(command, { ...policy, allowCredentials: true })).not.toThrow();
 	});
+
+	it.each([
+		"grep -R TOKEN .",
+		"grep --directories=recurse TOKEN .",
+		"grep --directories recurse TOKEN .",
+		"grep -d recurse TOKEN .",
+	] as const)(
+		"denies an exact-allowed recursive external grep before it reaches credential descendants: %s",
+		async (command) => {
+			const config = testConfig();
+			writeFileSync(join(config.cwd, ".env.production"), "TOKEN=recursive-command-secret\\n");
+			const policy = { ...config.policy, allowedCommands: [command] };
+			const observed: unknown[] = [];
+			const tool = createAuthorizedCommandTool(config.cwd, policy, (evidence) => observed.push(evidence));
+			const result = await tool.execute("call", { command }, undefined, undefined, undefined as any);
+
+			expect(result).toMatchObject({ isError: true, endTurn: true, details: { outcome: "denied", command } });
+			expect(JSON.stringify(result)).not.toContain("recursive-command-secret");
+			expect(observed).toEqual([
+				expect.objectContaining({
+					outcome: "denied",
+					command,
+					reason: expect.stringContaining("credential access"),
+				}),
+			]);
+			expect(() => assertCommandAuthorized(command, { ...policy, allowCredentials: true })).not.toThrow();
+		},
+	);
 
 	it.each(["env", "printenv"] as const)(
 		"denies explicit environment dumping without credential access: %s",
@@ -317,16 +340,17 @@ describe("tool policy", () => {
 		},
 	);
 
-	it("scrubs provider-style credentials from authorized interpreter and workspace-script environments", async () => {
+	it("scrubs provider and connection-string credentials from authorized child environments", async () => {
 		const config = testConfig();
-		const environmentKey = "DREB_TEST_PROVIDER_API_KEY";
-		const original = process.env[environmentKey];
-		const canary = "provider-canary-must-not-reach-child";
+		const environmentKeys = ["DREB_TEST_PROVIDER_API_KEY", "DATABASE_URL", "REDIS_URL", "SENTRY_DSN"];
+		const originals = new Map(environmentKeys.map((name) => [name, process.env[name]]));
+		const canary = "credential-canary-must-not-reach-child";
 		const script = join(config.cwd, "print-env.cjs");
-		const inlineCommand = `node -e "console.log(process.env.${environmentKey} ?? 'missing')"`;
+		const expression = environmentKeys.map((name) => `process.env.${name} ?? "missing"`).join(",");
+		const inlineCommand = `node -e 'console.log([${expression}].join(","))'`;
 		const scriptCommand = "node print-env.cjs";
-		writeFileSync(script, `console.log(process.env.${environmentKey} ?? "missing")\n`);
-		process.env[environmentKey] = canary;
+		writeFileSync(script, `console.log([${expression}].join(","))\n`);
+		for (const name of environmentKeys) process.env[name] = `${canary}-${name}`;
 		try {
 			const policy = {
 				...config.policy,
@@ -337,13 +361,78 @@ describe("tool policy", () => {
 				runAuthorizedCommand(inlineCommand, config.cwd, policy),
 				runAuthorizedCommand(scriptCommand, config.cwd, policy),
 			]);
-			expect(inline.stdout).toBe("missing\n");
-			expect(workspaceScript.stdout).toBe("missing\n");
+			expect(inline.stdout).toBe("missing,missing,missing,missing\n");
+			expect(workspaceScript.stdout).toBe("missing,missing,missing,missing\n");
 			expect(`${inline.stdout}${workspaceScript.stdout}`).not.toContain(canary);
 		} finally {
-			if (original === undefined) delete process.env[environmentKey];
-			else process.env[environmentKey] = original;
+			for (const [name, original] of originals) {
+				if (original === undefined) delete process.env[name];
+				else process.env[name] = original;
+			}
 		}
+	});
+
+	it("preserves exact argv while applying the credential sandbox", async () => {
+		const config = testConfig();
+		const expected = "literal; apostrophe'safe";
+		const command = `node -e "process.stdout.write(process.argv[1])" "${expected}"`;
+		const result = await runAuthorizedCommand(command, config.cwd, {
+			...config.policy,
+			allowedCommands: [command],
+			allowRemoteState: true,
+		});
+
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toBe(expected);
+	});
+
+	it("sandboxes credential-disabled workspace scripts from external host files", async () => {
+		const config = testConfig();
+		const canary = "external-credential-canary";
+		const externalCredential = join(dirname(config.cwd), "host-data.txt");
+		const script = join(config.cwd, "read-external.cjs");
+		writeFileSync(externalCredential, canary);
+		writeFileSync(script, 'process.stdout.write(require("node:fs").readFileSync(process.argv[2], "utf8"))\n');
+		const command = `node read-external.cjs ${externalCredential}`;
+		const cleanup = vi.spyOn(SandboxManager, "cleanupAfterCommand");
+
+		const result = await runAuthorizedCommand(command, config.cwd, {
+			...config.policy,
+			allowedCommands: [command],
+		});
+
+		expect(result.exitCode).not.toBe(0);
+		expect(`${result.stdout}${result.stderr}`).not.toContain(canary);
+		expect(cleanup).toHaveBeenCalledTimes(1);
+
+		const allowed = await runAuthorizedCommand(command, config.cwd, {
+			...config.policy,
+			allowedCommands: [command],
+			allowCredentials: true,
+		});
+		expect(allowed.exitCode).toBe(0);
+		expect(allowed.stdout).toBe(canary);
+		expect(cleanup).toHaveBeenCalledTimes(1);
+		cleanup.mockRestore();
+	});
+
+	it("sandboxes credential-disabled scripts from credential files inside the workspace", async () => {
+		const config = testConfig();
+		const canary = "workspace-credential-canary";
+		writeFileSync(join(config.cwd, ".env.production"), canary);
+		writeFileSync(
+			join(config.cwd, "read-workspace.cjs"),
+			'process.stdout.write(require("node:fs").readFileSync(".env.production", "utf8"))\n',
+		);
+		const command = "node read-workspace.cjs";
+
+		const result = await runAuthorizedCommand(command, config.cwd, {
+			...config.policy,
+			allowedCommands: [command],
+		});
+
+		expect(result.exitCode).not.toBe(0);
+		expect(`${result.stdout}${result.stderr}`).not.toContain(canary);
 	});
 
 	it("does not classify ordinary secretary filenames as credentials", () => {
@@ -419,7 +508,7 @@ describe("tool policy", () => {
 		"git worktree remove ../other",
 		"git worktree prune",
 	] as const)("classifies destructive Git operations: %s", (command) => {
-		const policy = { ...testConfig().policy, allowedCommands: [command] };
+		const policy = { ...testConfig().policy, allowedCommands: [command], allowCredentials: true };
 		expect(() => assertCommandAuthorized(command, policy)).toThrow(/destructive git/);
 		expect(() => assertCommandAuthorized(command, { ...policy, allowDestructiveGit: true })).not.toThrow();
 	});
@@ -545,6 +634,7 @@ describe("tool policy", () => {
 			result = await runAuthorizedCommand(command, config.cwd, {
 				...config.policy,
 				allowedCommands: [command],
+				allowCredentials: true,
 				allowRemoteState: true,
 			});
 		} finally {

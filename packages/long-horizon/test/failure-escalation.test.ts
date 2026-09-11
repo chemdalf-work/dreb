@@ -113,6 +113,74 @@ describe("failure escalation", () => {
 		expect(advisorPrompt).not.toContain("TOKEN=changed-secret");
 	});
 
+	it("does not reset equivalent failures when Terra only changes the strategy label", async () => {
+		const base = testConfig();
+		const config = { ...base, limits: { ...base.limits, maxEscalations: 1 } };
+		const failureEvidence = commandEvidence("npm test", "workspace", 1);
+		const failed = ["strategy-a", "strategy-b", "strategy-c", "strategy-d"].map((strategyId) =>
+			promptResult(
+				report("verification-failed", failure)
+					.replace('"strategyId":"strategy-a"', `"strategyId":"${strategyId}"`)
+					.replace('"evidenceIds":[]', `"evidenceIds":["${failureEvidence.id}"]`),
+				{ commandEvidence: [failureEvidence] },
+			),
+		);
+		const changedAdvice = advice.replace('"strategyId":"strategy-b"', '"strategyId":"strategy-e"');
+		const sessions = new FakeSessionHost({
+			planner: [promptResult(PLAN)],
+			executor: [...failed, promptResult(report("complete"))],
+			advisor: [promptResult(changedAdvice)],
+		});
+		echoAdvisorSignature(sessions);
+		const commandRunner = async (command: string, cwd: string) =>
+			commandEvidence(command, await getWorkspaceIdentity(cwd));
+
+		const supervisor = LongHorizonSupervisor.create(config, { sessionHost: sessions, commandRunner });
+		const status = await supervisor.run();
+
+		expect(status.phase).toBe("completed");
+		expect(status.escalations).toBe(1);
+		expect(sessions.created.filter((session) => session.role === "advisor")).toHaveLength(1);
+	});
+
+	it("resets a streak only when Terra adopts the durable advisor strategy", async () => {
+		const base = testConfig();
+		const config = { ...base, limits: { ...base.limits, maxEscalations: 1 } };
+		const failureEvidence = commandEvidence("npm test", "workspace", 1);
+		const failed = promptResult(
+			report("verification-failed", failure).replace('"evidenceIds":[]', `"evidenceIds":["${failureEvidence.id}"]`),
+			{ commandEvidence: [failureEvidence] },
+		);
+		const failureWithStrategy = (strategyId: string) =>
+			promptResult(
+				report("verification-failed", failure)
+					.replace('"strategyId":"strategy-a"', `"strategyId":"${strategyId}"`)
+					.replace('"evidenceIds":[]', `"evidenceIds":["${failureEvidence.id}"]`),
+				{ commandEvidence: [failureEvidence] },
+			);
+		const sessions = new FakeSessionHost({
+			planner: [promptResult(PLAN)],
+			executor: [
+				failed,
+				failed,
+				failed,
+				failed,
+				failureWithStrategy("strategy-c"),
+				failureWithStrategy("strategy-b"),
+				promptResult(report("complete")),
+			],
+			advisor: [promptResult(advice)],
+		});
+		echoAdvisorSignature(sessions);
+		const commandRunner = async (command: string, cwd: string) =>
+			commandEvidence(command, await getWorkspaceIdentity(cwd));
+
+		const status = await LongHorizonSupervisor.create(config, { sessionHost: sessions, commandRunner }).run();
+
+		expect(status.phase).toBe("completed");
+		expect(status.failureStreak).toMatchObject({ strategyId: "strategy-b", count: 1, escalated: false });
+	});
+
 	it("does not reset equivalent failures for a successful non-verification command", async () => {
 		const base = testConfig();
 		const config = { ...base, limits: { ...base.limits, maxEscalations: 1 } };

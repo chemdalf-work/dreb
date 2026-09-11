@@ -143,21 +143,19 @@ export function applyJournalRecord(
 			next.lastWorkUnitId = event.report.workUnitId;
 			next.lastStrategyId = event.report.strategyId;
 			const prior = previous.failureStreak;
-			if (
-				event.verificationSucceeded ||
-				(prior?.workUnitId === event.report.workUnitId && prior.strategyId !== event.report.strategyId)
-			) {
-				next.failureStreak = undefined;
-			}
+			const adoptedAdvisedStrategy =
+				prior?.workUnitId === event.report.workUnitId &&
+				prior.advisedStrategyId === event.report.strategyId &&
+				prior.strategyId !== event.report.strategyId;
+			if (event.verificationSucceeded || adoptedAdvisedStrategy) next.failureStreak = undefined;
 			if (event.failureSignature) {
 				const current = next.failureStreak;
 				const same =
-					current?.workUnitId === event.report.workUnitId &&
-					current.strategyId === event.report.strategyId &&
-					current.signature === event.failureSignature;
+					current?.workUnitId === event.report.workUnitId && current.signature === event.failureSignature;
 				next.failureStreak = {
 					workUnitId: event.report.workUnitId,
 					strategyId: event.report.strategyId,
+					advisedStrategyId: same ? current.advisedStrategyId : undefined,
 					signature: event.failureSignature,
 					count: same ? current.count + 1 : 1,
 					escalated: same ? current.escalated : false,
@@ -187,13 +185,18 @@ export function applyJournalRecord(
 			}
 			break;
 		case "failure_recorded": {
-			const same =
+			const adoptedAdvisedStrategy =
 				previous.failureStreak?.workUnitId === event.workUnitId &&
-				previous.failureStreak.strategyId === event.strategyId &&
+				previous.failureStreak.advisedStrategyId === event.strategyId &&
+				previous.failureStreak.strategyId !== event.strategyId;
+			const same =
+				!adoptedAdvisedStrategy &&
+				previous.failureStreak?.workUnitId === event.workUnitId &&
 				previous.failureStreak.signature === event.signature;
 			next.failureStreak = {
 				workUnitId: event.workUnitId,
 				strategyId: event.strategyId,
+				advisedStrategyId: same ? previous.failureStreak!.advisedStrategyId : undefined,
 				signature: event.signature,
 				count: same ? previous.failureStreak!.count + 1 : 1,
 				escalated: same ? previous.failureStreak!.escalated : false,
@@ -212,9 +215,16 @@ export function applyJournalRecord(
 			) {
 				throw new Error("escalation does not match an eligible un-escalated failure streak");
 			}
+			if (event.strategyId === previous.failureStreak.strategyId) {
+				throw new Error("escalation strategy must differ from the failed strategy");
+			}
 			if (previous.escalations >= config.limits.maxEscalations) throw new Error("escalation limit exhausted");
 			next.escalations++;
-			next.failureStreak = { ...previous.failureStreak, escalated: true };
+			next.failureStreak = {
+				...previous.failureStreak,
+				escalated: true,
+				advisedStrategyId: event.strategyId,
+			};
 			break;
 		case "acceptance_recorded": {
 			if (event.effectId === undefined && event.round === undefined && event.commandIndex === undefined) break;

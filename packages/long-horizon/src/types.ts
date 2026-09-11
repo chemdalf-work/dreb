@@ -233,6 +233,8 @@ export type JournalEventData =
 			type: "escalation_completed";
 			workUnitId: string;
 			signature: string;
+			/** Advisor-validated strategy that may reset this exact streak when Terra adopts it. */
+			strategyId?: string;
 			adviceArtifact: string;
 			adviceArtifactDigest: string;
 	  }
@@ -282,6 +284,8 @@ export interface JournalRecord {
 export interface FailureStreak {
 	workUnitId: string;
 	strategyId: string;
+	/** Durable advisor-approved replacement; arbitrary Terra labels do not populate this field. */
+	advisedStrategyId?: string;
 	signature: string;
 	count: number;
 	escalated: boolean;
