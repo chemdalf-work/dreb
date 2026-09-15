@@ -1,0 +1,512 @@
+diff --git a/README.md b/README.md
+index 0b5299f..3e67ce2 100644
+--- a/README.md
++++ b/README.md
+@@ -276,7 +276,7 @@ See [FORK.md](FORK.md) for details.
+ | [`@dreb/agent-core`](packages/agent/) | General-purpose agent runtime: tool loop, state, streaming, hooks, steering/follow-up queue semantics |
+ | [`@dreb/tui`](packages/tui/) | Terminal UI library with differential rendering, markdown/syntax rendering, editor/input components, overlays, keybindings |
+ | [`@dreb/semantic-search`](packages/semantic-search/) | Semantic codebase search engine with AST chunking, embeddings, POEM ranking, library API, and MCP server |
+-| [`@dreb/long-horizon`](packages/long-horizon/) | Durable SDK supervisor with role-based rounds, recovery, safe rollover, OS-sandboxed credential-disabled commands, and acceptance gates |
++| [`@dreb/long-horizon`](packages/long-horizon/) | Durable SDK supervisor with role-based rounds, recovery, safe rollover, OS-sandboxed credential and remote-state boundaries, and acceptance gates |
+ | [`@dreb/telegram`](packages/telegram/) | Telegram bot frontend for dreb over the native RPC protocol |
+ | [`@dreb/dashboard`](packages/dashboard/) | Web dashboard frontend with fleet overview, chat steering, subagent observability, host file browser, and Tailscale/rotating-code pairing |
+ 
+diff --git a/packages/long-horizon/README.md b/packages/long-horizon/README.md
+index 5dc5182..03a7289 100644
+--- a/packages/long-horizon/README.md
++++ b/packages/long-horizon/README.md
+@@ -24,7 +24,7 @@ Minimal `run.json`:
+ 
+ Exact provider/model IDs are required. Requested thinking levels are validated and startup fails if the SDK would clamp them. Models and credentials use normal Dreb configuration. The workspace must be a Git repository with a valid `HEAD`; completion evidence hashes tracked changes plus ignored-aware untracked file contents so stale evidence cannot pass after the workspace changes.
+ 
+-Credential-disabled command execution uses `@anthropic-ai/sandbox-runtime` to confine the complete child process tree on macOS and Linux. macOS requires the platform sandbox plus `rg`; Linux requires `bwrap` and `rg`. If the platform or its sandbox dependencies are unavailable, command execution fails closed instead of running unsandboxed.
++Command execution uses `@anthropic-ai/sandbox-runtime` whenever credential or opaque remote-state isolation is required. Credential-disabled command trees cannot read host user/temp roots or discovered workspace credentials. Non-Git executables cannot read Git control storage, and direct Git commands cannot read repository objects or credential-bearing Git config. When remote-state access is disabled, opaque and mutable workspace commands have no network access; recognized direct remote-read clients remain available only through non-opaque argv rather than mutable config/response files. macOS requires the platform sandbox plus `rg`; Linux requires `bwrap` plus `rg`. If a required platform sandbox or dependency is unavailable, command execution fails closed instead of running unsandboxed.
+ 
+ ## Configuration
+ 
+@@ -59,4 +59,4 @@ Each run stores immutable configuration, a checksum-chained append-only journal,
+ 
+ ## Safety model
+ 
+-Planner, advisor, and verifier sessions receive read-only file tools. On the fourth equivalent failure, the fresh advisor receives a bounded validated-plan excerpt, bounded Git status/diff context that omits credential-sensitive tracked and untracked paths unless credential access is enabled, and the exact durable captured failure evidence. A changed Terra `strategyId` alone never resets that streak; only successful deterministic verification or adoption of a durable, validated advisor strategy does. Executor sessions receive workspace-confined file tools and a policy-enforced `run_command`; mutation tools cannot alter Git metadata or the active run's durable storage, including through filesystem aliases. The production SDK host installs these confined implementations as its complete base-tool set. Unrestricted bash, subagent tools, skills, and project/global extensions are not loaded. Commands are exact allowlist entries parsed into executable/argv; credential-disabled commands are safely encoded into an OS sandbox wrapper rather than passed to an unrestricted shell. Credential-sensitive command forms, including Git `<revision>:<path>` operands, standard credential containers such as `.npmrc`/`.netrc`/`.pypirc`, broad Git patch/blob/archive output that could serialize tracked credentials, recursive external content searches, explicit environment-dumping commands, and explicit read, grep, edit, or write paths are denied unless credential access is enabled; recursive role-tool grep also omits credential-sensitive descendants. When credential access is disabled, every authorized child receives a scrubbed environment that removes credential-like variable names, including provider/API keys, tokens, connection strings, and DSNs. Its complete process tree is also sandboxed against reading host user/temp roots outside the workspace and discovered credential-sensitive files inside the workspace. Git commands not recognized as read-only, including otherwise read-only diff commands that write through `--output`, require destructive-Git authorization; known remote Git operations, mutating GitHub CLI/API calls, release and deployment operations (including the AWS CLI's conservatively classified service-command family), remote shell/file-transfer clients, and opaque inline interpreter forms also require remote-state authorization. A command-policy denial is a turn-ending error that durably blocks the run with the attempted command's denial reason. Terra reports use the persisted statuses `progress`, `complete`, `blocked`, and `verification-failed`; handoff readiness remains a separate boolean. Completion is only recorded after every immutable acceptance command passes with evidence from the current workspace identity. Optional fresh-model final verification can add a gate but cannot replace deterministic acceptance.
++Planner, advisor, and verifier sessions receive read-only file tools. On the fourth equivalent failure, the fresh advisor receives a bounded validated-plan excerpt, bounded Git status/diff context that omits credential-sensitive tracked and untracked paths unless credential access is enabled, and the exact durable captured failure evidence. Terra `workUnitId` values must name a unit in the persisted plan, and consecutive identical failure signatures remain one streak even if Terra relabels the unit. A changed `strategyId` alone never resets that streak; only successful deterministic verification or adoption of a durable, validated advisor strategy does. Executor sessions receive workspace-confined file tools and a policy-enforced `run_command`; mutation tools cannot alter Git metadata or the active run's durable storage, including through filesystem aliases. The production SDK host installs these confined implementations as its complete base-tool set. Unrestricted bash, subagent tools, skills, and project/global extensions are not loaded. Commands are exact allowlist entries parsed into executable/argv and are safely encoded into an OS sandbox wrapper whenever a credential or opaque remote-state boundary must be enforced. Credential-sensitive command forms, including Git `<revision>:<path>` operands, standard credential containers such as `.npmrc`/`.netrc`/`.pypirc`, broad Git patch/blob/object serialization that could expose tracked credentials, recursive external content searches, explicit environment-dumping commands, and explicit read, grep, edit, or write paths are denied unless credential access is enabled; recursive role-tool grep also omits credential-sensitive descendants. When credential access is disabled, every authorized child receives a scrubbed environment that removes credential-like variable names, including provider/API keys, tokens, connection strings, and DSNs. Its complete process tree is also sandboxed against reading host user/temp roots outside the workspace and discovered credential-sensitive files inside the workspace; non-Git executables cannot read Git control storage, while direct Git commands cannot read repository objects or credential-bearing Git config to reconstruct protected blobs. Git commands not recognized as read-only, including otherwise read-only diff commands that write through `--output`, require destructive-Git authorization; known remote Git operations, mutating GitHub CLI/API calls, release and deployment operations (including the AWS CLI's conservatively classified service-command family), remote shell/file-transfer clients, and opaque inline interpreter forms also require remote-state authorization. While remote-state access is disabled, opaque and mutable command trees run without network access; recognized direct remote-read clients remain available only when their effective request is fixed by argv rather than a mutable config/response file. A command-policy denial is a turn-ending error that durably blocks the run with the attempted command's denial reason. Terra reports use the persisted statuses `progress`, `complete`, `blocked`, and `verification-failed`; handoff readiness remains a separate boolean. Completion is only recorded after every immutable acceptance command passes with evidence from the current workspace identity. Optional fresh-model final verification can add a gate but cannot replace deterministic acceptance.
+diff --git a/packages/long-horizon/src/policy.ts b/packages/long-horizon/src/policy.ts
+index 1ce192e..334454b 100644
+--- a/packages/long-horizon/src/policy.ts
++++ b/packages/long-horizon/src/policy.ts
+@@ -212,9 +212,22 @@ const GIT_LOCAL_OR_REMOTE_READ_SUBCOMMANDS = new Set([
+ 	"worktree",
+ ]);
+ 
++/** Git forms that serialize repository objects without a safely scopeable pathspec. */
++const GIT_UNSCOPED_CONTENT_EMITTING_SUBCOMMANDS = new Set([
++	"archive",
++	"bundle",
++	"daemon",
++	"fast-export",
++	"format-patch",
++	"http-backend",
++	"pack-objects",
++	"upload-archive",
++	"upload-pack",
++]);
++
+ /** Git forms that may render blob or patch content rather than only metadata. */
+ const GIT_CONTENT_EMITTING_SUBCOMMANDS = new Set([
+-	"archive",
++	...GIT_UNSCOPED_CONTENT_EMITTING_SUBCOMMANDS,
+ 	"cat-file",
+ 	"diff",
+ 	"diff-files",
+@@ -287,7 +300,7 @@ function gitMayEmitCredentialContent(argv: readonly string[]): boolean {
+ 	const subcommand = gitSubcommand(argv);
+ 	if (!subcommand || !GIT_CONTENT_EMITTING_SUBCOMMANDS.has(subcommand.name)) return false;
+ 	const args = argv.slice(subcommand.index + 1);
+-	if (subcommand.name === "archive") return true;
++	if (GIT_UNSCOPED_CONTENT_EMITTING_SUBCOMMANDS.has(subcommand.name)) return true;
+ 	const requestsPatch = args.some((argument) => {
+ 		const option = argument.toLowerCase();
+ 		return (
+@@ -582,6 +595,7 @@ function wgetMutatesRemoteState(argv: readonly string[]): boolean {
+ 	if (wgetIndex < 0) return false;
+ 	return argv.slice(wgetIndex + 1).some((token, index, tail) => {
+ 		const lower = token.toLowerCase();
++		if (lower === "--config" || lower.startsWith("--config=")) return true;
+ 		if (/^--post-(?:data|file)(?:=|$)/.test(lower)) return true;
+ 		if (/^--method=(?:post|put|patch|delete)$/.test(lower)) return true;
+ 		return lower === "--method" && MUTATING_HTTP_METHODS.has(tail[index + 1]?.toLowerCase());
+@@ -637,19 +651,12 @@ function executesOpaqueInlineCode(argv: readonly string[]): boolean {
+ 	return false;
+ }
+ 
+-function mutatesRemoteState(argv: readonly string[]): boolean {
+-	if (isRelease(argv) || isDeployment(argv)) return true;
+-	if (argv.some((token) => executableName(token) === "git") && gitMutatesRemoteState(argv)) return true;
+-	if (argv.some((token) => executableName(token) === "git-lfs") && standaloneGitLfsMutatesRemoteState(argv))
+-		return true;
+-	if (argv.some((token) => executableName(token) === "gh") && ghMutatesRemoteState(argv)) return true;
+-	if (executesOpaqueInlineCode(argv)) return true;
+-	if (argv.some((token) => ["rclone", "rsync", "scp", "sftp", "ssh"].includes(executableName(token)))) return true;
+-	if (wgetMutatesRemoteState(argv)) return true;
++function curlMutatesRemoteState(argv: readonly string[]): boolean {
+ 	const curlIndex = argv.findIndex((token) => executableName(token) === "curl");
+ 	if (curlIndex < 0) return false;
+ 	return argv.slice(curlIndex + 1).some((token, index, tail) => {
+ 		const lower = token.toLowerCase();
++		if (token === "-K" || lower === "--config" || lower.startsWith("--config=")) return true;
+ 		if (MUTATING_HTTP_METHODS.has(lower)) return true;
+ 		if (/^-x(?:post|put|patch|delete)$/i.test(token) || /^--request=(?:post|put|patch|delete)$/i.test(token))
+ 			return true;
+@@ -662,6 +669,46 @@ function mutatesRemoteState(argv: readonly string[]): boolean {
+ 	});
+ }
+ 
++function mutatesRemoteState(argv: readonly string[]): boolean {
++	if (isRelease(argv) || isDeployment(argv)) return true;
++	if (argv.some((token) => executableName(token) === "git") && gitMutatesRemoteState(argv)) return true;
++	if (argv.some((token) => executableName(token) === "git-lfs") && standaloneGitLfsMutatesRemoteState(argv))
++		return true;
++	if (argv.some((token) => executableName(token) === "gh") && ghMutatesRemoteState(argv)) return true;
++	if (executesOpaqueInlineCode(argv)) return true;
++	if (argv.some((token) => ["rclone", "rsync", "scp", "sftp", "ssh"].includes(executableName(token)))) return true;
++	if (wgetMutatesRemoteState(argv) || curlMutatesRemoteState(argv)) return true;
++	return false;
++}
++
++const GIT_NETWORK_READ_SUBCOMMANDS = new Set(["clone", "fetch", "ls-remote", "pull"]);
++
++/** Network access is safe without remote-state permission only for recognized direct read clients. */
++function isRecognizedRemoteReadCommand(argv: readonly string[]): boolean {
++	const executable = executableName(argv[0] ?? "");
++	if (executable === "git") {
++		const subcommand = gitSubcommand(argv);
++		if (!subcommand) return false;
++		if (subcommand.name === "lfs") {
++			const action = findPositional(argv, subcommand.index + 1, new Set(), []);
++			return action !== undefined && ["fetch", "pull"].includes(action.name);
++		}
++		return GIT_NETWORK_READ_SUBCOMMANDS.has(subcommand.name);
++	}
++	if (executable === "git-lfs") {
++		const action = findSubcommand(argv, "git-lfs", new Set(), []);
++		return action !== undefined && ["fetch", "pull"].includes(action.name);
++	}
++	if (executable === "gh") return !ghMutatesRemoteState(argv);
++	if (executable === "wget") {
++		return argv.slice(1).some((token) => token.toLowerCase() === "--no-config") && !wgetMutatesRemoteState(argv);
++	}
++	if (executable === "curl") {
++		return ["-q", "--disable"].includes(argv[1]?.toLowerCase() ?? "") && !curlMutatesRemoteState(argv);
++	}
++	return false;
++}
++
+ /** Parse a command into executable/argv without invoking a shell. */
+ export function parseCommand(command: string): string[] {
+ 	const result: string[] = [];
+@@ -1047,33 +1094,49 @@ async function sandboxedCommand(
+ 	policy: AuthorizationPolicy,
+ 	signal?: AbortSignal,
+ ): Promise<{ executable: string; args: string[]; environment: NodeJS.ProcessEnv; cleanup?: () => void }> {
+-	if (policy.allowCredentials) {
++	const isolateCredentials = !policy.allowCredentials;
++	const isolateNetwork = !policy.allowRemoteState && !isRecognizedRemoteReadCommand(argv);
++	if (!isolateCredentials && !isolateNetwork) {
+ 		return { executable: argv[0], args: argv.slice(1), environment: commandEnvironment(policy) };
+ 	}
+ 	if (!SandboxManager.isSupportedPlatform()) {
+-		throw new Error(`credential-disabled command sandbox is unsupported on ${process.platform}`);
++		throw new Error(`required command sandbox is unsupported on ${process.platform}`);
+ 	}
+ 	const dependencies = await SandboxManager.checkDependenciesAsync();
+ 	if (dependencies.errors.length > 0) {
+-		throw new Error(`credential-disabled command sandbox is unavailable: ${dependencies.errors.join("; ")}`);
++		throw new Error(`required command sandbox is unavailable: ${dependencies.errors.join("; ")}`);
+ 	}
+ 
+ 	const workspace = realpathSync(resolve(cwd));
+-	const broadDenyRoots = [homedir(), tmpdir(), dirname(workspace), "/Users", "/home", "/root"]
+-		.map(canonicalExistingPath)
+-		.filter((path): path is string => path !== undefined && path !== workspace);
+-	const workspaceCredentials = (await credentialWorkspacePaths(workspace)).map((path) => resolve(workspace, path));
+-	const filesystem: SandboxRuntimeConfig["filesystem"] = {
+-		denyRead: [...new Set([...broadDenyRoots, ...workspaceCredentials])],
+-		allowRead: [workspace],
+-		allowWrite: [workspace],
+-		denyWrite: workspaceCredentials,
++	let filesystem: SandboxRuntimeConfig["filesystem"];
++	if (isolateCredentials) {
++		const broadDenyRoots = [homedir(), tmpdir(), dirname(workspace), "/Users", "/home", "/root"]
++			.map(canonicalExistingPath)
++			.filter((path): path is string => path !== undefined && path !== workspace);
++		const workspaceCredentials = (await credentialWorkspacePaths(workspace)).map((path) => resolve(workspace, path));
++		const gitControlReadDenials = (
++			executableName(argv[0] ?? "") === "git" ? gitCredentialControlPaths(workspace) : gitControlPaths(workspace)
++		)
++			.map(canonicalExistingPath)
++			.filter((path): path is string => path !== undefined);
++		filesystem = {
++			denyRead: [...new Set([...broadDenyRoots, ...workspaceCredentials, ...gitControlReadDenials])],
++			allowRead: [workspace],
++			allowWrite: [workspace],
++			denyWrite: workspaceCredentials,
++		};
++	} else {
++		filesystem = { disabled: true, denyRead: [], allowWrite: [], denyWrite: [] };
++	}
++	const sandboxConfig = {
++		filesystem,
++		...(isolateNetwork ? { network: { allowedDomains: [], deniedDomains: [] } } : {}),
+ 	};
+ 	const commandText = argv.map(shellQuoteArg).join(" ");
+ 	const wrapped = await SandboxManager.wrapWithSandboxArgv(
+ 		commandText,
+ 		process.platform === "win32" ? undefined : "/bin/sh",
+-		{ filesystem },
++		sandboxConfig,
+ 		signal,
+ 		workspace,
+ 		{ commandId: randomUUID(), commandText: argv.join(" ") },
+@@ -1277,6 +1340,14 @@ function gitControlPaths(cwd: string): string[] {
+ 	return paths;
+ }
+ 
++/** Git itself may read structural metadata, but never credential-bearing config or object storage. */
++function gitCredentialControlPaths(cwd: string): string[] {
++	return gitControlPaths(cwd).flatMap((path) => {
++		if (!existsSync(path) || !lstatSync(path).isDirectory()) return [];
++		return [join(path, "config"), join(path, "config.worktree"), join(path, "objects")];
++	});
++}
++
+ function assertMutableWorkspacePath(cwd: string, requestedPath: string, protectedPaths: readonly string[]): void {
+ 	const candidate = resolve(cwd, normalizeToolPath(requestedPath || "."));
+ 	const realCandidate = assertResolvedWorkspacePath(cwd, candidate);
+diff --git a/packages/long-horizon/src/state-machine.ts b/packages/long-horizon/src/state-machine.ts
+index cc33813..f11d86b 100644
+--- a/packages/long-horizon/src/state-machine.ts
++++ b/packages/long-horizon/src/state-machine.ts
+@@ -150,15 +150,15 @@ export function applyJournalRecord(
+ 			if (event.verificationSucceeded || adoptedAdvisedStrategy) next.failureStreak = undefined;
+ 			if (event.failureSignature) {
+ 				const current = next.failureStreak;
+-				const same =
+-					current?.workUnitId === event.report.workUnitId && current.signature === event.failureSignature;
++				const sameFailure = current?.signature === event.failureSignature;
++				const sameWorkUnit = current?.workUnitId === event.report.workUnitId;
+ 				next.failureStreak = {
+ 					workUnitId: event.report.workUnitId,
+ 					strategyId: event.report.strategyId,
+-					advisedStrategyId: same ? current.advisedStrategyId : undefined,
++					advisedStrategyId: sameFailure && sameWorkUnit ? current.advisedStrategyId : undefined,
+ 					signature: event.failureSignature,
+-					count: same ? current.count + 1 : 1,
+-					escalated: same ? current.escalated : false,
++					count: sameFailure ? current.count + 1 : 1,
++					escalated: sameFailure ? current.escalated : false,
+ 				};
+ 			}
+ 			break;
+@@ -189,17 +189,15 @@ export function applyJournalRecord(
+ 				previous.failureStreak?.workUnitId === event.workUnitId &&
+ 				previous.failureStreak.advisedStrategyId === event.strategyId &&
+ 				previous.failureStreak.strategyId !== event.strategyId;
+-			const same =
+-				!adoptedAdvisedStrategy &&
+-				previous.failureStreak?.workUnitId === event.workUnitId &&
+-				previous.failureStreak.signature === event.signature;
++			const sameFailure = !adoptedAdvisedStrategy && previous.failureStreak?.signature === event.signature;
++			const sameWorkUnit = previous.failureStreak?.workUnitId === event.workUnitId;
+ 			next.failureStreak = {
+ 				workUnitId: event.workUnitId,
+ 				strategyId: event.strategyId,
+-				advisedStrategyId: same ? previous.failureStreak!.advisedStrategyId : undefined,
++				advisedStrategyId: sameFailure && sameWorkUnit ? previous.failureStreak!.advisedStrategyId : undefined,
+ 				signature: event.signature,
+-				count: same ? previous.failureStreak!.count + 1 : 1,
+-				escalated: same ? previous.failureStreak!.escalated : false,
++				count: sameFailure ? previous.failureStreak!.count + 1 : 1,
++				escalated: sameFailure ? previous.failureStreak!.escalated : false,
+ 			};
+ 			break;
+ 		}
+diff --git a/packages/long-horizon/src/supervisor.ts b/packages/long-horizon/src/supervisor.ts
+index e779d6c..9e0abff 100644
+--- a/packages/long-horizon/src/supervisor.ts
++++ b/packages/long-horizon/src/supervisor.ts
+@@ -1004,11 +1004,16 @@ export class LongHorizonSupervisor {
+ 						"round",
+ 						this.active!,
+ 						nextPrompt,
+-						(text, result) =>
+-							parseTerraReport(text, [
++						(text, result) => {
++							const report = parseTerraReport(text, [
+ 								...result.toolEvidence,
+ 								...result.commandEvidence.filter(isCommandEvidence),
+-							]),
++							]);
++							if (!plan.workUnits.some((workUnit) => workUnit.id === report.workUnitId)) {
++								throw new Error(`report work unit is not in the validated plan: ${report.workUnitId}`);
++							}
++							return report;
++						},
+ 						true,
+ 					);
+ 				} catch (error) {
+diff --git a/packages/long-horizon/test/failure-escalation.test.ts b/packages/long-horizon/test/failure-escalation.test.ts
+index cc99e23..0ad9ef5 100644
+--- a/packages/long-horizon/test/failure-escalation.test.ts
++++ b/packages/long-horizon/test/failure-escalation.test.ts
+@@ -143,6 +143,57 @@ describe("failure escalation", () => {
+ 		expect(sessions.created.filter((session) => session.role === "advisor")).toHaveLength(1);
+ 	});
+ 
++	it("does not reset equivalent failures when Terra relabels the work unit", async () => {
++		const base = testConfig();
++		const config = { ...base, limits: { ...base.limits, maxEscalations: 1 } };
++		const workUnitIds = ["unit-a", "unit-b", "unit-c", "unit-d"];
++		const plan = PLAN.replace(
++			'[{"id":"unit","title":"work","acceptance":["tests"]}]',
++			JSON.stringify(workUnitIds.map((id) => ({ id, title: id, acceptance: ["tests"] }))),
++		);
++		const failureEvidence = commandEvidence("npm test", "workspace", 1);
++		const failed = workUnitIds.map((workUnitId) =>
++			promptResult(
++				report("verification-failed", failure)
++					.replace('"workUnitId":"unit"', `"workUnitId":"${workUnitId}"`)
++					.replace('"evidenceIds":[]', `"evidenceIds":["${failureEvidence.id}"]`),
++				{ commandEvidence: [failureEvidence] },
++			),
++		);
++		const changedAdvice = advice
++			.replace('"workUnitId":"unit"', '"workUnitId":"unit-d"')
++			.replace('"strategyId":"strategy-b"', '"strategyId":"strategy-e"');
++		const complete = promptResult(report("complete").replace('"workUnitId":"unit"', '"workUnitId":"unit-d"'));
++		const sessions = new FakeSessionHost({
++			planner: [promptResult(plan)],
++			executor: [...failed, complete],
++			advisor: [promptResult(changedAdvice)],
++		});
++		echoAdvisorSignature(sessions);
++		const commandRunner = async (command: string, cwd: string) =>
++			commandEvidence(command, await getWorkspaceIdentity(cwd));
++
++		const status = await LongHorizonSupervisor.create(config, { sessionHost: sessions, commandRunner }).run();
++
++		expect(status.phase).toBe("completed");
++		expect(status.escalations).toBe(1);
++		expect(sessions.created.filter((session) => session.role === "advisor")).toHaveLength(1);
++	});
++
++	it("blocks a Terra report whose work unit is absent from the persisted plan", async () => {
++		const config = testConfig();
++		const sessions = new FakeSessionHost({
++			planner: [promptResult(PLAN)],
++			executor: [promptResult(report("progress").replace('"workUnitId":"unit"', '"workUnitId":"invented"'))],
++		});
++
++		const status = await LongHorizonSupervisor.create(config, { sessionHost: sessions }).run();
++
++		expect(status.phase).toBe("blocked");
++		expect(status.blockedReason).toMatch(/work unit is not in the validated plan/);
++		expect(status.rounds).toBe(0);
++	});
++
+ 	it("resets a streak only when Terra adopts the durable advisor strategy", async () => {
+ 		const base = testConfig();
+ 		const config = { ...base, limits: { ...base.limits, maxEscalations: 1 } };
+diff --git a/packages/long-horizon/test/policy.test.ts b/packages/long-horizon/test/policy.test.ts
+index 9111b64..67ace84 100644
+--- a/packages/long-horizon/test/policy.test.ts
++++ b/packages/long-horizon/test/policy.test.ts
+@@ -1,5 +1,7 @@
+ import { execFileSync } from "node:child_process";
+ import { existsSync, linkSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
++import { createServer } from "node:http";
++import type { AddressInfo } from "node:net";
+ import { dirname, join } from "node:path";
+ import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
+ import { describe, expect, it, vi } from "vitest";
+@@ -296,9 +298,21 @@ describe("tool policy", () => {
+ 		expect(() => assertCommandAuthorized(command, { ...policy, allowCredentials: true })).not.toThrow();
+ 	});
+ 
+-	it("denies Git archives independently of destructive-Git authorization", () => {
+-		const command = "git archive --format=tar HEAD";
+-		const policy = { ...testConfig().policy, allowedCommands: [command], allowDestructiveGit: true };
++	it.each([
++		"git archive --format=tar HEAD",
++		"git bundle create export.bundle --all",
++		"git fast-export --all",
++		"git format-patch -1 HEAD --stdout",
++		"git pack-objects --stdout --all",
++		"git upload-archive .",
++		"git upload-pack .",
++	] as const)("denies Git object serializers independently of other authorization gates: %s", (command) => {
++		const policy = {
++			...testConfig().policy,
++			allowedCommands: [command],
++			allowDestructiveGit: true,
++			allowRemoteState: true,
++		};
+ 		expect(() => assertCommandAuthorized(command, policy)).toThrow(/credential access denied/);
+ 		expect(() => assertCommandAuthorized(command, { ...policy, allowCredentials: true })).not.toThrow();
+ 	});
+@@ -412,7 +426,7 @@ describe("tool policy", () => {
+ 		});
+ 		expect(allowed.exitCode).toBe(0);
+ 		expect(allowed.stdout).toBe(canary);
+-		expect(cleanup).toHaveBeenCalledTimes(1);
++		expect(cleanup).toHaveBeenCalledTimes(2);
+ 		cleanup.mockRestore();
+ 	});
+ 
+@@ -435,6 +449,97 @@ describe("tool policy", () => {
+ 		expect(`${result.stdout}${result.stderr}`).not.toContain(canary);
+ 	});
+ 
++	it("sandboxes credential-disabled scripts from committed credential blobs", async () => {
++		const config = testConfig();
++		const canary = "committed-object-credential-canary";
++		writeFileSync(join(config.cwd, ".env.production"), canary);
++		execFileSync("git", ["add", ".env.production"], { cwd: config.cwd });
++		execFileSync(
++			"git",
++			["-c", "user.name=Dreb Test", "-c", "user.email=dreb@example.invalid", "commit", "-qm", "track credential"],
++			{ cwd: config.cwd },
++		);
++		writeFileSync(
++			join(config.cwd, "read-git-object.cjs"),
++			'process.stdout.write(require("node:child_process").execFileSync("git", ["show", "HEAD:.env.production"], { encoding: "utf8" }))\n',
++		);
++		const command = "node read-git-object.cjs";
++		const policy = { ...config.policy, allowedCommands: [command], allowRemoteState: true };
++
++		const denied = await runAuthorizedCommand(command, config.cwd, policy);
++		expect(denied.exitCode).not.toBe(0);
++		expect(`${denied.stdout}${denied.stderr}`).not.toContain(canary);
++
++		const allowed = await runAuthorizedCommand(command, config.cwd, { ...policy, allowCredentials: true });
++		expect(allowed.exitCode).toBe(0);
++		expect(allowed.stdout).toBe(canary);
++	});
++
++	it("prevents direct Git from dispatching helpers that read committed credential blobs", async () => {
++		const config = testConfig();
++		const canary = "git-helper-object-credential-canary";
++		writeFileSync(join(config.cwd, ".env.production"), canary);
++		execFileSync("git", ["add", ".env.production"], { cwd: config.cwd });
++		execFileSync(
++			"git",
++			["-c", "user.name=Dreb Test", "-c", "user.email=dreb@example.invalid", "commit", "-qm", "track credential"],
++			{ cwd: config.cwd },
++		);
++		writeFileSync(join(config.cwd, "file.txt"), "changed\n");
++		writeFileSync(
++			join(config.cwd, "git-helper.cjs"),
++			'process.stdout.write(require("node:child_process").execFileSync("git", ["show", "HEAD:.env.production"], { encoding: "utf8" }))\n',
++		);
++		const command = `git -c "diff.external=node git-helper.cjs" diff -- file.txt`;
++		const policy = { ...config.policy, allowedCommands: [command] };
++
++		const denied = await runAuthorizedCommand(command, config.cwd, policy);
++		expect(denied.exitCode).not.toBe(0);
++		expect(`${denied.stdout}${denied.stderr}`).not.toContain(canary);
++
++		const allowed = await runAuthorizedCommand(command, config.cwd, {
++			...policy,
++			allowCredentials: true,
++			allowRemoteState: true,
++		});
++		expect(allowed.exitCode).toBe(0);
++		expect(allowed.stdout).toContain(canary);
++	});
++
++	it("prevents mutable exact-allowed scripts from using the network without remote-state authorization", async () => {
++		const config = testConfig();
++		let requests = 0;
++		const server = createServer((request, response) => {
++			requests++;
++			request.resume();
++			response.end("ok");
++		});
++		await new Promise<void>((resolve, reject) => {
++			server.once("error", reject);
++			server.listen(0, "127.0.0.1", resolve);
++		});
++		const address = server.address() as AddressInfo;
++		writeFileSync(
++			join(config.cwd, "post.cjs"),
++			'const http = require("node:http"); const request = http.request(process.argv[2], { method: "POST" }, (response) => { response.resume(); response.on("end", () => process.stdout.write("ok")); }); request.on("error", (error) => { console.error(error.message); process.exitCode = 1; }); request.end("payload");\n',
++		);
++		const command = `node post.cjs http://127.0.0.1:${address.port}/mutate`;
++		const policy = { ...config.policy, allowedCommands: [command], allowCredentials: true };
++
++		try {
++			const denied = await runAuthorizedCommand(command, config.cwd, policy);
++			expect(denied.exitCode).not.toBe(0);
++			expect(requests).toBe(0);
++
++			const allowed = await runAuthorizedCommand(command, config.cwd, { ...policy, allowRemoteState: true });
++			expect(allowed.exitCode).toBe(0);
++			expect(allowed.stdout).toBe("ok");
++			expect(requests).toBe(1);
++		} finally {
++			await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
++		}
++	});
++
+ 	it("does not classify ordinary secretary filenames as credentials", () => {
+ 		const command = "cat secretary.txt";
+ 		expect(() =>
+@@ -533,6 +638,9 @@ describe("tool policy", () => {
+ 		"git lfs push origin main",
+ 		"git-lfs push origin main",
+ 		"wget --post-data=x https://api.example.invalid/resource",
++		"wget --config=request.cfg",
++		"curl --config request.cfg",
++		"curl -K request.cfg",
+ 		"rclone copy ./artifact remote:bucket",
+ 		`node -e 'fetch("https://api.example.invalid/resource", { method: "POST" })'`,
+ 		`nodejs -e 'fetch("https://api.example.invalid/resource", { method: "POST" })'`,
