@@ -1,0 +1,618 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 1c03f84..6f6ddd9 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -1,7 +1,7 @@
+ # dreb-session-appearance
+ 
+-- Keep semantic colors stable across sessions; vary only the terminal canvas and session marker.
+-- Preserve high contrast: generated terminal text/background >= 12:1, muted panel text >= 7:1, dim panel text >= 4.5:1.
++- Keep semantic colors stable across instances; vary only the high-contrast process identity stripe and footer marker.
++- Preserve high contrast and the distinct syntax, success, warning, and error colors in `pierre-readable`.
+ - Do not persist a randomly selected theme into Dreb settings. Pass the loaded Theme object to `ctx.ui.setTheme()`.
+-- Mutate only OSC 11 (background), restore it on clean shutdown/terminal handoff, and avoid multiplexers unless explicitly opted in.
++- Do not mutate Ghostty terminal colors or window chrome. Dreb may render only its in-app identity marker.
+ - Run `npm run verify` after changes.
+diff --git a/README.md b/README.md
+index b3d6300..fcb55b7 100644
+--- a/README.md
++++ b/README.md
+@@ -1,18 +1,15 @@
+ # dreb-session-appearance
+ 
+-A local Dreb package for a more legible terminal UI and immediate visual separation between concurrent sessions.
++A local Dreb package for a more legible terminal UI and immediate visual separation between concurrent Dreb windows.
+ 
+ ## Behavior
+ 
+ - Applies the `pierre-readable` theme in memory, so it does not overwrite the persistent theme setting.
+-- Uses stable semantic colors: cyan for primary actions, green for success, amber for warnings, rose for errors, violet for quoted/custom content, and brighter gray levels for footer metadata.
+-- Derives a dark background hue from the Dreb session ID. A new session gets a pseudo-random hue; reopening the same session gets the same hue.
+-- Applies the hue only to the terminal background with standard OSC 11; Dreb text colors stay explicit and the terminal's foreground/cursor settings are left alone.
+-- Shows a compact colored session marker in the footer, such as `◆ Aegean · 205°`.
+-- Recomputes the appearance after `/new`, `/resume`, or `/fork`.
+-- Restores the terminal profile background on clean shutdown and before Dreb's default Ctrl+G external-editor or Ctrl+Z terminal handoffs; it reapplies on return/input.
+-
+-The canvas uses 55% HSL saturation and 13% lightness so concurrent sessions are visibly different while remaining dark. Automated checks require at least a 12:1 contrast ratio against the explicit `#F8FAFC` terminal text color for all generated hues. Secondary and tertiary theme text meet WCAG AA contrast against panel backgrounds.
++- Preserves a stable semantic palette: cyan for primary actions, green for success, amber for warnings, rose for errors, violet for quoted/custom content, and distinct syntax colors for code.
++- Selects one high-contrast identity color from a curated teal, orange, coral, lime, blue, and violet palette when a Dreb process starts. This identifies the running Dreb instance—not the active Dreb session.
++- Renders that identity as a persistent one-row, full-width stripe immediately above the editor and as a compact colored footer marker.
++- Keeps the identity color unchanged through `/new`, `/resume`, and `/fork`.
++- Leaves the Ghostty terminal profile canvas, text, cursor, and window chrome unchanged. Dreb cannot draw outside the Ghostty window; the in-app stripe is the durable orientation cue.
+ 
+ ## Installation
+ 
+@@ -20,23 +17,7 @@ The canvas uses 55% HSL saturation and 13% lightness so concurrent sessions are
+ dreb install /Users/m347724/Code/dreb-session-appearance
+ ```
+ 
+-Restart Dreb after installation. The package is global, so it applies to new interactive sessions in every project. Headless, JSON, RPC, non-TTY, and `TERM=dumb` sessions do not receive terminal OSC sequences.
+-
+-## Opt out
+-
+-Disable only the terminal background while keeping the accessible Dreb theme:
+-
+-```bash
+-DREB_SESSION_BACKGROUND=0 dreb
+-```
+-
+-`NO_COLOR` also disables terminal color mutation. OSC background changes are disabled by default inside tmux, GNU screen, and Zellij because panes can share dynamic terminal colors; set `DREB_SESSION_BACKGROUND=1` to opt in there. An uncatchable `SIGKILL` cannot restore terminal state; opening a new terminal or restarting the terminal profile restores it.
+-
+-To remove the package entirely:
+-
+-```bash
+-dreb remove /Users/m347724/Code/dreb-session-appearance
+-```
++Restart Dreb after installation. The package is global, so it applies to new interactive sessions in every project. Headless, JSON, and RPC sessions do not render the stripe.
+ 
+ ## Verification
+ 
+diff --git a/extensions/session-appearance.mjs b/extensions/session-appearance.mjs
+index f535f9c..1874980 100644
+--- a/extensions/session-appearance.mjs
++++ b/extensions/session-appearance.mjs
+@@ -1,100 +1,27 @@
+ import { randomUUID } from "node:crypto";
+ import {
+-  deriveSessionAppearance,
+-  resetTerminalColorsSequence,
+-  setTerminalColorsSequence,
++  deriveInstanceAppearance,
++  identityStripe,
+   STATUS_KEY,
+   statusText,
+-  terminalSupportsDynamicColors,
++  STRIPE_KEY,
+   THEME_NAME,
+ } from "../src/appearance.mjs";
+ 
+ const processRuntime = {
+-  env: process.env,
+-  isTTY: () => process.stdout.isTTY === true,
+-  write: (text) => process.stdout.write(text),
+-  onExit: (handler) => process.once("exit", handler),
+-  offExit: (handler) => process.off("exit", handler),
+-  onContinue: (handler) => process.on("SIGCONT", handler),
+-  offContinue: (handler) => process.off("SIGCONT", handler),
+   randomIdentity: randomUUID,
+ };
+ 
+ export function createSessionAppearanceExtension(runtime = processRuntime) {
+   return function sessionAppearanceExtension(dreb) {
+-    const ephemeralIdentity = runtime.randomIdentity();
+-    let currentAppearance;
+-    let terminalColorsActive = false;
+-    let exitHandlerRegistered = false;
+-    let continueHandlerRegistered = false;
+-    let unsubscribeTerminalInput;
+-
+-    const terminalIsEligible = () =>
+-      terminalSupportsDynamicColors(runtime.env, runtime.isTTY());
+-
+-    const restoreTerminal = () => {
+-      if (!terminalColorsActive) return;
+-      runtime.write(resetTerminalColorsSequence());
+-      terminalColorsActive = false;
+-    };
+-
+-    const applyTerminal = () => {
+-      if (!currentAppearance || !terminalIsEligible()) return;
+-      runtime.write(setTerminalColorsSequence(currentAppearance));
+-      terminalColorsActive = true;
+-    };
+-
+-    const resumeTerminal = () => {
+-      if (!terminalColorsActive) applyTerminal();
+-    };
+-
+-    const removeProcessHandlers = () => {
+-      if (exitHandlerRegistered) {
+-        runtime.offExit(restoreTerminal);
+-        exitHandlerRegistered = false;
+-      }
+-      if (continueHandlerRegistered) {
+-        runtime.offContinue(resumeTerminal);
+-        continueHandlerRegistered = false;
+-      }
+-    };
+-
+-    const ensureTerminalLifecycle = (ctx) => {
+-      if (!terminalIsEligible()) {
+-        restoreTerminal();
+-        return;
+-      }
+-      if (!exitHandlerRegistered) {
+-        runtime.onExit(restoreTerminal);
+-        exitHandlerRegistered = true;
+-      }
+-      if (!continueHandlerRegistered) {
+-        runtime.onContinue(resumeTerminal);
+-        continueHandlerRegistered = true;
+-      }
+-      if (!unsubscribeTerminalInput) {
+-        unsubscribeTerminalInput = ctx.ui.onTerminalInput((data) => {
+-          // Dreb's default Ctrl+G external-editor and Ctrl+Z suspend bindings
+-          // temporarily hand the terminal to another process.
+-          if (data.includes("\u0007") || data.includes("\u001a")) {
+-            restoreTerminal();
+-          } else {
+-            resumeTerminal();
+-          }
+-        });
+-      }
+-    };
++    // One random identity per running Dreb process (normally one Ghostty tab),
++    // deliberately independent from Dreb's current session.
++    const appearance = deriveInstanceAppearance(runtime.randomIdentity());
+ 
+     const applyAppearance = (ctx) => {
+       if (!ctx.hasUI) return;
+ 
+-      const identity =
+-        ctx.sessionManager.getSessionId?.() ??
+-        ctx.sessionManager.getSessionFile?.() ??
+-        ephemeralIdentity;
+-      currentAppearance = deriveSessionAppearance(identity);
+       const selectedTheme = ctx.ui.getTheme(THEME_NAME);
+-
+       if (!selectedTheme) {
+         ctx.ui.notify(
+           `Session appearance could not load required theme "${THEME_NAME}".`,
+@@ -112,21 +39,24 @@ export function createSessionAppearanceExtension(runtime = processRuntime) {
+         return;
+       }
+ 
+-      ensureTerminalLifecycle(ctx);
+-      applyTerminal();
+-      ctx.ui.setStatus(STATUS_KEY, statusText(currentAppearance));
++      ctx.ui.setWidget(
++        STRIPE_KEY,
++        () => ({
++          render: (width) => identityStripe(appearance, width),
++          invalidate() {},
++        }),
++        { placement: "aboveEditor" },
++      );
++      ctx.ui.setStatus(STATUS_KEY, statusText(appearance));
+     };
+ 
+     dreb.on("session_start", (_event, ctx) => applyAppearance(ctx));
+     dreb.on("session_switch", (_event, ctx) => applyAppearance(ctx));
+     dreb.on("session_fork", (_event, ctx) => applyAppearance(ctx));
+     dreb.on("session_shutdown", (_event, ctx) => {
+-      if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY, undefined);
+-      unsubscribeTerminalInput?.();
+-      unsubscribeTerminalInput = undefined;
+-      restoreTerminal();
+-      removeProcessHandlers();
+-      currentAppearance = undefined;
++      if (!ctx.hasUI) return;
++      ctx.ui.setWidget(STRIPE_KEY, undefined);
++      ctx.ui.setStatus(STATUS_KEY, undefined);
+     });
+   };
+ }
+diff --git a/src/appearance.mjs b/src/appearance.mjs
+index 77894c8..78bd1eb 100644
+--- a/src/appearance.mjs
++++ b/src/appearance.mjs
+@@ -1,11 +1,19 @@
+ const ESC = "\u001b";
+-const ST = `${ESC}\\`;
+ 
+ export const THEME_NAME = "pierre-readable";
+ export const STATUS_KEY = "session-appearance";
+-export const TERMINAL_TEXT = "#F8FAFC";
+-export const BACKGROUND_SATURATION = 55;
+-export const BACKGROUND_LIGHTNESS = 13;
++export const STRIPE_KEY = "session-appearance-stripe";
++
++// Semantic theme colors never vary. This small, high-contrast palette is used
++// solely as a persistent visual identifier for one running Dreb instance.
++export const INSTANCE_COLORS = [
++  { label: "Teal", marker: "#14D9C4" },
++  { label: "Orange", marker: "#FF9D00" },
++  { label: "Coral", marker: "#FF4D6D" },
++  { label: "Lime", marker: "#6EEB83" },
++  { label: "Blue", marker: "#5E9CFF" },
++  { label: "Violet", marker: "#D782FF" },
++];
+ 
+ export function stableHash(value) {
+   let hash = 0x811c9dc5;
+@@ -16,83 +24,31 @@ export function stableHash(value) {
+   return hash >>> 0;
+ }
+ 
+-export function hslToHex(hue, saturation, lightness) {
+-  const h = ((hue % 360) + 360) % 360;
+-  const s = Math.max(0, Math.min(100, saturation)) / 100;
+-  const l = Math.max(0, Math.min(100, lightness)) / 100;
+-  const chroma = (1 - Math.abs(2 * l - 1)) * s;
+-  const section = h / 60;
+-  const x = chroma * (1 - Math.abs((section % 2) - 1));
+-  const [r1, g1, b1] =
+-    section < 1 ? [chroma, x, 0] :
+-    section < 2 ? [x, chroma, 0] :
+-    section < 3 ? [0, chroma, x] :
+-    section < 4 ? [0, x, chroma] :
+-    section < 5 ? [x, 0, chroma] :
+-    [chroma, 0, x];
+-  const match = l - chroma / 2;
+-  const channel = (value) => Math.round((value + match) * 255).toString(16).padStart(2, "0");
+-  return `#${channel(r1)}${channel(g1)}${channel(b1)}`.toUpperCase();
++/**
++ * Select a stable identity color for this running Dreb process. The identity
++ * is intentionally not derived from the session: /new, /resume, and /fork
++ * must keep the visual marker unchanged.
++ */
++export function deriveInstanceAppearance(instanceIdentity) {
++  const index = stableHash(instanceIdentity) % INSTANCE_COLORS.length;
++  return { ...INSTANCE_COLORS[index], index };
+ }
+ 
+-function hueLabel(hue) {
+-  const labels = [
+-    "Garnet",
+-    "Amber",
+-    "Olive",
+-    "Emerald",
+-    "Teal",
+-    "Aegean",
+-    "Indigo",
+-    "Violet",
+-    "Plum",
+-    "Rose",
+-    "Garnet",
+-  ];
+-  return labels[Math.round(hue / 36)] ?? "Session";
++function markerRgb(marker) {
++  return marker.slice(1).match(/.{2}/g).map((value) => Number.parseInt(value, 16));
+ }
+ 
+-export function deriveSessionAppearance(sessionIdentity) {
+-  const hue = stableHash(sessionIdentity) % 360;
+-  return {
+-    hue,
+-    label: hueLabel(hue),
+-    background: hslToHex(hue, BACKGROUND_SATURATION, BACKGROUND_LIGHTNESS),
+-    marker: hslToHex(hue, 78, 72),
+-  };
++export function colorText(marker, text) {
++  const [r, g, b] = markerRgb(marker);
++  return `${ESC}[38;2;${r};${g};${b}m${text}${ESC}[39m`;
+ }
+ 
+-export function terminalSupportsDynamicColors(env, isTTY) {
+-  if (!isTTY || env.NO_COLOR !== undefined || env.DREB_SESSION_BACKGROUND === "0") return false;
+-  if (!env.TERM || env.TERM === "dumb") return false;
+-  const inMultiplexer = env.TMUX !== undefined || env.STY !== undefined || env.ZELLIJ !== undefined;
+-  return !inMultiplexer || env.DREB_SESSION_BACKGROUND === "1";
+-}
+-
+-export function setTerminalColorsSequence(appearance) {
+-  return `${ESC}]11;${appearance.background}${ST}`;
+-}
+-
+-export function resetTerminalColorsSequence() {
+-  return `${ESC}]111${ST}`;
++/** Render a one-row, full-width, high-contrast terminal identity band. */
++export function identityStripe(appearance, width) {
++  const line = "█".repeat(Math.max(1, width));
++  return [colorText(appearance.marker, line)];
+ }
+ 
+ export function statusText(appearance) {
+-  const rgb = appearance.marker.slice(1).match(/.{2}/g).map((value) => Number.parseInt(value, 16));
+-  return `${ESC}[38;2;${rgb[0]};${rgb[1]};${rgb[2]}m◆${ESC}[39m ${appearance.label} · ${appearance.hue}°`;
+-}
+-
+-export function relativeLuminance(hex) {
+-  const channels = hex
+-    .slice(1)
+-    .match(/.{2}/g)
+-    .map((value) => Number.parseInt(value, 16) / 255)
+-    .map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+-  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+-}
+-
+-export function contrastRatio(first, second) {
+-  const lighter = Math.max(relativeLuminance(first), relativeLuminance(second));
+-  const darker = Math.min(relativeLuminance(first), relativeLuminance(second));
+-  return (lighter + 0.05) / (darker + 0.05);
++  return `${colorText(appearance.marker, "◆")} ${appearance.label}`;
+ }
+diff --git a/tests/appearance.test.mjs b/tests/appearance.test.mjs
+index 6c6568d..8de2a4e 100644
+--- a/tests/appearance.test.mjs
++++ b/tests/appearance.test.mjs
+@@ -2,17 +2,14 @@ import assert from "node:assert/strict";
+ import { readFile } from "node:fs/promises";
+ import test from "node:test";
+ import {
+-  BACKGROUND_LIGHTNESS,
+-  BACKGROUND_SATURATION,
+-  contrastRatio,
+-  deriveSessionAppearance,
+-  hslToHex,
+-  resetTerminalColorsSequence,
+-  setTerminalColorsSequence,
+-  stableHash,
++  colorText,
++  deriveInstanceAppearance,
++  identityStripe,
++  INSTANCE_COLORS,
+   statusText,
+-  terminalSupportsDynamicColors,
+-  TERMINAL_TEXT,
++  STRIPE_KEY,
++  STATUS_KEY,
++  stableHash,
+   THEME_NAME,
+ } from "../src/appearance.mjs";
+ import {
+@@ -29,77 +26,46 @@ const REQUIRED_COLORS = [
+   "thinkingOff", "thinkingMinimal", "thinkingLow", "thinkingMedium", "thinkingHigh", "thinkingXhigh", "thinkingMax", "bashMode",
+ ];
+ 
+-test("session identity deterministically selects a varied dark background", () => {
+-  const first = deriveSessionAppearance("session-a");
+-  assert.deepEqual(first, deriveSessionAppearance("session-a"));
+-  assert.notEqual(first.background, deriveSessionAppearance("session-b").background);
+-  assert.equal(first.hue, stableHash("session-a") % 360);
+-  assert.match(first.background, /^#[0-9A-F]{6}$/);
+-});
+-
+-test("every possible session hue remains highly readable", () => {
+-  for (let hue = 0; hue < 360; hue += 1) {
+-    const background = hslToHex(hue, BACKGROUND_SATURATION, BACKGROUND_LIGHTNESS);
+-    assert.ok(
+-      contrastRatio(TERMINAL_TEXT, background) >= 12,
+-      `${TERMINAL_TEXT} must remain readable on ${background}`,
+-    );
+-  }
+-});
+-
+-test("terminal control sequences set and restore only the background", () => {
+-  const appearance = deriveSessionAppearance("session-a");
+-  assert.equal(
+-    setTerminalColorsSequence(appearance),
+-    `\u001b]11;${appearance.background}\u001b\\`,
+-  );
+-  assert.equal(resetTerminalColorsSequence(), "\u001b]111\u001b\\");
+-  assert.match(statusText(appearance), /◆.*°/);
++test("an instance identity deterministically selects one curated visual marker", () => {
++  const first = deriveInstanceAppearance("terminal-a");
++  assert.deepEqual(first, deriveInstanceAppearance("terminal-a"));
++  assert.deepEqual(first, {
++    ...INSTANCE_COLORS[stableHash("terminal-a") % INSTANCE_COLORS.length],
++    index: stableHash("terminal-a") % INSTANCE_COLORS.length,
++  });
++  assert.ok(INSTANCE_COLORS.some((color) => color.marker === first.marker));
++  assert.equal(new Set(INSTANCE_COLORS.map((color) => color.marker)).size, INSTANCE_COLORS.length);
+ });
+ 
+-test("dynamic terminal colors require an eligible TTY and honor opt-outs", () => {
+-  assert.equal(terminalSupportsDynamicColors({ TERM: "xterm-ghostty" }, true), true);
+-  assert.equal(terminalSupportsDynamicColors({ TERM: "dumb" }, true), false);
+-  assert.equal(terminalSupportsDynamicColors({ TERM: "xterm", NO_COLOR: "" }, true), false);
+-  assert.equal(terminalSupportsDynamicColors({ TERM: "xterm", DREB_SESSION_BACKGROUND: "0" }, true), false);
+-  assert.equal(terminalSupportsDynamicColors({ TERM: "xterm", TMUX: "/tmp/tmux" }, true), false);
+-  assert.equal(terminalSupportsDynamicColors({ TERM: "screen", STY: "123" }, true), false);
+-  assert.equal(terminalSupportsDynamicColors({ TERM: "xterm", ZELLIJ: "0" }, true), false);
+-  assert.equal(
+-    terminalSupportsDynamicColors({ TERM: "xterm", TMUX: "/tmp/tmux", DREB_SESSION_BACKGROUND: "1" }, true),
+-    true,
+-  );
+-  assert.equal(terminalSupportsDynamicColors({ TERM: "xterm" }, false), false);
++test("identity stripe is one full-width row in the instance color", () => {
++  const appearance = deriveInstanceAppearance("terminal-a");
++  const stripe = identityStripe(appearance, 12);
++  assert.equal(stripe.length, 1);
++  assert.deepEqual(stripe, [
++    colorText(appearance.marker, "█".repeat(12)),
++  ]);
++  assert.equal(statusText(appearance), `${colorText(appearance.marker, "◆")} ${appearance.label}`);
+ });
+ 
+-test("theme defines every documented token and readable rendered surface", async () => {
++test("theme preserves distinct semantic and syntax colors", async () => {
+   const theme = JSON.parse(await readFile(new URL("../themes/pierre-readable.json", import.meta.url), "utf8"));
+   const resolve = (token) => theme.vars[theme.colors[token]] ?? theme.colors[token];
+   assert.equal(theme.name, THEME_NAME);
+   assert.deepEqual(Object.keys(theme.colors).sort(), [...REQUIRED_COLORS].sort());
+-  assert.equal(theme.vars.text, TERMINAL_TEXT);
+-
+-  for (const [foreground, background, minimum] of [
+-    ["text", "toolPendingBg", 12],
+-    ["userMessageText", "userMessageBg", 12],
+-    ["customMessageText", "customMessageBg", 12],
+-    ["toolOutput", "toolPendingBg", 7],
+-    ["toolOutput", "toolSuccessBg", 7],
+-    ["toolOutput", "toolErrorBg", 7],
+-  ]) {
+-    assert.ok(
+-      contrastRatio(resolve(foreground), resolve(background)) >= minimum,
+-      `${foreground} must meet ${minimum}:1 on ${background}`,
+-    );
+-  }
+-  assert.ok(contrastRatio(theme.vars.dim, theme.vars.panel) >= 4.5);
+-  assert.ok(contrastRatio(theme.vars.dim, theme.vars.panelStrong) >= 4.5);
+-  assert.ok(contrastRatio(theme.vars.dim, theme.vars.panelAlt) >= 4.5);
++  assert.equal(resolve("accent"), "#67E8F9");
++  assert.equal(resolve("success"), "#86EFAC");
++  assert.equal(resolve("error"), "#FDA4AF");
++  assert.equal(resolve("warning"), "#FDE68A");
++  assert.equal(resolve("mdCode"), "#5EEAD4");
++  assert.equal(resolve("syntaxKeyword"), "#C4B5FD");
++  assert.equal(resolve("syntaxString"), "#86EFAC");
++  assert.ok(new Set(["accent", "success", "error", "warning", "mdCode", "syntaxKeyword", "syntaxString"].map(resolve)).size > 4);
+ });
+ 
+-test("extension applies an in-memory theme and refreshes identity on session changes", () => {
++test("extension keeps one process identity through session changes", () => {
+   const handlers = new Map();
+-  sessionAppearanceExtension({
++  const runtime = { randomIdentity: () => "ghostty-tab-a" };
++  createSessionAppearanceExtension(runtime)({
+     on(name, handler) {
+       handlers.set(name, handler);
+     },
+@@ -108,102 +74,57 @@ test("extension applies an in-memory theme and refreshes identity on session cha
+   const theme = { name: THEME_NAME };
+   const setThemeCalls = [];
+   const statuses = [];
+-  let sessionId = "session-a";
++  const widgets = [];
+   const context = {
+     hasUI: true,
+-    sessionManager: { getSessionId: () => sessionId },
+     ui: {
+       getTheme: (name) => name === THEME_NAME ? theme : undefined,
+       setTheme: (value) => {
+         setThemeCalls.push(value);
+         return { success: true };
+       },
+-      setStatus: (key, value) => statuses.push([key, value]),
++      setStatus: (...args) => statuses.push(args),
++      setWidget: (...args) => widgets.push(args),
+       notify: () => assert.fail("unexpected notification"),
+     },
+   };
+ 
+   handlers.get("session_start")({}, context);
+-  sessionId = "session-b";
+   handlers.get("session_switch")({}, context);
+-  sessionId = "session-c";
+   handlers.get("session_fork")({}, context);
++
++  const appearance = deriveInstanceAppearance("ghostty-tab-a");
+   assert.deepEqual(setThemeCalls, [theme, theme, theme]);
+-  assert.deepEqual(
+-    statuses.map(([key, value]) => [key, value]),
+-    ["session-a", "session-b", "session-c"].map((id) => [
+-      "session-appearance",
+-      statusText(deriveSessionAppearance(id)),
+-    ]),
+-  );
++  assert.deepEqual(statuses, [
++    [STATUS_KEY, statusText(appearance)],
++    [STATUS_KEY, statusText(appearance)],
++    [STATUS_KEY, statusText(appearance)],
++  ]);
++  assert.equal(widgets.length, 3);
++  for (const [key, factory, options] of widgets) {
++    assert.equal(key, STRIPE_KEY);
++    assert.deepEqual(options, { placement: "aboveEditor" });
++    assert.deepEqual(factory().render(9), identityStripe(appearance, 9));
++  }
+ });
+ 
+-test("extension restores terminal background for handoffs and shutdown without duplicate cleanup", () => {
++test("extension clears only its UI marker at shutdown", () => {
+   const handlers = new Map();
+-  const writes = [];
+-  const exitHandlers = new Set();
+-  const continueHandlers = new Set();
+-  let terminalInput;
+-  const runtime = {
+-    env: { TERM: "xterm-ghostty" },
+-    isTTY: () => true,
+-    write: (text) => writes.push(text),
+-    onExit: (handler) => exitHandlers.add(handler),
+-    offExit: (handler) => exitHandlers.delete(handler),
+-    onContinue: (handler) => continueHandlers.add(handler),
+-    offContinue: (handler) => continueHandlers.delete(handler),
+-    randomIdentity: () => "ephemeral",
+-  };
+-  createSessionAppearanceExtension(runtime)({
++  const calls = [];
++  createSessionAppearanceExtension({ randomIdentity: () => "ghostty-tab-a" })({
+     on: (name, handler) => handlers.set(name, handler),
+   });
+-
+-  let sessionId = "session-a";
+-  const statuses = [];
+-  const context = {
++  handlers.get("session_shutdown")({}, {
+     hasUI: true,
+-    sessionManager: { getSessionId: () => sessionId },
+     ui: {
+-      getTheme: () => ({ name: THEME_NAME }),
+-      setTheme: () => ({ success: true }),
+-      setStatus: (...args) => statuses.push(args),
+-      notify: () => assert.fail("unexpected notification"),
+-      onTerminalInput: (handler) => {
+-        terminalInput = handler;
+-        return () => { terminalInput = undefined; };
+-      },
++      setWidget: (...args) => calls.push(["widget", ...args]),
++      setStatus: (...args) => calls.push(["status", ...args]),
+     },
+-  };
+-
+-  handlers.get("session_start")({}, context);
+-  assert.equal(writes[0], setTerminalColorsSequence(deriveSessionAppearance("session-a")));
+-  assert.equal(exitHandlers.size, 1);
+-  assert.equal(continueHandlers.size, 1);
+-  const exitHandler = [...exitHandlers][0];
+-
+-  terminalInput("\u0007");
+-  assert.equal(writes.at(-1), resetTerminalColorsSequence());
+-  terminalInput("x");
+-  assert.equal(writes.at(-1), setTerminalColorsSequence(deriveSessionAppearance("session-a")));
+-
+-  terminalInput("\u001a");
+-  assert.equal(writes.at(-1), resetTerminalColorsSequence());
+-  for (const handler of continueHandlers) handler();
+-  assert.equal(writes.at(-1), setTerminalColorsSequence(deriveSessionAppearance("session-a")));
+-
+-  sessionId = "session-b";
+-  handlers.get("session_switch")({}, context);
+-  assert.equal(writes.at(-1), setTerminalColorsSequence(deriveSessionAppearance("session-b")));
+-
+-  handlers.get("session_shutdown")({}, context);
+-  const writesAfterShutdown = writes.length;
+-  assert.deepEqual(statuses.at(-1), ["session-appearance", undefined]);
+-  assert.equal(writes.at(-1), resetTerminalColorsSequence());
+-  assert.equal(exitHandlers.size, 0);
+-  assert.equal(continueHandlers.size, 0);
+-  assert.equal(terminalInput, undefined);
+-  exitHandler();
+-  assert.equal(writes.length, writesAfterShutdown);
++  });
++  assert.deepEqual(calls, [
++    ["widget", STRIPE_KEY, undefined],
++    ["status", STATUS_KEY, undefined],
++  ]);
+ });
+ 
+ test("extension fails loudly when its package theme is unavailable", () => {
+@@ -212,7 +133,6 @@ test("extension fails loudly when its package theme is unavailable", () => {
+   sessionAppearanceExtension({ on: (name, handler) => handlers.set(name, handler) });
+   handlers.get("session_start")({}, {
+     hasUI: true,
+-    sessionManager: { getSessionId: () => "session-a" },
+     ui: {
+       getTheme: () => undefined,
+       notify: (...args) => notifications.push(args),
