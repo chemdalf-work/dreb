@@ -1,6 +1,6 @@
 {
 	"name": "@dreb/long-horizon",
-	"version": "2.64.1",
+	"version": "2.66.0",
 	"description": "Durable unattended long-horizon supervisor for dreb",
 	"license": "MIT",
 	"type": "module",
