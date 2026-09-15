@@ -127,7 +127,8 @@ describe("InteractiveMode working indicator", () => {
 			checkShutdownRequested: vi.fn(async () => {}),
 			showWarning: vi.fn(),
 			buddyController: { handleEvent: vi.fn() },
-			footerDataProvider: { refreshDailyCost: vi.fn(async () => {}) },
+			session: { sessionManager: { getSessionFile: () => "/tmp/parent.jsonl" } },
+			footerDataProvider: { refreshDailyCost: vi.fn(async () => []) },
 		};
 		for (const method of [
 			"defaultInterruptWorkingMessage",
@@ -140,11 +141,26 @@ describe("InteractiveMode working indicator", () => {
 			"stopAgentWorking",
 			"stopAllInlineStatus",
 			"setWorkingMessage",
+			"refreshDailyCostAndWarn",
 		]) {
 			fakeThis[method] = (...args: unknown[]) => (InteractiveMode as any).prototype[method].call(fakeThis, ...args);
 		}
 		return { fakeThis, inlineStatuses };
 	}
+
+	test("surfaces crossed daily cost thresholds as warning-only notifications", async () => {
+		const { fakeThis } = createWorkingFakeThis();
+		fakeThis.footerDataProvider.refreshDailyCost.mockResolvedValue([
+			{ threshold: 50, cost: 63.25, localDate: "2026-08-25" },
+		]);
+
+		await fakeThis.refreshDailyCostAndWarn();
+
+		expect(fakeThis.footerDataProvider.refreshDailyCost).toHaveBeenCalledWith("/tmp/parent.jsonl");
+		expect(fakeThis.showWarning).toHaveBeenCalledWith(
+			"Daily API spend crossed the $50 threshold (now $63.25). This is warning-only; work continues.",
+		);
+	});
 
 	test("agent_start renders working state through editor inline status, not statusContainer", async () => {
 		const { fakeThis, inlineStatuses } = createWorkingFakeThis();

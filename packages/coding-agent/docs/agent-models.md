@@ -34,19 +34,33 @@ When a subagent is launched, its model is resolved in this priority:
 3. **Agent definition `model` field** — from the `.md` agent file's frontmatter
 4. **Parent session model** — used when none of the above resolve to an available model
 
-If the `agentModels.models` list is empty or undefined for a given agent, resolution falls through to the agent definition's model, then to the parent session model.
+If the `agentModels.models` list is empty or undefined for a given agent, resolution falls through to the agent definition's model, then to the parent session model. An unavailable per-invocation `model` fails instead of falling back, because explicit route values are hard locks.
+
+## Single Model Mode
+
+The `singleModelMode` setting (top-level, default `false`) is a global kill-switch for model selection: when enabled, every subagent runs on the **parent session's model** and the resolution order above is skipped entirely. Per-invocation `model` overrides, `agentModels.models` fallback lists, agent-definition `model` fields, spawn-time availability probes, and the optional [Dispatch Arbiter](#dispatch-arbiter) are all bypassed; the child process is spawned directly on the parent's resolved model.
+
+Any requested model selection — including one identical to the parent's model — is reported to the parent model by prepending this notice to the child's output:
+
+```
+[WARNING: The user has enabled "single model mode" in the settings, so the model selection for this subagent was ignored. Using parent model "<provider>/<model>".]
+```
+
+If nothing requested a model (no override, no `agentModels` entry, no agent-definition model), the child simply runs on the parent model without a warning. If the parent session has no model to inherit, or the parent's model cannot be resolved, the spawn fails loudly instead of silently falling back.
+
+Configure it in `settings.json` (global file, with the standard project-level override in `.dreb/settings.json`), in the TUI via `/settings` → **Single model mode**, in the dashboard Settings page (behavior section), or through the [RPC settings API](rpc.md#set_settings). Per-task `thinking` values still apply and are validated against the parent model.
 
 ## Per-request Thinking Overrides
 
 The `subagent` tool accepts an optional `thinking` value in single mode, at the top level for parallel/chain inheritance, or on an individual task/step. Per-task values win over the top-level value.
 
-Supported values are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. Validation happens after the child model resolves: non-`off` levels fail for non-reasoning models, `xhigh` requires advertised xhigh support, and `max` requires a max-capable model (currently GPT-5.6 including Sol, Terra, and Luna). `max` does not replace `xhigh`. Codex `ultra` additionally enables client-side multi-agent orchestration, so it is not accepted or sent as a raw effort. Omit the field to preserve the child's normal default/settings behavior. The child's actual effective level is reported in its `agent_start` event, result metadata, and `background_agent_end` event.
+Supported values are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. Validation happens after the child model resolves: non-`off` levels fail for non-reasoning models, `xhigh` requires advertised xhigh support, and `max` requires a max-capable model (currently the GPT-5.6 family including Sol, Terra, and Luna, and the GPT-6 family including Astra). `max` does not replace `xhigh`. Codex `ultra` additionally enables client-side multi-agent orchestration, so it is not accepted or sent as a raw effort. Omit the field to preserve the child's normal default/settings behavior. The child's actual effective level is reported in its `agent_start` event, result metadata, and `background_agent_end` event.
 
 ## Evidence-based Routing Guide
 
 The built-in `/skill:model-routing-guide` workflow has exactly two scope sources: non-empty comma-separated skill arguments, or the effective non-empty `enabledModels` array when invoked without arguments. Once it selects either source, it treats that list as authoritative and does not search for another session scope.
 
-Because Stage 1 is a skill-only workflow, it cannot discover a session's runtime `--models` value or later in-session scope changes. Pass the same patterns as skill arguments when that runtime scope is the intended research set. The workflow resolves candidates against `dreb --list-models`, combines canonical provider/model documentation and public evidence with sanitized aggregate observations from local subagent session logs, then writes and validates `~/.dreb/agent/model-routing-guide.md`.
+Because Stage 1 is a skill-only workflow, it cannot discover a session's runtime `--models` value or later in-session scope changes. Pass the same patterns as skill arguments when that runtime scope is the intended research set. The workflow resolves candidates against `pierre-dreb --list-models`, combines canonical provider/model documentation and public evidence with sanitized aggregate observations from local subagent session logs, then writes and validates `~/.dreb/agent/model-routing-guide.md`.
 
 The guide is intended to improve role and cost fit, especially keeping planning/implementation work out of `Explore` and reserving expensive frontier models for work that actually needs them. Guide generation alone does not change routing; the optional Dispatch Arbiter below consumes it. See [skills.md](skills.md#model-routing-guide).
 
@@ -58,13 +72,17 @@ The guide is intended to improve role and cost fit, especially keeping planning/
 {"agent":"feature-dev","model":"provider/model-id","thinking":"high"}
 ```
 
-The host accepts only those three exact fields. The agent must already be available through the parent's `subagent` tool, the model must be an exact canonical member of the current live explicit scope, and thinking must be supported by that model. The selected existing definition supplies its system prompt and filtered tool configuration verbatim. Task, cwd, chain-substituted content, parent linkage, and every non-routing field remain unchanged.
+The host accepts only those three exact fields. The agent must already be available through the parent's `subagent` tool, the model must be an exact canonical member of the current live explicit scope, and thinking must be supported by that model. Per-invocation `agent`, `model`, and `thinking` values are explicit caller choices and are locked: the arbiter must return their proposed values unchanged, and the host fails closed if it does not. Settings and agent-definition defaults remain soft proposals. The selected existing definition supplies its system prompt and filtered tool configuration verbatim. Task, cwd, chain-substituted content, parent linkage, and every non-routing field remain unchanged.
 
 The arbiter follows the tab/session-title setter's small headless pattern: `AgentSession` maintains a bounded `RollingContextBuffer`, then the control path makes a direct `completeSimple()` call with the configured model/API key, timeout, and no tools or child process. There is no parent-model fallback. One malformed JSON response may be retried once; all configuration, guide, scope, auth/provider, timeout, parse, agent, model, and thinking failures prevent spawn.
 
-The validated input contains the immutable task/cwd, proposed route, safe summaries of all available definitions (name, description, effective tools, model defaults), exact live candidates, the matching guide, bounded first/latest user intent and recent labeled parent activity—including bounded tool outputs—parent model/session title, metadata-only repository/cwd/branch/dirty count, and lineage identifiers. Following the title setter's rolling-context pattern, ordinary file contents, diffs, command output, and other useful tool-result content are not categorically removed; the serialized package receives the existing secret scrubbing before remote inference. The arbiter itself receives no tools. The child still receives the original unsanitized task/cwd exactly as provided.
+Before arbitration, Pierre Dreb deterministically classifies the child task as `low`, `medium`, or `high` coding risk using fixed host-side signals. State-changing security, destructive, persistence, concurrency, protocol, and release work is high risk and keeps capability and quality ahead of price; bounded read-only investigation of those surfaces can remain low risk. Other implementation work is medium risk and prioritizes role and capability fit before price. This is soft optimization, not a hard spending cap.
 
-Every enabled attempt emits and persists a safe `subagent_arbitration` record with proposed/final routes, changed fields, success/failure, optional chain step, and host-generated errors. Raw arbiter prompt/output/reasoning is never persisted or inserted into either model context. The TUI, JSON/RPC, and dashboard consume the same typed record; dashboard agent identity updates to the final selected agent before child events arrive.
+The validated input contains the immutable task/cwd, proposed route and locked fields, coding-risk assessment, safe summaries of all available definitions (name, description, effective tools, model defaults, and a derived `lean`/`full` tool profile), exact live candidates with capability metadata and catalog prices per million tokens, the matching guide, bounded first/latest user intent and recent labeled parent activity—including bounded tool outputs—parent model/session title, metadata-only repository/cwd/branch/dirty count, and lineage identifiers. Zero-only pricing is represented as `null` rather than treated as free. A `lean` profile means its declared built-in tools omit `edit` and `write`; it is a routing hint, not a sandbox or hard read-only boundary because `bash`, always-active tools, and extension tools may still be available. Child startup context, repository instructions, memory, skills, and extensions are unchanged.
+
+Following the title setter's rolling-context pattern, ordinary file contents, diffs, command output, and other useful tool-result content are not categorically removed; the serialized package receives the existing secret scrubbing before remote inference. The arbiter itself receives no tools. The child still receives the original unsanitized task/cwd exactly as provided.
+
+Every enabled attempt emits and persists a safe `subagent_arbitration` record with proposed/final routes, changed and locked fields, coding risk, success/failure, optional chain step, and host-generated errors. Raw arbiter prompt/output/reasoning is never persisted or inserted into either model context. The TUI, JSON/RPC, and dashboard consume the same typed record; dashboard agent identity updates to the final selected agent before child events arrive.
 
 Configuration and failure details are in [settings.md](settings.md#dispatch-arbiter); event shapes are in [json.md](json.md) and [rpc.md](rpc.md).
 

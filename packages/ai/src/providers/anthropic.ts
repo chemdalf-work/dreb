@@ -518,6 +518,7 @@ export const streamSimpleAnthropic: StreamFunction<"anthropic-messages", SimpleS
 		model.maxTokens,
 		options.reasoning,
 		options.thinkingBudgets,
+		model,
 	);
 
 	return streamAnthropic(model, context, {

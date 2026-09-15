@@ -1,10 +1,12 @@
-dreb is an open-source terminal coding agent, forked from [pi-mono](https://github.com/badlogic/pi-mono) (itself derived from Claude Code). It has *fewer* features than Claude Code by design — the bet is that a small, hackable core you can shape beats a large feature set you can't.
+Pierre Dreb is an open-source terminal coding agent, hard-forked from [Pierre Dreb](https://github.com/chemdalf-work/pierre-dreb), which was itself forked from [pi-mono](https://github.com/badlogic/pi-mono). It favors a small, hackable core that can be shaped with local workflows over a large fixed feature set.
 
-Claude Code is a great product. dreb isn't trying to compete on features — it's trying to compete on flexibility. The core is kept minimal; what you'd find baked into other tools, you build here with [skills](#skills) (markdown workflows), [extensions](#extensions) (TypeScript), or install from third-party [packages](#packages).
+`pierre-dreb` is the canonical command. The temporary `pierre-dreb` compatibility command invokes the same `dist/cli.js`; the retained `@dreb/*` package namespace, `~/.dreb`, project `.dreb`, and `DREB_*` variables remain unchanged.
 
-Concretely, dreb ships *without* things Claude Code has — and that's intentional:
+Pierre Dreb keeps optional capabilities inspectable: use [skills](#skills) for markdown workflows, [extensions](#extensions) for TypeScript integration, or install third-party [packages](#packages).
 
-- **No MCP.** Build CLI tools with READMEs (see [Skills](#skills)), or build an extension that adds MCP support.
+Like its upstream, Pierre Dreb intentionally ships without some Claude Code features:
+
+- **No generic MCP client in the core.** Build CLI tools with READMEs (see [Skills](#skills)), or build an extension that adds MCP support.
 - **No permission popups.** Run in a container, or build your own confirmation flow with [extensions](#extensions).
 - **No plan mode.** Write plans to files, or build it with extensions, or install a package.
 - **No background bash in the main agent.** The main agent runs commands synchronously. Role-matched parallel work can use the optional `subagent` tool — each subagent runs as an independent process with its own tools.
@@ -43,13 +45,13 @@ What you get in exchange: a skill system, an extension API, custom agent definit
 
 ## Quick Start
 
-> **Node.js 22 LTS is required.** dreb relies on SSE streaming behavior that is stable in Node 22 LTS. Node 24 and Node 26 are known to break provider streaming due to changes in ReadableStream buffering, which causes every provider to fail with **"request ended without sending any chunks"**. If you see that error, switch to Node 22 LTS.
+> **Node.js 22 LTS is required.** Pierre Dreb relies on SSE streaming behavior that is stable in Node 22 LTS. Node 24 and Node 26 are known to break provider streaming due to changes in ReadableStream buffering, which causes every provider to fail with **"request ended without sending any chunks"**. If you see that error, switch to Node 22 LTS.
 
 ### Building from source (recommended)
 
 ```bash
-git clone https://github.com/aebrer/dreb.git
-cd dreb
+git clone https://github.com/chemdalf-work/pierre-dreb.git
+cd pierre-dreb
 npm install
 npm run build
 npm link -w packages/coding-agent
@@ -63,39 +65,50 @@ npm link -w packages/coding-agent
 npm install -g @dreb/coding-agent
 ```
 
+The retained package namespace is `@dreb/*`; installation exposes canonical `pierre-dreb` and compatibility `pierre-dreb` commands that point to the same compiled CLI.
+
 Authenticate with an API key:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-dreb
+pierre-dreb
 ```
 
 Or use your existing subscription:
 
 ```bash
-dreb
+pierre-dreb
 /login  # Then select provider
+```
+
+Inspect exact product, source, and runtime provenance without loading credentials or extensions:
+
+```bash
+pierre-dreb diagnostics
+pierre-dreb diagnostics --json
 ```
 
 Or use a custom provider (corporate proxy, Bedrock, etc.) — see [Custom providers & models](#providers--models).
 
-Then just talk to dreb. All 13 standard built-in tools are enabled by default (unless `backgroundAgents.maxConcurrentSubagents` is `0`, which removes `subagent` from new parent sessions): `read`, `write`, `edit`, `bash`, `grep`, `find`, `ls`, `web_search`, `web_fetch`, `subagent`, `wait`, `watch_github_ci`, and `ask_user`. Use `--tools` to restrict to a subset (e.g., `--tools read,grep,find,ls` for read-only). Four additional tools — `search`, `repo_graph`, `skill`, and `tasks_update` — are always active regardless of `--tools`. `suggest_next` is active by default but excluded when `--tools` is specified. The model uses these to fulfill your requests. Add capabilities via [skills](#skills), [prompt templates](#prompt-templates), [extensions](#extensions), or [packages](#packages).
+Then just talk to Pierre Dreb. All 13 standard built-in tools are enabled by default (unless `backgroundAgents.maxConcurrentSubagents` is `0`, which removes `subagent` from new parent sessions): `read`, `write`, `edit`, `bash`, `grep`, `find`, `ls`, `web_search`, `web_fetch`, `subagent`, `wait`, `watch_github_ci`, and `ask_user`. Use `--tools` to restrict to a subset (e.g., `--tools read,grep,find,ls` for read-only). Four additional tools — `search`, `repo_graph`, `skill`, and `tasks_update` — are always active regardless of `--tools`. `suggest_next` is active by default but excluded when `--tools` is specified. The model uses these to fulfill your requests. Add capabilities via [skills](#skills), [prompt templates](#prompt-templates), [extensions](#extensions), or [packages](#packages).
 
-**Also available:** [`@dreb/telegram`](https://www.npmjs.com/package/@dreb/telegram) — run dreb as a Telegram bot with live tool status and visible results for user-facing tools (`npm install -g @dreb/telegram`). [`@dreb/dashboard`](https://www.npmjs.com/package/@dreb/dashboard) — run `dreb dashboard` for a browser UI with fleet overview, full chat steering, unified dismissible session banners, explicit navigation that preserves viewed closed transcripts as read-only snapshots, a TUI-parity rolling TPS indicator with long-term delta, generic fail-closed built-in slash-command discovery and execution, inline provider/API failures with partial output preserved, sanitized raster tool images plus sent user uploads retained as bounded transcript previews by default, a bounded all-agent subagent panel with drill-in, host file browser, dreb memory editor with exact-revision saves and automatic index cleanup on delete, curated appearance themes with per-browser light/dark mode and font selection (theme default, Google-hosted IBM Plex Mono, or the bundled self-hosted JetBrains Mono, Fira Code, Iosevka, OpenDyslexic, and Atkinson Hyperlegible), and resilient Tailscale/rotating-code pairing with a configurable 180-day default and advance expiry warnings (`npm install -g @dreb/dashboard`; see [docs/dashboard.md](docs/dashboard.md)). Tool images cross browser-facing transport as content-addressed references; browser-local Settings offers placeholders, bounded previews, or informed-opt-in originals, with size disclosure and confirmation above 1 MiB. Full-resolution HTML export remains self-contained. The Memories screen is dreb-only (`~/.dreb/memory` and populated active/on-disk-session project `.dreb/memory`; empty projects are omitted), shows complete indexes with a >200-line warning, opens local index links within the selected scope, replaces stale editor content with visible loading feedback, surfaces malformed entry frontmatter for repair, preserves drafts on conflicts, and does not create/rename entries or expose Claude paths. Compact SSE snapshots update live fleet cards without repeatedly fetching the cross-project inventory, and session drill-in hydrates state, messages, and background agents through one ordered snapshot request. While drill-in remains mounted, authoritative detail refreshes keep its header current, confirmed model/thinking changes are reconciled without stale snapshot rollback, and post-compaction context uses a conservative estimate until fresh provider usage arrives. Terminal provider failures show their reason on fleet cards, while transient failures clear terminal state when automatic retry begins and remain recorded inline on the failed attempt. Its top bar and persistent session header indicators report connecting, connected, retrying, resyncing, disconnected, or auth failed; bounded SSE replay plus an explicit snapshot barrier restores session state, tasks, and image references after a reload, restart, gap, backpressure disconnect, or stalled stream, while authenticated image routes recover bytes separately from authoritative transcripts.
+**Also available:** [`@dreb/long-horizon`](../long-horizon/) — a standalone durable supervisor for multi-session autonomous work with planning, recovery, safe rollover, and deterministic acceptance gates (`npm install -g @dreb/long-horizon`). This is broader than auto-compaction continuation and leaves policy outside coding-agent core. [`@dreb/telegram`](https://www.npmjs.com/package/@dreb/telegram) — run Pierre Dreb as a Telegram bot with live tool status and visible results for user-facing tools (`npm install -g @dreb/telegram`). [`@dreb/dashboard`](https://www.npmjs.com/package/@dreb/dashboard) — run `pierre-dreb dashboard` for a browser UI with fleet overview, full chat steering, dismissible session banners confined to the transcript column without shifting the fleet sidebar, a grouped header with back navigation on the left, model/thinking controls in a separate row, and the fleet sidebar toggle in the bottom usage/context-stats row (also available with details collapsed), explicit navigation that preserves viewed closed transcripts as read-only snapshots, a TUI-parity rolling TPS indicator with long-term delta, generic fail-closed built-in slash-command discovery and execution, inline provider/API failures with partial output preserved, sanitized raster tool images plus sent user uploads retained as bounded transcript previews by default, a bounded all-agent subagent panel with drill-in, a fleet sidebar on session/subagent views with the fleet cards' project/status/reasons, activity/latest-assistant preview, subagents, tasks, model/context/cost, and message/activity metadata (deterministic order, persisted desktop collapse and pointer/keyboard-resizable width, highest-priority status border while hidden, safe-area-aware mobile drawer with managed focus and Escape-to-close without aborting the agent), host file browser, Pierre Dreb memory editor with exact-revision saves and automatic index cleanup on delete, curated appearance themes with per-browser light/dark mode and font selection (theme default, Google-hosted IBM Plex Mono, or the bundled self-hosted JetBrains Mono, Fira Code, Iosevka, OpenDyslexic, and Atkinson Hyperlegible), and resilient Tailscale/rotating-code pairing with a configurable 180-day default and advance expiry warnings (`npm install -g @dreb/dashboard`; see [docs/dashboard.md](docs/dashboard.md)). Tool images cross browser-facing transport as content-addressed references; in dashboard mode each unique image crosses the RPC stdout pipe at most once per child process (later occurrences become references), and browser-local Settings offers placeholders, bounded previews, or informed-opt-in originals, with size disclosure and confirmation above 1 MiB. Full-resolution HTML export remains self-contained. The Memories screen is dreb-only (`~/.dreb/memory` and populated active/on-disk-session project `.dreb/memory`; empty projects are omitted), shows complete indexes with a >200-line warning, opens local index links within the selected scope, replaces stale editor content with visible loading feedback, surfaces malformed entry frontmatter for repair, preserves drafts on conflicts, and does not create/rename entries or expose Claude paths. Compact SSE snapshots update live fleet cards without repeatedly fetching the cross-project inventory, and session drill-in hydrates state, messages, and background agents through one ordered snapshot request. Direct sidebar switching, including leaving a closed session, loads the destination with its own screen state and per-session text draft; abandoned hydration cannot overwrite the new view. While drill-in remains mounted, authoritative detail refreshes keep its header current, confirmed model/thinking changes are reconciled without stale snapshot rollback, and post-compaction context uses a conservative estimate until fresh provider usage arrives. Terminal provider failures show their reason on fleet cards, while transient failures clear terminal state when automatic retry begins and remain recorded inline on the failed attempt. Its top bar and persistent session header indicators report connecting, connected, retrying, resyncing, disconnected, or auth failed; bounded SSE replay plus an explicit snapshot barrier restores session state, tasks, and image references after a reload, restart, gap, backpressure disconnect, or stalled stream, while authenticated image routes recover bytes separately from authoritative transcripts.
 
 **Platform notes:** [Windows](docs/windows.md) | [Termux (Android)](docs/termux.md) | [tmux](docs/tmux.md) | [Terminal setup](docs/terminal-setup.md) | [Shell aliases](docs/shell-aliases.md)
 
-**Bun users:** Bun's lockfile can cache stale `@dreb/*` versions after upgrades, causing missing-export errors. Fix with `bun pm cache rm && bunx --force dreb`.
+**Bun users:** Bun's lockfile can cache stale `@dreb/*` versions after upgrades, causing missing-export errors. Fix with `bun pm cache rm && bunx --force pierre-dreb`.
 
 ### Troubleshooting
 
-- **"request ended without sending any chunks" on every provider** — Your Node version is likely too new. Switch to **Node.js 22 LTS**. Node 26 in particular changed ReadableStream buffering in a way that breaks the Anthropic and OpenAI SDK stream parsers dreb uses.
+- **"request ended without sending any chunks" on every provider** — Your Node version is likely too new. Switch to **Node.js 22 LTS**. Node 26 in particular changed ReadableStream buffering in a way that breaks the Anthropic and OpenAI SDK stream parsers Pierre Dreb uses.
 
 ---
 
 ## Providers & Models
 
-For each built-in provider, dreb maintains a list of tool-capable models, updated with every release. Authenticate via subscription (`/login`) or API key, then select any model from that provider via `/model`.
+For each built-in provider, Pierre Dreb maintains a list of tool-capable models, updated with every release. Authenticate via subscription (`/login`) or API key, then select any model from that provider via `/model`.
+
+GPT-6 Astra is available as `openai-codex/gpt-6-astra` and `github-copilot/gpt-6-astra`, with `xhigh` and native `max` thinking support. Codex defaults to `gpt-5.6-luna`. Missing saved defaults now warn and prefer the same provider's available default; explicit removed model IDs are not automatically migrated. See [model selection and removed models](docs/providers.md#model-selection-and-removed-models).
 
 **Subscriptions:**
 - OpenAI ChatGPT Plus/Pro (Codex)
@@ -142,7 +155,7 @@ The interface from top to bottom:
 - **Startup header** - Shows shortcuts (`/hotkeys` for all), loaded AGENTS.md files, prompt templates, skills, and extensions
 - **Messages** - Your messages, assistant responses, tool calls and results, notifications, errors, and extension UI
 - **Editor** - Where you type; border color indicates thinking level
-- **Footer** - Working directory, session name, total token/cache usage, cost, context usage, current model, and rolling tokens-per-second (median TPS with long-term delta)
+- **Footer** - Working directory, session name, main token/cache usage, explicit main/descendant/today costs, an always-expanded hierarchical per-child usage breakdown, context usage, current model, and rolling tokens-per-second (median TPS with long-term delta)
 
 The editor can be temporarily replaced by other UI, like built-in `/settings` or custom UI from extensions (e.g., a Q&A tool that lets the user answer model questions in a structured format). [Extensions](#extensions) can also replace the editor, add widgets above/below it, a status line, custom footer, or overlays.
 
@@ -174,6 +187,7 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/new` | Start a new session |
 | `/name <name>` | Set session display name |
 | `/session` | Show session info (path, tokens, cost) |
+| `/agents` | Show stable, complete descendant-agent history with status, model/thinking, token split, and cost |
 | `/tree` | Jump to any point in the session and continue from there |
 | `/fork` | Branch a new session from any user or assistant message (assistant = continue from that answer, user = rewind and re-ask) |
 | `/compact [prompt]` | Manually compact context, optional custom instructions |
@@ -183,7 +197,7 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/buddy` | Terminal companion — hatch, pet, reroll, set model, or hide. See [docs/buddy.md](docs/buddy.md) |
 | `/reload` | Reload keybindings, extensions, skills, prompts, and context files (themes hot-reload automatically) |
 | `/hotkeys` | Show all keyboard shortcuts |
-| `/quit`, `/exit` | Quit dreb |
+| `/quit`, `/exit` | Quit Pierre Dreb |
 
 ### Keyboard Shortcuts
 
@@ -211,7 +225,7 @@ Submit messages while the agent is working:
 - **Escape** aborts and restores queued messages to editor
 - **Alt+Up** retrieves queued messages back to editor
 
-On Windows Terminal, `Alt+Enter` is fullscreen by default. Remap it in [docs/terminal-setup.md](docs/terminal-setup.md) so dreb can receive the follow-up shortcut.
+On Windows Terminal, `Alt+Enter` is fullscreen by default. Remap it in [docs/terminal-setup.md](docs/terminal-setup.md) so Pierre Dreb can receive the follow-up shortcut.
 
 Configure delivery in [settings](docs/settings.md): `steeringMode` and `followUpMode` can be `"one-at-a-time"` (default, waits for response) or `"all"` (delivers all queued at once). `transport` selects provider transport preference (`"sse"`, `"websocket"`, or `"auto"`) for providers that support multiple transports.
 
@@ -226,11 +240,11 @@ Sessions are stored as JSONL files with a tree structure. Each entry has an `id`
 Sessions auto-save to `~/.dreb/agent/sessions/` organized by working directory.
 
 ```bash
-dreb -c                  # Continue most recent session
-dreb -r                  # Browse and select from past sessions
-dreb --no-session        # Ephemeral mode (don't save)
-dreb --session <path>    # Use specific session file or ID
-dreb --fork <path>       # Fork specific session file or ID into a new session
+pierre-dreb -c                  # Continue most recent session
+pierre-dreb -r                  # Browse and select from past sessions
+pierre-dreb --no-session        # Ephemeral mode (don't save)
+pierre-dreb --session <path>    # Use specific session file or ID
+pierre-dreb --fork <path>       # Fork specific session file or ID into a new session
 ```
 
 ### Branching
@@ -253,13 +267,13 @@ Long sessions can exhaust context windows. Compaction summarizes older messages 
 
 **Manual:** `/compact` or `/compact <custom instructions>`
 
-**Automatic:** Enabled by default. Triggers on context overflow (recovers and retries) or when approaching the limit (proactive). Configure via `/settings` or `settings.json`. For unattended long-running work, enable **Continue after auto-compaction** (persisted as `compaction.continueAfterAutoCompaction`) to start another model turn after every successful automatic compaction, even with no queued message. It is off by default and never makes manual `/compact` continue.
+**Automatic:** Enabled by default. Triggers on context overflow (recovers and retries) or proactively when approaching the limit, including between LLM requests in a long tool loop. Mid-turn checks wait until every tool call has a matching result, compact the settled context, and continue in the same loop before the next provider request. Configure via `/settings` or `settings.json`. For unattended long-running work, enable **Continue after auto-compaction** (persisted as `compaction.continueAfterAutoCompaction`) to keep pending or interrupted work moving after successful automatic compaction. It is off by default, does not start a fresh turn after a completed assistant answer, and never makes manual `/compact` continue. This continuation is not a durable goal driver; use the standalone [`@dreb/long-horizon`](../long-horizon/) package for persisted rounds, cross-session rollover, recovery, limits, and evidence-gated completion.
 
 Compaction is lossy. The full history remains in the JSONL file; use `/tree` to revisit. Customize compaction behavior via [extensions](#extensions). See [docs/compaction.md](docs/compaction.md) for internals.
 
 ### Tab Title
 
-After a few tool calls, dreb auto-generates a terminal tab title describing the session's task — based primarily on your actual request and current-session actions, with branch/repo/cwd used only for disambiguation. Useful when multiple tabs are open. Fires once per session via a background LLM call, and never overwrites an already-named (e.g. resumed) session; failures are surfaced (shown in interactive mode, logged to stderr in RPC mode).
+After a few tool calls, Pierre Dreb auto-generates a terminal tab title describing the session's task — based primarily on your actual request and current-session actions, with branch/repo/cwd used only for disambiguation. Useful when multiple tabs are open. Fires once per session via a background LLM call, and never overwrites an already-named (e.g. resumed) session; failures are surfaced (shown in interactive mode, logged to stderr in RPC mode).
 
 Set `tabTitle.model` to pin the primary call to one exact `provider/model`. When it is absent, resolution remains the Explore `agentModels` override, then Explore agent frontmatter, then the parent session model. A failed call on a selected model retries once with a different parent model. Disable generation, select its model, adjust the trigger threshold, or set a title length target in [settings](docs/settings.md). Dashboard Settings exposes the enable toggle and model picker, including clearing a pinned model back to the automatic Explore route.
 
@@ -291,7 +305,7 @@ See [docs/settings.md](docs/settings.md) for all options. Dashboard Settings re-
 
 ## Context Files
 
-dreb loads `AGENTS.md` (or `CLAUDE.md`) at startup from:
+Pierre Dreb loads `AGENTS.md` (or `CLAUDE.md`) at startup from:
 - `~/.dreb/agent/AGENTS.md` (global)
 - Parent directories (walking up from cwd)
 - Current directory
@@ -300,7 +314,7 @@ Use for project instructions, conventions, common commands. All matching files a
 
 ### Nested context trust
 
-At startup, dreb **always** performs a separate upward scan from its launch cwd and loads matching `AGENTS.md`/`CLAUDE.md` files there and in parent directories. That initial scan is not lazy nested loading and is **not** controlled by the settings below. A context file in a subdirectory — or in a different repo an agent later visits — is considered only when a tool operates there.
+At startup, Pierre Dreb **always** performs a separate upward scan from its launch cwd and loads matching `AGENTS.md`/`CLAUDE.md` files there and in parent directories. That initial scan is not lazy nested loading and is **not** controlled by the settings below. A context file in a subdirectory — or in a different repo an agent later visits — is considered only when a tool operates there.
 
 Lazy nested/out-of-cwd context loading is **off by default**. Configure explicit global trusted roots in `~/.dreb/agent/settings.json`:
 
@@ -312,11 +326,11 @@ Lazy nested/out-of-cwd context loading is **off by default**. Configure explicit
 }
 ```
 
-A trusted root permits lazy loading for that existing directory and all of its descendants. dreb resolves both the root and each tool target through canonical native `realpath` at decision time: relative, missing, non-directory, and broken-symlink roots fail closed; duplicate and nested roots are deduplicated/subsumed. A lexical descendant that symlinks outside the canonical root is therefore **not** trusted. Project `.dreb/settings.json` cannot add, override, or otherwise widen this policy.
+A trusted root permits lazy loading for that existing directory and all of its descendants. Pierre Dreb resolves both the root and each tool target through canonical native `realpath` at decision time: relative, missing, non-directory, and broken-symlink roots fail closed; duplicate and nested roots are deduplicated/subsumed. A lexical descendant that symlinks outside the canonical root is therefore **not** trusted. Project `.dreb/settings.json` cannot add, override, or otherwise widen this policy.
 
 - Lazy loading triggers on path-bearing tools (`read`, `edit`, `write`, `grep`, `find`, `ls`) and on `bash` commands that begin with `cd <dir>`.
 - It walks from the target toward the applicable ceiling. A trusted root is a hard ceiling; otherwise the session cwd is used for in-tree targets, then the outermost git repo root, then the outermost directory containing a context file.
-- Each file is injected at most once per session, including files from the initial upward scan. The paths are realpath-deduplicated. If a triggering `read` or full `cat`/`bat` already returns a context file in full, dreb marks it loaded without adding a duplicate block.
+- Each file is injected at most once per session, including files from the initial upward scan. The paths are realpath-deduplicated. If a triggering `read` or full `cat`/`bat` already returns a context file in full, Pierre Dreb marks it loaded without adding a duplicate block.
 - Auto-loaded text is secret-scrubbed and appended **after** extension `tool_result` transforms, so those transforms intentionally do not see it.
 - Main agents and subagents make the same global trust decision. Global trust changes are observed by active processes for **future** lazy loads; already injected content cannot be removed from their conversation.
 
@@ -326,13 +340,13 @@ A trusted root permits lazy loading for that existing directory and all of its d
 
 Replace the default system prompt with `.dreb/SYSTEM.md` (project) or `~/.dreb/agent/SYSTEM.md` (global). Append without replacing via `APPEND_SYSTEM.md`.
 
-For persistent instructions that apply only to one exact provider/model pair, set `systemPrompt` to replace dreb's built-in prompt or `appendSystemPrompt` to append instructions. Put the field directly on a custom `models[]` entry or built-in `modelOverrides` entry in `models.json`, or use `modelSettings` in `settings.json` with a canonical key such as `openai-codex/gpt-5.6-sol`. Configure prompt behavior in only one file for a canonical model: dreb fails loudly instead of applying implicit precedence when both files declare it. Prompt changes apply when the model changes, and `/reload` picks up edits from either file. Explicit session replacements (`--system-prompt`, `SYSTEM.md`, or SDK hooks) take precedence over model replacement; model append instructions still follow the selected base. See [Custom models](docs/models.md#model-configuration) and [Model settings](docs/settings.md#modelsettings).
+For persistent instructions that apply only to one exact provider/model pair, set `systemPrompt` to replace Pierre Dreb's built-in prompt or `appendSystemPrompt` to append instructions. Put the field directly on a custom `models[]` entry or built-in `modelOverrides` entry in `models.json`, or use `modelSettings` in `settings.json` with a canonical key such as `openai-codex/gpt-5.6-sol`. Configure prompt behavior in only one file for a canonical model: Pierre Dreb fails loudly instead of applying implicit precedence when both files declare it. Prompt changes apply when the model changes, and `/reload` picks up edits from either file. Explicit session replacements (`--system-prompt`, `SYSTEM.md`, or SDK hooks) take precedence over model replacement; model append instructions still follow the selected base. See [Custom models](docs/models.md#model-configuration) and [Model settings](docs/settings.md#modelsettings).
 
 ---
 
 ## Memory
 
-dreb has a persistent, file-based memory system. Memory survives across sessions and helps the model recall user preferences, past decisions, project context, and pointers to external resources.
+Pierre Dreb has a persistent, file-based memory system. Memory survives across sessions and helps the model recall user preferences, past decisions, project context, and pointers to external resources.
 
 ### How it works
 
@@ -374,7 +388,7 @@ Each memory directory has a `MEMORY.md` file that serves as an index. Only the f
 
 ### Claude Code compatibility
 
-dreb reads existing Claude Code memory for the current project from `~/.claude/projects/` (read-only), with source labeling and a warning about Claude Code-specific references that may not apply to dreb.
+Pierre Dreb reads existing Claude Code memory for the current project from `~/.claude/projects/` (read-only), with source labeling and a warning about Claude Code-specific references that may not apply to Pierre Dreb.
 
 ---
 
@@ -390,9 +404,9 @@ Task tracking is prompt-driven: the system prompt includes guidelines for when t
 
 ## Subagents
 
-The optional `subagent` tool runs focused, role-matched work in independent child agent processes. Each subagent runs in its own process with its own context window, and notifies the parent when complete. In the dashboard, a live child's transcript view can accept the user's own steering messages directly; repeated messages use that child's configured one-at-a-time or all-at-once steering queue. Completed and rehydrated transcripts remain read-only.
+The optional `subagent` tool runs focused, role-matched work in independent child agent processes. Each subagent runs in its own process with its own context window, and notifies the parent when complete. The TUI footer shows stable live/recent child rows, and `/agents` shows the complete current-session descendant history. These views and the RPC/dashboard DTOs expose hierarchy, explicit running/completed/failed/aborted state, provider/model/thinking, input/output/cache token totals, and cost. Persisted child JSONL files restore completed nested history after restart. In the dashboard, a live child's transcript view can accept the user's own steering messages directly; repeated messages use that child's configured one-at-a-time or all-at-once steering queue. Completed and rehydrated transcripts remain read-only.
 
-When `agent` is omitted, dreb selects the default `Explore` agent. Explore retrieves concrete, bounded evidence: files, symbols, documentation, call sites, exact snippets, tests for a named behavior, and explicitly named data flows. The primary agent must synthesize that evidence and owns root-cause diagnosis, ambiguous-requirement interpretation, architecture/design decisions, implementation recommendations, planning, and final conclusions.
+When `agent` is omitted, Pierre Dreb selects the default `Explore` agent. Explore retrieves concrete, bounded evidence: files, symbols, documentation, call sites, exact snippets, tests for a named behavior, and explicitly named data flows. The primary agent must synthesize that evidence and owns root-cause diagnosis, ambiguous-requirement interpretation, architecture/design decisions, implementation recommendations, planning, and final conclusions.
 
 Good Explore requests ask it to locate every renderer of a named component, enumerate call sites, quote collection-limiting code, or find documented examples. Do not ask Explore to investigate a root cause, decide ambiguous behavior, recommend an implementation, design a refactor, or produce a plan. Parallel and chain execution do not change role fit; specialized agents remain available for the broader work described by their own definitions.
 
@@ -411,13 +425,15 @@ Set `backgroundAgents.maxConcurrentSubagents` in `/settings`, dashboard Settings
 
 **Per-agent model overrides:** The model used by each agent type can be overridden via the `agentModels.models` setting (a map of agent name → ordered fallback list) without copying or editing the agent definition `.md` files. Configure it in `settings.json` or via `/settings` → **Agent Models**. Resolution order: per-invocation `model` override → `agentModels` setting → agent definition `model` → parent session model. See [docs/agent-models.md](docs/agent-models.md).
 
-**Optional Dispatch Arbiter:** A global-only `subagentArbiter` setting can enable a fully headless, direct model call after the proposal above resolves but before each child process spawns. It uses the validated routing guide, live explicit model scope, and bounded title-setter-style parent activity including useful tool outputs; existing secret scrubbing applies before inference. It may change only the existing agent type, exact scoped provider/model, and supported thinking level. It has no tools, cannot rewrite the task/cwd or agent definitions, and fails closed on configuration, guide, scope, inference, output, or validation errors. It runs once per single/parallel child and after `{previous}` substitution for every chain step. Interactive `/settings` and dashboard Settings both expose enable/disable, exact model selection, thinking, guide path, and loud readiness/validation feedback. Safe typed changed/unchanged/failure records are persisted outside parent model context and relayed to the TUI, JSON/RPC, and dashboard. See [Dispatch Arbiter](docs/agent-models.md#dispatch-arbiter) and [settings](docs/settings.md#dispatch-arbiter).
+**Single model mode:** The `singleModelMode` setting (default `false`) forces every subagent to run on the parent session's model. When enabled, per-invocation `model` overrides, `agentModels` fallback lists, agent-definition models, spawn-time probes, and the dispatch arbiter are all bypassed, and any requested model selection — even one identical to the parent's — is reported to the parent by prepending a `[WARNING: ...]` note to the child's output. If nothing requested a model, no warning appears. If the parent session has no model, the spawn fails loudly. Configure it in the TUI (`/settings`), dashboard Settings, or `settings.json`. See [docs/agent-models.md](docs/agent-models.md#single-model-mode).
+
+**Optional Dispatch Arbiter:** A global-only `subagentArbiter` setting can enable a fully headless, direct model call after the proposal above resolves but before each child process spawns. It uses the validated routing guide, live explicit model scope, bounded title-setter-style parent activity including useful tool outputs, deterministic host-side coding-risk classification, derived lean/full tool profiles, and candidate price/capability metadata; existing secret scrubbing applies before inference. It may change only non-explicit agent, exact scoped provider/model, and supported thinking fields: per-call values are locked and host-enforced. Low-risk work favors the least expensive adequate lean route, while high-risk work keeps capability and quality ahead of price. Zero-only pricing is treated as unknown, and this is soft optimization rather than a hard spending cap. The arbiter has no tools, cannot rewrite the task/cwd or agent definitions, and fails closed on configuration, guide, scope, inference, output, or validation errors. It runs once per single/parallel child and after `{previous}` substitution for every chain step. Interactive `/settings` and dashboard Settings both expose enable/disable, exact model selection, thinking, guide path, and loud readiness/validation feedback. Safe typed changed/unchanged/failure records are persisted outside parent model context and relayed to the TUI, JSON/RPC, and dashboard. See [Dispatch Arbiter](docs/agent-models.md#dispatch-arbiter) and [settings](docs/settings.md#dispatch-arbiter).
 
 **Model identity in system prompt:** The parent session's running model is exposed in its own system prompt as `You are running on: provider/id`. This lets the model make self-aware routing decisions (e.g. delegate vision tasks to a multimodal subagent, or use a differently-architected model as a critic). The line updates automatically on mid-session model switches.
 
 **Session and event metadata:** Each child process records its agent type in the session JSONL header (`agentType` field), providing an audit trail of which agent definition executed the work. Child `agent_start`, subagent results, and `background_agent_end` also expose the canonical resolved `provider/model` and effective thinking level, including defaults used when no override was supplied. Chain completion events expose ordered per-step metadata because steps may use different models or thinking levels. Enabled arbiter attempts add a separate `subagent_arbitration` event with proposed/final routes, changed fields, status, optional chain step, and safe host error metadata; raw prompts, responses, and reasoning are never included.
 
-**Background-agent guardrail:** Background subagents run asynchronously and return control to you while they work. To stop the parent agent from spinning ahead of results, a guardrail pauses it after `backgroundAgents.parentTurnLimit` turns (default 3) while subagents are still running. When this happens, dreb surfaces a friendly, non-error notification in the TUI and Telegram — explaining that background agents are still working and the parent paused intentionally, and that it resumes when they report back or when you send a message to steer it. This is a frontend/session event, not a model-context steer, so it can't go stale. Set `backgroundAgents.parentTurnGuardrail` to `false` to let the parent run unbounded while subagents work, or raise `parentTurnLimit` to relax the guardrail. See [settings](docs/settings.md#background-agents).
+**Background-agent guardrail:** Background subagents run asynchronously and return control to you while they work. To stop the parent agent from spinning ahead of results, a guardrail pauses it after `backgroundAgents.parentTurnLimit` turns (default 3) while subagents are still running. When this happens, Pierre Dreb surfaces a friendly, non-error notification in the TUI and Telegram — explaining that background agents are still working and the parent paused intentionally, and that it resumes when they report back or when you send a message to steer it. This is a frontend/session event, not a model-context steer, so it can't go stale. Set `backgroundAgents.parentTurnGuardrail` to `false` to let the parent run unbounded while subagents work, or raise `parentTurnLimit` to relax the guardrail. See [settings](docs/settings.md#background-agents).
 
 ### Waiting for GitHub CI
 
@@ -433,7 +449,7 @@ The `search` tool provides natural language queries over the codebase using embe
 
 **Parameters:** `query` (required), `searchDir` (directory to index and search — each unique value gets its own independent index; defaults to the enclosing Git root, or cwd outside Git; set it explicitly in Telegram sessions where cwd is `~/`), `restrictToDir` (filter results to files under this subdirectory within the already-built index — does not affect which files are indexed), `limit` (max results, default 20), `rebuild` (force a clean re-index when results look stale or corrupt).
 
-**How it works:** When a top-level dreb process starts in a Git repository, it builds or incrementally refreshes the structural project index without generating embeddings. The first semantic query adds any missing embeddings; subsequent queries reuse the cached index and refresh changed files by mtime. Each explicit `searchDir` gets its own independent index.
+**How it works:** When a top-level Pierre Dreb process starts in a Git repository, it builds or incrementally refreshes the structural project index without generating embeddings. The first semantic query adds any missing embeddings; subsequent queries reuse the cached index and refresh changed files by mtime. Each explicit `searchDir` gets its own independent index.
 
 **Indexing pipeline:**
 - AST-aware code chunking via tree-sitter (TypeScript, JavaScript, Python, Go, Rust, Java, C, C++, GDScript) — extracts functions, classes, methods, and exports as individual chunks
@@ -444,7 +460,7 @@ The `search` tool provides natural language queries over the codebase using embe
 
 ### Repository dependency graph
 
-The `repo_graph` tool exposes bounded traversal of the same index's static file-import relationships. Before a top-level dreb session starts in a Git repository, Dreb automatically prepares this structural index and reports startup progress on stderr; subagents reuse the on-disk index instead of repeating the scan. Supply a repository-relative `file`, optional `direction` (`dependencies`, `dependents`, or `both`), `depth` (1–3), `limit` (1–100), `searchDir`, and `rebuild`. Without an explicit `searchDir`, traversal uses the enclosing Git root. Results are breadth-first and identify the preceding file for each relationship; mutual imports in `both` mode are labeled `imports_and_imported_by`. Structural indexing does not generate embeddings; a later semantic search fills missing vectors on demand.
+The `repo_graph` tool exposes bounded traversal of the same index's static file-import relationships. Before a top-level Pierre Dreb session starts in a Git repository, Dreb automatically prepares this structural index and reports startup progress on stderr; subagents reuse the on-disk index instead of repeating the scan. Supply a repository-relative `file`, optional `direction` (`dependencies`, `dependents`, or `both`), `depth` (1–3), `limit` (1–100), `searchDir`, and `rebuild`. Without an explicit `searchDir`, traversal uses the enclosing Git root. Results are breadth-first and identify the preceding file for each relationship; mutual imports in `both` mode are labeled `imports_and_imported_by`. Structural indexing does not generate embeddings; a later semantic search fills missing vectors on demand.
 
 This is navigation evidence, not a call graph or runtime proof. Dynamic imports, reflection, generated code, framework wiring, and unresolved aliases may be absent. Verify behavior in source and tests.
 
@@ -489,7 +505,7 @@ Skills support [content substitution](docs/skills.md#content-substitution) (`$1`
 
 Place in `~/.dreb/agent/skills/`, `~/.agents/skills/`, `.dreb/skills/`, or `.agents/skills/` (from `cwd` up through parent directories) or a [package](#packages) to share with others. See [docs/skills.md](docs/skills.md).
 
-dreb ships with **mach6** — a built-in development workflow (issue → plan → push → review → fix → publish) that uses GitHub as shared memory and multi-agent code review. See [docs/mach6.md](docs/mach6.md).
+Pierre Dreb ships with **mach6** — a built-in development workflow (issue → plan → push → review → fix → publish) that uses GitHub as shared memory and multi-agent code review. See [docs/mach6.md](docs/mach6.md).
 
 It also ships with the explicitly invoked **`model-routing-guide`** skill. Pass comma-separated model patterns as arguments, or run it without arguments to use the effective non-empty `enabledModels` array. Prefix either form with `update` to diff an existing guide against the resolved scope, preserve retained entries, remove stale ones, and research newly added models instead of rebuilding everything. Those are its only scope sources: it cannot discover a session's runtime `--models` value, so pass those same patterns explicitly when that is the intended scope. It researches canonical provider/model candidates, external evidence, and sanitized aggregate subagent history, then validates and writes `~/.dreb/agent/model-routing-guide.md` atomically. The optional global Dispatch Arbiter consumes the guide only when its exact coverage matches the live explicit scope. See [docs/skills.md](docs/skills.md#model-routing-guide) and [docs/agent-models.md](docs/agent-models.md#dispatch-arbiter).
 
@@ -497,7 +513,7 @@ It also ships with the explicitly invoked **`model-routing-guide`** skill. Pass 
 
 <p align="center"><img src="docs/images/doom-extension.png" alt="Doom Extension" width="600"></p>
 
-TypeScript modules that extend dreb with custom tools, commands, keyboard shortcuts, event handlers, and UI components.
+TypeScript modules that extend Pierre Dreb with custom tools, commands, keyboard shortcuts, event handlers, and UI components.
 
 ```typescript
 export default function (dreb: ExtensionAPI) {
@@ -517,7 +533,7 @@ export default function (dreb: ExtensionAPI) {
 - Git checkpointing and auto-commit
 - SSH and sandbox execution
 - MCP server integration
-- Make dreb look like Claude Code
+- Make Pierre Dreb look like Claude Code
 - Games while waiting (yes, Doom runs)
 - ...anything you can dream up
 
@@ -525,7 +541,7 @@ Place in `~/.dreb/agent/extensions/`, `.dreb/extensions/`, or a [package](#packa
 
 ### Themes
 
-Built-in: `dark`, `light`. Themes hot-reload: modify the active theme file and dreb immediately applies changes.
+Built-in: `dark`, `light`. Themes hot-reload: modify the active theme file and Pierre Dreb immediately applies changes.
 
 Place in `~/.dreb/agent/themes/`, `.dreb/themes/`, or a [package](#packages) to share with others. See [docs/themes.md](docs/themes.md).
 
@@ -535,27 +551,39 @@ Bundle and share extensions, skills, prompts, and themes via npm or git.
 
 > **Note:** Third-party packages can include extensions (arbitrary code) and skills (model instructions). Skim what you're installing, same as any other dependency.
 
+### Optional context-efficient analysis
+
+[`dreb-context-mode`](https://github.com/chemdalf-work/dreb-context-mode) is a separately maintained extension package, not a generic MCP client in Pierre Dreb's core. Install it once:
+
 ```bash
-dreb install npm:@foo/my-tools
-dreb install npm:@foo/my-tools@1.2.3      # pinned version
-dreb install git:github.com/user/repo
-dreb install git:github.com/user/repo@v1  # tag or commit
-dreb install git:git@github.com:user/repo
-dreb install git:git@github.com:user/repo@v1  # tag or commit
-dreb install https://github.com/user/repo
-dreb install https://github.com/user/repo@v1      # tag or commit
-dreb install ssh://git@github.com/user/repo
-dreb install ssh://git@github.com/user/repo@v1    # tag or commit
-dreb remove npm:@foo/my-tools
-dreb uninstall npm:@foo/my-tools          # alias for remove
-dreb list
-dreb update                               # skips pinned packages
-dreb config                               # enable/disable extensions, skills, prompts, themes
+pierre-dreb install git:github.com/chemdalf-work/dreb-context-mode
+```
+
+Later main sessions and subagents discover it automatically; no repeated skill invocation or direct `ctx_*` call is required. Its `context_mode` guidance is advisory rather than universal deterministic interception: start discovery with `search`, keep small or exact evidence native, use derived large analysis only where appropriate, and directly verify material claims. Failure produces a bounded visible diagnostic followed by native continuation, never a silent fallback or partial protocol success.
+
+The package is external code and not an OS sandbox. Its process has the Pierre Dreb user's filesystem, network, executable, and other OS privileges. Indexed data persists only in package-owned Pierre Dreb local storage; consult the [package documentation](https://github.com/chemdalf-work/dreb-context-mode) for project isolation, retention, removal, and abandoned-directory pruning. RTK is not integrated because its fidelity, exit-code, and actionable-diagnostic failures make automatic interception unsafe.
+
+```bash
+pierre-dreb install npm:@foo/my-tools
+pierre-dreb install npm:@foo/my-tools@1.2.3      # pinned version
+pierre-dreb install git:github.com/user/repo
+pierre-dreb install git:github.com/user/repo@v1  # tag or commit
+pierre-dreb install git:git@github.com:user/repo
+pierre-dreb install git:git@github.com:user/repo@v1  # tag or commit
+pierre-dreb install https://github.com/user/repo
+pierre-dreb install https://github.com/user/repo@v1      # tag or commit
+pierre-dreb install ssh://git@github.com/user/repo
+pierre-dreb install ssh://git@github.com/user/repo@v1    # tag or commit
+pierre-dreb remove npm:@foo/my-tools
+pierre-dreb uninstall npm:@foo/my-tools          # alias for remove
+pierre-dreb list
+pierre-dreb update                               # skips pinned packages
+pierre-dreb config                               # enable/disable extensions, skills, prompts, themes
 ```
 
 Packages install to `~/.dreb/agent/git/` (git) or global npm. Use `-l` for project-local installs (`.dreb/git/`, `.dreb/npm/`). If you use a Node version manager and want package installs to reuse a stable npm context, set `npmCommand` in `settings.json`, for example `["mise", "exec", "node@20", "--", "npm"]`.
 
-Create a package by adding a `dreb` key to `package.json`:
+Create a package by adding a `pierre-dreb` key to `package.json`:
 
 ```json
 {
@@ -570,7 +598,7 @@ Create a package by adding a `dreb` key to `package.json`:
 }
 ```
 
-Without a `dreb` manifest, dreb auto-discovers from conventional directories (`extensions/`, `skills/`, `prompts/`, `themes/`).
+Without a `pierre-dreb` manifest, Pierre Dreb auto-discovers from conventional directories (`extensions/`, `skills/`, `prompts/`, `themes/`).
 
 See [docs/packages.md](docs/packages.md).
 
@@ -590,16 +618,19 @@ const { session } = await createAgentSession({
 });
 
 await session.prompt("What files are in the current directory?");
+await session.dispose();
 ```
 
-See [docs/sdk.md](docs/sdk.md) and [examples/sdk/](examples/sdk/).
+Always `await session.dispose()` when an SDK session is no longer needed. It awaits extension shutdown handlers before releasing session resources, then rejects if any handler failed.
+
+See [docs/sdk.md](docs/sdk.md) and [examples/sdk/](examples/sdk/). `createAgentSession()` runs one SDK-managed conversation; it does not autonomously persist or drive a goal across fresh sessions. For that policy layer, use [`@dreb/long-horizon`](../long-horizon/).
 
 ### RPC Mode
 
 For non-Node.js integrations, use RPC mode over stdin/stdout:
 
 ```bash
-dreb --mode rpc
+pierre-dreb --mode rpc
 ```
 
 RPC mode uses strict LF-delimited JSONL framing. Clients must split records on `\n` only. Do not use generic line readers like Node `readline`, which also split on Unicode separators inside JSON payloads.
@@ -611,18 +642,18 @@ See [docs/rpc.md](docs/rpc.md) for the protocol.
 ## CLI Reference
 
 ```bash
-dreb [options] [@files...] [messages...]
+pierre-dreb [options] [@files...] [messages...]
 ```
 
 ### Package Commands
 
 ```bash
-dreb install <source> [-l]     # Install package, -l for project-local
-dreb remove <source> [-l]      # Remove package
-dreb uninstall <source> [-l]   # Alias for remove
-dreb update [source]           # Update packages (skips pinned)
-dreb list                      # List installed packages
-dreb config                    # Enable/disable package resources
+pierre-dreb install <source> [-l]     # Install package, -l for project-local
+pierre-dreb remove <source> [-l]      # Remove package
+pierre-dreb uninstall <source> [-l]   # Alias for remove
+pierre-dreb update [source]           # Update packages (skips pinned)
+pierre-dreb list                      # List installed packages
+pierre-dreb config                    # Enable/disable package resources
 ```
 
 ### Modes
@@ -635,10 +666,10 @@ dreb config                    # Enable/disable package resources
 | `--mode rpc` | RPC mode for process integration (see [docs/rpc.md](docs/rpc.md)) |
 | `--export <in> [out]` | Export session to HTML |
 
-In print mode, dreb also reads piped stdin and merges it into the initial prompt:
+In print mode, Pierre Dreb also reads piped stdin and merges it into the initial prompt:
 
 ```bash
-cat README.md | dreb -p "Summarize this text"
+cat README.md | pierre-dreb -p "Summarize this text"
 ```
 
 ### Model Options
@@ -652,7 +683,7 @@ cat README.md | dreb -p "Summarize this text"
 | `--models <patterns>` | Comma-separated patterns for model cycling |
 | `--list-models [search]` | List available models |
 
-`max` is a separate native effort currently supported by GPT-5.6 (including Sol, Terra, and Luna); `xhigh` remains available independently. Codex `ultra` is not a provider effort: it combines `max` with client-side multi-agent orchestration, so dreb does not send `ultra` as a raw value.
+`max` is a separate native effort currently supported by the GPT-5.6 family (Sol, Terra, and Luna) and the GPT-6 family (Astra and future variants); `xhigh` remains available independently. Codex `ultra` is not a provider effort: it combines `max` with client-side multi-agent orchestration, so Pierre Dreb does not send `ultra` as a raw value.
 
 ### Session Options
 
@@ -715,40 +746,40 @@ Combine `--no-*` with explicit flags to load exactly what you need, ignoring set
 Prefix files with `@` to include in the message:
 
 ```bash
-dreb @prompt.md "Answer this"
-dreb -p @screenshot.png "What's in this image?"
-dreb @code.ts @test.ts "Review these files"
+pierre-dreb @prompt.md "Answer this"
+pierre-dreb -p @screenshot.png "What's in this image?"
+pierre-dreb @code.ts @test.ts "Review these files"
 ```
 
 ### Examples
 
 ```bash
 # Interactive with initial prompt
-dreb "List all .ts files in src/"
+pierre-dreb "List all .ts files in src/"
 
 # Non-interactive
-dreb -p "Summarize this codebase"
+pierre-dreb -p "Summarize this codebase"
 
 # Non-interactive with piped stdin
-cat README.md | dreb -p "Summarize this text"
+cat README.md | pierre-dreb -p "Summarize this text"
 
 # Different model
-dreb --provider openai --model gpt-4o "Help me refactor"
+pierre-dreb --provider openai --model gpt-4o "Help me refactor"
 
 # Model with provider prefix (no --provider needed)
-dreb --model openai/gpt-4o "Help me refactor"
+pierre-dreb --model openai/gpt-4o "Help me refactor"
 
 # Model with thinking level shorthand
-dreb --model sonnet:high "Solve this complex problem"
+pierre-dreb --model sonnet:high "Solve this complex problem"
 
 # Limit model cycling
-dreb --models "claude-*,gpt-4o"
+pierre-dreb --models "claude-*,gpt-4o"
 
 # Read-only mode
-dreb --tools read,grep,find,ls -p "Review the code"
+pierre-dreb --tools read,grep,find,ls -p "Review the code"
 
 # High thinking level
-dreb --thinking high "Solve this complex problem"
+pierre-dreb --thinking high "Solve this complex problem"
 ```
 
 ### Environment Variables

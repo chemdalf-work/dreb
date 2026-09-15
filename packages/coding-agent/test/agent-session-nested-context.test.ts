@@ -71,8 +71,8 @@ describe("AgentSession nested context auto-load", () => {
 	let harness: Harness | undefined;
 	let extraDirs: string[] = [];
 
-	afterEach(() => {
-		harness?.cleanup();
+	afterEach(async () => {
+		await harness?.cleanup();
 		harness = undefined;
 		for (const dir of extraDirs) {
 			if (existsSync(dir)) {

@@ -20,7 +20,7 @@ describe("AgentSession dynamic provider registration", () => {
 		mkdirSync(agentDir, { recursive: true });
 	});
 
-	afterEach(() => {
+	afterEach(async () => {
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true, force: true });
 		}
@@ -74,7 +74,7 @@ describe("AgentSession dynamic provider registration", () => {
 		expect(session.model?.baseUrl).toBe("http://localhost:8080/top-level");
 		expect(await capturePromptBaseUrl(session)).toBe("http://localhost:8080/top-level");
 
-		session.dispose();
+		await session.dispose();
 	});
 
 	it("applies session_start registerProvider overrides to the active model", async () => {
@@ -91,7 +91,7 @@ describe("AgentSession dynamic provider registration", () => {
 		expect(session.model?.baseUrl).toBe("http://localhost:8080/session-start");
 		expect(await capturePromptBaseUrl(session)).toBe("http://localhost:8080/session-start");
 
-		session.dispose();
+		await session.dispose();
 	});
 
 	it("applies command-time registerProvider overrides without reload", async () => {
@@ -112,6 +112,6 @@ describe("AgentSession dynamic provider registration", () => {
 		expect(session.model?.baseUrl).toBe("http://localhost:8080/command");
 		expect(await capturePromptBaseUrl(session)).toBe("http://localhost:8080/command");
 
-		session.dispose();
+		await session.dispose();
 	});
 });

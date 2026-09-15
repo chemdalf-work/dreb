@@ -20,9 +20,9 @@ describe("built-in slash commands", () => {
 		expect(parseBuiltinSlashCommand("/arminsayshi")).toBeUndefined();
 	});
 
-	it("opts only copy, hotkeys, and buddy out of dashboard autocomplete", () => {
+	it("opts terminal-only commands out of dashboard autocomplete", () => {
 		expect(
 			BUILTIN_SLASH_COMMANDS.filter((command) => command.dashboard === false).map((command) => command.name),
-		).toEqual(["copy", "hotkeys", "buddy"]);
+		).toEqual(["copy", "agents", "hotkeys", "buddy"]);
 	});
 });

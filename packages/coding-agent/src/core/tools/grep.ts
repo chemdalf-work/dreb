@@ -63,6 +63,8 @@ const defaultGrepOperations: GrepOperations = {
 export interface GrepToolOptions {
 	/** Custom operations for grep. Default: local filesystem plus ripgrep */
 	operations?: GrepOperations;
+	/** Omit matching files from tool output before their contents are formatted. */
+	excludePath?: (absolutePath: string) => boolean;
 }
 
 function formatGrepCall(
@@ -125,6 +127,7 @@ export function createGrepToolDefinition(
 	options?: GrepToolOptions,
 ): ToolDefinition<typeof grepSchema, GrepToolDetails | undefined> {
 	const customOps = options?.operations;
+	const excludePath = options?.excludePath;
 	return {
 		name: "grep",
 		label: "grep",
@@ -291,10 +294,11 @@ export function createGrepToolDefinition(
 								return;
 							}
 							if (event.type === "match") {
-								matchCount++;
 								const filePath = event.data?.path?.text;
 								const lineNumber = event.data?.line_number;
-								if (filePath && typeof lineNumber === "number") matches.push({ filePath, lineNumber });
+								if (!filePath || typeof lineNumber !== "number" || excludePath?.(filePath)) return;
+								matchCount++;
+								matches.push({ filePath, lineNumber });
 								if (matchCount >= effectiveLimit) {
 									matchLimitReached = true;
 									stopChild(true);

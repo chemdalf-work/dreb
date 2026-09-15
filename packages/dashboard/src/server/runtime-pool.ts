@@ -31,7 +31,14 @@ export function resolveDrebCliPath(): string {
 
 function formatRpcExit(info: RpcExitInfo): string {
 	if (info.error) return `RPC process failed: ${info.error.message}`;
-	return `RPC process exited (code ${info.code}, signal ${info.signal})`;
+	const tail = info.stderrTail?.trim();
+	// When the child aborted on its own (e.g. the stdout backpressure guard),
+	// its stderr tail carries the actual reason — surface it instead of a bare
+	// exit code. The tail may be multi-line; the existing UI already renders
+	// multi-line error messages (e.g. timeouts embed full stderr).
+	return tail
+		? `RPC process exited (code ${info.code}, signal ${info.signal}). Stderr tail: ${tail}`
+		: `RPC process exited (code ${info.code}, signal ${info.signal})`;
 }
 
 export type RuntimeEventListener = (key: string, event: Record<string, unknown>) => void;
@@ -85,6 +92,7 @@ const FLEET_SNAPSHOT_EVENT_TYPES = new Set([
 	"auto_retry_start",
 	"auto_retry_end",
 	"background_agent_start",
+	"background_agent_event",
 	"background_agent_end",
 	"subagent_arbitration",
 	"extension_ui_request",
@@ -546,13 +554,25 @@ export class RuntimePool {
 
 		// Track background agents from lifecycle events.
 		if (type === "background_agent_start") {
+			const snapshot = event.agent as Record<string, unknown> | undefined;
+			const usage = snapshot?.usage as BackgroundAgentDto["usage"] | undefined;
 			handle.backgroundAgents.set(event.agentId as string, {
 				agentId: event.agentId as string,
-				agentType: event.agentType as string,
-				taskSummary: event.taskSummary as string,
-				startedAt: new Date().toISOString(),
+				agentType: (snapshot?.agentType as string | undefined) ?? (event.agentType as string),
+				taskSummary: (snapshot?.taskSummary as string | undefined) ?? (event.taskSummary as string),
+				startedAt:
+					typeof snapshot?.startedAt === "number"
+						? new Date(snapshot.startedAt).toISOString()
+						: new Date().toISOString(),
 				status: "running",
-				sessionDir: event.sessionDir as string | undefined,
+				parentAgentId: snapshot?.parentAgentId as string | undefined,
+				parentSessionId: snapshot?.parentSessionId as string | undefined,
+				provider: snapshot?.provider as string | undefined,
+				model: snapshot?.model as string | undefined,
+				thinking: snapshot?.thinking as string | undefined,
+				usage: usage ? { ...usage } : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+				sessionDir: (snapshot?.sessionDir as string | undefined) ?? (event.sessionDir as string | undefined),
+				cwd: snapshot?.cwd as string | undefined,
 			});
 		}
 		if (type === "subagent_arbitration") {
@@ -563,6 +583,8 @@ export class RuntimePool {
 					proposed: event.proposed as SubagentArbitrationDto["proposed"],
 					final: (event.final as SubagentArbitrationDto["final"]) ?? null,
 					changed: (event.changed as SubagentArbitrationDto["changed"]) ?? [],
+					locked: event.locked as SubagentArbitrationDto["locked"],
+					codingRisk: event.codingRisk as SubagentArbitrationDto["codingRisk"],
 					step: event.step as number | undefined,
 					errorCode: event.errorCode as string | undefined,
 					errorMessage: event.errorMessage as string | undefined,
@@ -571,10 +593,92 @@ export class RuntimePool {
 				if (record.status === "success" && record.final) existing.agentType = record.final.agent;
 			}
 		}
+		if (type === "background_agent_event") {
+			const existing = handle.backgroundAgents.get(event.agentId as string);
+			const snapshot = event.agent as Record<string, unknown> | undefined;
+			if (existing && snapshot) {
+				existing.provider = snapshot.provider as string | undefined;
+				existing.model = snapshot.model as string | undefined;
+				existing.thinking = snapshot.thinking as string | undefined;
+				if (snapshot.usage) existing.usage = { ...(snapshot.usage as BackgroundAgentDto["usage"]) };
+			}
+
+			let nestedParentId = event.agentId as string;
+			let nested = event.event as Record<string, unknown> | undefined;
+			while (nested) {
+				const nestedId = typeof nested.agentId === "string" ? nested.agentId : undefined;
+				const nestedSnapshot = nested.agent as Record<string, unknown> | undefined;
+				if (nested.type === "background_agent_start" && nestedId) {
+					const usage = nestedSnapshot?.usage as BackgroundAgentDto["usage"] | undefined;
+					handle.backgroundAgents.set(nestedId, {
+						agentId: nestedId,
+						agentType:
+							(nestedSnapshot?.agentType as string | undefined) ??
+							(nested.agentType as string | undefined) ??
+							"agent",
+						taskSummary:
+							(nestedSnapshot?.taskSummary as string | undefined) ??
+							(nested.taskSummary as string | undefined) ??
+							"nested agent",
+						startedAt:
+							typeof nestedSnapshot?.startedAt === "number"
+								? new Date(nestedSnapshot.startedAt).toISOString()
+								: new Date().toISOString(),
+						status: "running",
+						parentAgentId: (nestedSnapshot?.parentAgentId as string | undefined) ?? nestedParentId,
+						parentSessionId: nestedSnapshot?.parentSessionId as string | undefined,
+						provider: nestedSnapshot?.provider as string | undefined,
+						model: nestedSnapshot?.model as string | undefined,
+						thinking: nestedSnapshot?.thinking as string | undefined,
+						usage: usage ? { ...usage } : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+						sessionDir:
+							(nestedSnapshot?.sessionDir as string | undefined) ?? (nested.sessionDir as string | undefined),
+						cwd: nestedSnapshot?.cwd as string | undefined,
+					});
+				} else if (nested.type === "background_agent_end" && nestedId) {
+					const nestedAgent = handle.backgroundAgents.get(nestedId);
+					if (nestedAgent) {
+						nestedAgent.status =
+							(nested.status as BackgroundAgentDto["status"] | undefined) ??
+							(nested.success ? "completed" : "failed");
+						nestedAgent.completedAt = new Date().toISOString();
+						if (nestedSnapshot?.usage) {
+							nestedAgent.usage = { ...(nestedSnapshot.usage as BackgroundAgentDto["usage"]) };
+						}
+					}
+				} else if (nested.type === "background_agent_event" && nestedId && nestedSnapshot) {
+					const nestedAgent = handle.backgroundAgents.get(nestedId);
+					if (nestedAgent) {
+						nestedAgent.provider = nestedSnapshot.provider as string | undefined;
+						nestedAgent.model = nestedSnapshot.model as string | undefined;
+						nestedAgent.thinking = nestedSnapshot.thinking as string | undefined;
+						if (nestedSnapshot.usage) {
+							nestedAgent.usage = { ...(nestedSnapshot.usage as BackgroundAgentDto["usage"]) };
+						}
+					}
+				}
+				if (nested.type === "background_agent_event" && nested.event && typeof nested.event === "object") {
+					if (nestedId) nestedParentId = nestedId;
+					nested = nested.event as Record<string, unknown>;
+				} else {
+					nested = undefined;
+				}
+			}
+		}
 		if (type === "background_agent_end") {
 			const existing = handle.backgroundAgents.get(event.agentId as string);
+			const snapshot = event.agent as Record<string, unknown> | undefined;
 			if (existing) {
-				existing.status = event.success ? "completed" : "failed";
+				existing.status =
+					(event.status as BackgroundAgentDto["status"] | undefined) ?? (event.success ? "completed" : "failed");
+				existing.completedAt =
+					typeof snapshot?.completedAt === "number"
+						? new Date(snapshot.completedAt).toISOString()
+						: new Date().toISOString();
+				existing.provider = (snapshot?.provider as string | undefined) ?? existing.provider;
+				existing.model = (snapshot?.model as string | undefined) ?? existing.model;
+				existing.thinking = (snapshot?.thinking as string | undefined) ?? existing.thinking;
+				if (snapshot?.usage) existing.usage = { ...(snapshot.usage as BackgroundAgentDto["usage"]) };
 				existing.sessionFile = (event.sessionFile as string | undefined) ?? existing.sessionFile;
 				this.pruneCompletedBackgroundAgents(handle);
 			}
@@ -722,7 +826,10 @@ export class RuntimePool {
 		try {
 			const agents = (await handle.client.listBackgroundAgents()) as unknown as BackgroundAgentDto[];
 			for (const agent of agents) {
-				handle.backgroundAgents.set(agent.agentId, agent);
+				handle.backgroundAgents.set(agent.agentId, {
+					...agent,
+					usage: agent.usage ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+				});
 			}
 			this.pruneCompletedBackgroundAgents(handle);
 		} catch (err) {

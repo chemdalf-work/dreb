@@ -3,7 +3,7 @@
  * global toast region and the browser tab attention badge.
  */
 
-import { createEffect, type JSX, Match, onCleanup, onMount, Switch } from "solid-js";
+import { createEffect, createMemo, type JSX, Match, onCleanup, onMount, Switch } from "solid-js";
 import { ToastRegion } from "./components/common.js";
 import { FilesScreen } from "./screens/files.js";
 import { FleetScreen } from "./screens/fleet.js";
@@ -98,7 +98,7 @@ export function App(): JSX.Element {
 			? store.fleet().runtimes.find((runtime) => runtime.key === currentSessionKey)
 			: undefined;
 		const displayName = currentSession?.title ?? currentSession?.sessionName ?? currentRuntime?.state.sessionName;
-		const base = displayName ? `${displayName} — dreb` : "dreb";
+		const base = displayName ? `${displayName} — Pierre Dreb` : "Pierre Dreb";
 		document.title = attention ? `◆ ${base}` : base;
 
 		for (const [key, item] of sessionAttention) {
@@ -122,7 +122,7 @@ export function App(): JSX.Element {
 				pendingAttention.add(key);
 				serviceWorkerReadyWithTimeout(navigator.serviceWorker.ready)
 					.then((reg) =>
-						reg.showNotification(`dreb — ${item.name}`, {
+						reg.showNotification(`Pierre Dreb — ${item.name}`, {
 							body: item.reason,
 							tag: key,
 							data: { sessionKey: key },
@@ -160,18 +160,31 @@ export function App(): JSX.Element {
 		].slice(-5);
 	};
 
+	// Screen-local state and onMount hydration belong to an identity, not just a
+	// screen type. Capture that identity in the keyed callback: even async work
+	// finishing after disposal must never read the next route's key. Ignore
+	// duplicate hash events so the same identity does not lose its local state.
+	const sessionKey = createMemo(() => {
+		const route = store.route();
+		return route.screen === "session" ? route.key : undefined;
+	});
+	const subagentRoute = createMemo(
+		() => {
+			const route = store.route();
+			return route.screen === "subagent" ? route : undefined;
+		},
+		undefined,
+		{ equals: (a, b) => a?.key === b?.key && a?.agentId === b?.agentId },
+	);
+
 	return (
 		<>
 			<Switch fallback={<FleetScreen store={store} />}>
-				<Match when={store.route().screen === "session"}>
-					<SessionScreen store={store} sessionKey={(store.route() as { key: string }).key} />
+				<Match when={sessionKey()} keyed>
+					{(key) => <SessionScreen store={store} sessionKey={key} />}
 				</Match>
-				<Match when={store.route().screen === "subagent"}>
-					<SubagentScreen
-						store={store}
-						sessionKey={(store.route() as { key: string }).key}
-						agentId={(store.route() as { agentId: string }).agentId}
-					/>
+				<Match when={subagentRoute()} keyed>
+					{(route) => <SubagentScreen store={store} sessionKey={route.key} agentId={route.agentId} />}
 				</Match>
 				<Match when={store.route().screen === "files"}>
 					<FilesScreen store={store} initialPath={(store.route() as { path?: string }).path} />

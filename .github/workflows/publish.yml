@@ -85,6 +85,16 @@ jobs:
             npm publish
           fi
 
+      - name: Publish @dreb/long-horizon
+        working-directory: packages/long-horizon
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view @dreb/long-horizon@$VERSION version >/dev/null 2>&1; then
+            echo "::warning::@dreb/long-horizon@$VERSION already published, skipping"
+          else
+            npm publish
+          fi
+
       - name: Publish @dreb/telegram
         working-directory: packages/telegram
         run: |

@@ -158,7 +158,7 @@ describe("AgentSession model switching", () => {
 					.map((entry) => entry.thinkingLevel),
 			).toEqual(["off", "high", "off", "high"]);
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 });
@@ -270,7 +270,7 @@ describe("AgentSession model switching — thinkingDisplay", () => {
 			await session.setModel(adaptiveModel);
 			expect(session.agent.thinkingDisplay).toBe("summarized");
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
@@ -294,7 +294,7 @@ describe("AgentSession model switching — thinkingDisplay", () => {
 			expect(session.model?.id).toBe(adaptiveModel.id);
 			expect(session.agent.thinkingDisplay).toBe("omitted");
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 });
@@ -302,7 +302,7 @@ describe("AgentSession model switching — thinkingDisplay", () => {
 describe("AgentSession switchSession — thinkingDisplay", () => {
 	const tempDirs: string[] = [];
 
-	afterEach(() => {
+	afterEach(async () => {
 		for (const dir of tempDirs.splice(0)) {
 			rmSync(dir, { recursive: true, force: true });
 		}
@@ -368,7 +368,7 @@ describe("AgentSession switchSession — thinkingDisplay", () => {
 			expect(session.model?.id).toBe(adaptiveModel.id);
 			expect(session.agent.thinkingDisplay).toBe("summarized");
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
@@ -454,7 +454,7 @@ describe("AgentSession switchSession — thinkingDisplay", () => {
 			expect(session.agent.thinkingDisplay).toBe("omitted");
 			expect(session.systemPrompt).toContain(resumedModelAppend);
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 });
@@ -471,7 +471,7 @@ describe("AgentSession model switching — system prompt identity", () => {
 			);
 			expect(session.systemPrompt).not.toContain(reasoningModel.id);
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
@@ -489,7 +489,7 @@ describe("AgentSession model switching — system prompt identity", () => {
 			);
 			expect(session.systemPrompt).not.toContain(reasoningModel.id);
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 });
@@ -514,7 +514,7 @@ describe("AgentSession model-specific system prompts", () => {
 
 		try {
 			expect(session.systemPrompt).toMatch(/^CUSTOM MODEL REPLACEMENT/);
-			expect(session.systemPrompt).not.toContain("You are an expert coding assistant operating inside dreb");
+			expect(session.systemPrompt).not.toContain("You are an expert coding assistant operating inside Pierre Dreb");
 			expect(session.systemPrompt).toContain("You are running on: ollama/team/qwen-local");
 		} finally {
 			session.dispose();
@@ -538,11 +538,15 @@ describe("AgentSession model-specific system prompts", () => {
 		}).session;
 
 		try {
-			expect(defaultSession.systemPrompt).toContain("You are an expert coding assistant operating inside dreb");
+			expect(defaultSession.systemPrompt).toContain(
+				"You are an expert coding assistant operating inside Pierre Dreb",
+			);
 			expect(defaultSession.systemPrompt).toContain(modelAppend);
 			expect(explicitSession.systemPrompt).toMatch(/^EXPLICIT REPLACEMENT/);
 			expect(explicitSession.systemPrompt).toContain(modelAppend);
-			expect(explicitSession.systemPrompt).not.toContain("You are an expert coding assistant operating inside dreb");
+			expect(explicitSession.systemPrompt).not.toContain(
+				"You are an expert coding assistant operating inside Pierre Dreb",
+			);
 		} finally {
 			defaultSession.dispose();
 			explicitSession.dispose();
@@ -726,7 +730,7 @@ describe("AgentSession model-specific system prompts", () => {
 			writeFileSync(modelsJsonPath, JSON.stringify({ providers: {} }));
 			await session.reload();
 			expect(session.systemPrompt).not.toContain(afterReload);
-			expect(session.systemPrompt).toContain("You are an expert coding assistant operating inside dreb");
+			expect(session.systemPrompt).toContain("You are an expert coding assistant operating inside Pierre Dreb");
 		} finally {
 			session.dispose();
 			rmSync(dir, { recursive: true, force: true });

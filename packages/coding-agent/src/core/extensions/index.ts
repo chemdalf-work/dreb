@@ -18,7 +18,7 @@ export type {
 	ShutdownHandler,
 	SwitchSessionHandler,
 } from "./runner.js";
-export { ExtensionRunner } from "./runner.js";
+export { ExtensionRunner, emitSessionShutdownEvent } from "./runner.js";
 export type {
 	AgentEndEvent,
 	AgentStartEvent,

@@ -2,7 +2,7 @@
 
 ## Build Requirement
 
-**You MUST run `npm run build` after ANY code change before testing with the real `dreb` binary.** The CLI runs compiled JS from `dist/`, not TypeScript source. Vitest transpiles TS on the fly, so tests will pass even with a stale build — but manual testing against the binary will use old code.
+**You MUST run `npm run build` after ANY code change before testing with the real `pierre-dreb` or compatibility `dreb` binary.** Both commands run the same compiled `dist/cli.js`, not TypeScript source. Vitest transpiles TS on the fly, so tests will pass even with a stale build — but manual testing against either binary will use old code.
 
 ```bash
 npm run build
@@ -24,6 +24,7 @@ This builds all packages in dependency order: tui → ai → agent → semantic-
 - `packages/ai` — Model registry, provider APIs, types
 - `packages/agent` — Core agent loop, event system, types
 - `packages/coding-agent` — CLI tool, tools, model resolution, TUI
+- `packages/long-horizon` — Durable SDK supervisor, run journal, recovery, and autonomous CLI
 - `packages/tui` — Terminal UI components
 - `packages/telegram` — Telegram bot integration
 - `packages/semantic-search` — Semantic codebase search engine + MCP server
@@ -73,6 +74,8 @@ Documentation files to check on every feature change:
 - `packages/coding-agent/README.md` (detailed product docs)
 - `packages/coding-agent/docs/` (feature-specific docs: extensions, json, rpc, sdk, etc.)
 - `AGENTS.md` (this file — development guide)
+
+For the optional `dreb-context-mode` package, preserve the boundary in public docs: it is separately installed, discovered automatically by later main sessions and subagents, and not a generic MCP client in core. Link readers to the package for its OS-process privileges and package-owned persistent storage; RTK remains rejected because of fidelity, exit-code, and actionable-diagnostic failures.
 
 ## Nested Context Trust Boundary
 

@@ -1037,6 +1037,21 @@ export function SettingsScreen(props: {
 										/>
 									</span>
 								</div>
+								<div class="setting-row">
+									<span class="setting-label">
+										<span class="name">single model mode</span>
+										<span class="hint">
+											all subagents run on this session's model; model overrides, per-agent model lists, and
+											the dispatch arbiter are bypassed
+										</span>
+									</span>
+									<span class="setting-control">
+										<OnOffSelect
+											value={current().singleModelMode === true}
+											onChange={(value) => save({ singleModelMode: value })}
+										/>
+									</span>
+								</div>
 								<div class="context-trust-subsection">
 									<h3>trusted context folders</h3>
 									<p class="muted small">
@@ -1266,7 +1281,7 @@ export function SettingsScreen(props: {
 									: notificationPermission() === "insecure"
 										? "this page is not a secure context — notifications need HTTPS. Run the server with --https (tailscale cert <host>.<tailnet>.ts.net) and open it via the https:// hostname"
 										: notificationPermission() === "ios-install"
-											? "iOS notifications need the installed PWA — tap Share → Add to Home Screen, then open dreb from the home screen icon"
+											? "iOS notifications need the installed PWA — tap Share → Add to Home Screen, then open Pierre Dreb from the home screen icon"
 											: notificationPermission() === "unsupported"
 												? "browser notifications are unavailable in this environment"
 												: "show a notification when the tab needs input (Android/desktop need the app installed on mobile; works over HTTPS or localhost)"}
@@ -1407,7 +1422,7 @@ export function SettingsScreen(props: {
 				</section>
 
 				<footer>
-					dreb
+					Pierre Dreb
 					{serverInfo()?.version ? ` v${serverInfo()!.version}` : version() ? ` v${version()}` : ""} · dashboard
 					<Show when={serverInfo()?.startedAt}> · server build, up {relativeTime(serverInfo()!.startedAt)}</Show>
 				</footer>

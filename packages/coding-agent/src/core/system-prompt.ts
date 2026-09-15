@@ -2,7 +2,7 @@
  * System prompt construction and project context loading
  */
 
-import { getDocsPath, getExamplesPath, getReadmePath } from "../config.js";
+import { getDocsPath, getExamplesPath, getReadmePath, PRODUCT_NAME } from "../config.js";
 import type { GitRepoState } from "./git-repo-state.js";
 import { getMemoryInstructions } from "./memory-prompt.js";
 import type { MemoryIndexes } from "./resource-loader.js";
@@ -298,7 +298,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 	} else if (hasBash && (hasGrep || hasFind || hasLs)) {
 		if (hasSearch) {
 			addGuideline(
-				"Start with `search` to explore and understand the codebase. Use grep/find/ls for exact text matches and specific file lookups. Prefer all of these over bash.",
+				"Use grep/find/ls for exact text matches and specific file lookups, and `search` for open-ended exploration of a large corpus where you don't know the keywords. Prefer all of these over bash.",
 			);
 		} else {
 			addGuideline("Prefer grep/find/ls tools over bash for file exploration (faster, respects .gitignore)");
@@ -318,7 +318,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 
 	const guidelines = guidelinesList.map((g) => `- ${g}`).join("\n");
 
-	let prompt = `You are an expert coding assistant operating inside dreb, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
+	let prompt = `You are an expert coding assistant operating inside ${PRODUCT_NAME}, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
 
 Available tools:
 ${toolsList}

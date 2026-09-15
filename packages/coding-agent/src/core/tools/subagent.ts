@@ -12,6 +12,7 @@ import { keyHint } from "../../modes/interactive/components/keybinding-hints.js"
 import { attachJsonlLineReader, serializeJsonLine } from "../../modes/rpc/jsonl.js";
 import type { RpcClient } from "../../modes/rpc/rpc-client.js";
 import type { RpcPendingMessages } from "../../modes/rpc/rpc-types.js";
+import { classifyCodingRisk } from "../coding-risk.js";
 import type {
 	DispatchAgentSummary,
 	DispatchArbitrationRecord,
@@ -224,15 +225,12 @@ function summarizeAgentsForArbitration(
 ): DispatchAgentSummary[] {
 	return [...agents.values()].map((agent) => {
 		const settingsModels = getAgentModelsForAgent?.(agent.name);
+		const declaredTools = filterSubagentTools(agent.tools).split(",").filter(Boolean);
 		return {
 			name: agent.name,
 			description: agent.description,
-			tools: [
-				...new Set([
-					...filterSubagentTools(agent.tools).split(",").filter(Boolean),
-					...SUBAGENT_ALWAYS_ACTIVE_TOOLS,
-				]),
-			],
+			tools: [...new Set([...declaredTools, ...SUBAGENT_ALWAYS_ACTIVE_TOOLS])],
+			profile: declaredTools.includes("edit") || declaredTools.includes("write") ? "full" : "lean",
 			modelDefaults:
 				settingsModels && settingsModels.length > 0
 					? [...settingsModels]
@@ -876,6 +874,8 @@ export interface ProbeModelAvailabilityOptions {
 	registry?: ModelRegistry;
 	/** Override the default model availability probe timeout; primarily useful for tests. */
 	timeoutMs?: number;
+	/** Stable conversation ID forwarded to providers that use session-based routing. */
+	sessionId?: string;
 }
 
 export type ProbeModelAvailabilityResult = { ok: true } | { ok: false; reason: string; aborted?: boolean };
@@ -936,7 +936,7 @@ export async function probeModelAvailability(
 	model: Model<Api>,
 	options: ProbeModelAvailabilityOptions = {},
 ): Promise<ProbeModelAvailabilityResult> {
-	const { signal, registry, timeoutMs = DEFAULT_MODEL_AVAILABILITY_PROBE_TIMEOUT_MS } = options;
+	const { signal, registry, timeoutMs = DEFAULT_MODEL_AVAILABILITY_PROBE_TIMEOUT_MS, sessionId } = options;
 	if (signal?.aborted) return { ok: false, reason: "Aborted before spawn", aborted: true };
 
 	const probeSignal = makeProbeSignal(signal, timeoutMs);
@@ -963,6 +963,7 @@ export async function probeModelAvailability(
 				maxRetryDelayMs: 0,
 				reasoning,
 				signal: probeSignal.signal,
+				...(sessionId ? { sessionId } : {}),
 			}),
 			probeSignal.timeoutPromise,
 		]);
@@ -1002,6 +1003,8 @@ export async function resolveModelForSubagentSpawn(
 	signal?: AbortSignal,
 	/** Optional log prefix for warning messages (defaults to "[subagent]") */
 	logPrefix = "[subagent]",
+	/** Stable conversation ID forwarded to availability probes (issue 500). */
+	sessionId?: string,
 ): Promise<SubagentModelResolution> {
 	if (signal?.aborted) return { ok: false, error: "Aborted before spawn", skippedModels: [] };
 
@@ -1030,7 +1033,7 @@ export async function resolveModelForSubagentSpawn(
 
 		const modelObj = resolved.provider ? registry.find(resolved.provider, resolved.modelId) : undefined;
 		if (modelObj) {
-			const probe = await probeModelAvailability(modelObj, { signal, registry });
+			const probe = await probeModelAvailability(modelObj, { signal, registry, sessionId });
 			if (!probe.ok && probe.aborted) {
 				return { ok: false, error: "Aborted before spawn", skippedModels };
 			}
@@ -1153,6 +1156,18 @@ export function resolveSubagentThinkingOverride(
 	return taskThinking ?? topLevelThinking;
 }
 
+function explicitRouteLocks(
+	agent: string | undefined,
+	model: string | undefined,
+	thinking: ThinkingLevel | undefined,
+): Array<keyof DispatchRoute> {
+	return [
+		...(agent !== undefined ? (["agent"] as const) : []),
+		...(model !== undefined ? (["model"] as const) : []),
+		...(thinking !== undefined ? (["thinking"] as const) : []),
+	];
+}
+
 /**
  * Resolve a per-task cwd.
  * Accepts absolute paths as-is. Resolves relative paths against the parent cwd,
@@ -1174,6 +1189,8 @@ function clampCwd(defaultCwd: string, itemCwd?: string): { ok: true; cwd: string
 export interface SubagentArbitrationHooks {
 	arbitrate: (request: DispatchArbitrationRequest, signal?: AbortSignal) => Promise<DispatchArbitrationResult>;
 	onRecord: (record: DispatchArbitrationRecord) => void;
+	/** Route fields explicitly supplied in this tool call. */
+	locked?: Array<keyof DispatchRoute>;
 	step?: number;
 	defaultThinkingLevel?: ThinkingLevel;
 	getAgentModelsForAgent?: (name: string) => string[] | undefined;
@@ -1197,7 +1214,21 @@ export async function executeSingle(
 	thinkingOverride?: ThinkingLevel,
 	arbitration?: SubagentArbitrationHooks,
 	onControlAvailable?: (client: RpcClient | undefined) => void,
+	/** Parent session UUID for spawn-time availability probes (issue 500). */
+	parentSessionId?: string,
+	/** Single-model mode (issue 517): the child runs on the parent session's model, ignoring model specs and the dispatch arbiter. */
+	singleModelMode?: boolean,
 ): Promise<SubagentResult> {
+	if (agentName !== undefined && !agentName.trim()) {
+		return {
+			agent: agentName,
+			task,
+			exitCode: 1,
+			output: "",
+			stderr: "",
+			errorMessage: "Explicit agent override must be a non-empty agent type name.",
+		};
+	}
 	let name = agentName || DEFAULT_AGENT;
 	let config = agents.get(name);
 	if (!config) {
@@ -1220,21 +1251,79 @@ export async function executeSingle(
 			errorMessage: `Task prompt too long (${task.length} chars, max ${MAX_TASK_LENGTH}). Shorten the prompt.`,
 		};
 	}
+	if (modelOverride !== undefined && !modelOverride.trim()) {
+		return {
+			agent: name,
+			task,
+			exitCode: 1,
+			output: "",
+			stderr: "",
+			errorMessage: "Explicit model override must be a non-empty provider/model ID.",
+		};
+	}
 
 	// Phase 1: resolve the parent's proposal with the existing precedence and
 	// fallback behavior so the arbiter receives one concrete canonical route.
 	const configuredModelSpec =
-		modelOverride || (agentModels && agentModels.length > 0 ? agentModels : undefined) || config.model;
+		modelOverride !== undefined
+			? modelOverride
+			: (agentModels && agentModels.length > 0 ? agentModels : undefined) || config.model;
 	const modelSpec = configuredModelSpec || parentModel;
-	let effectiveConfig: AgentTypeConfig = modelOverride ? { ...config, model: modelOverride } : config;
+	let effectiveConfig: AgentTypeConfig = modelOverride !== undefined ? { ...config, model: modelOverride } : config;
 	let resolvedProvider = parentProvider;
 	let resolvedModel: Model<Api> | undefined;
 	let warning: string | undefined;
 	let skippedModels: SkippedFallbackModel[] = [];
 
-	if (modelSpec) {
-		const parentFallback = configuredModelSpec ? parentModel : undefined;
-		const resolved = await resolveModelForSubagentSpawn(modelSpec, parentProvider, registry, parentFallback, signal);
+	if (singleModelMode) {
+		// Single-model mode (issue 517): every child runs on the parent session's model.
+		// The per-call model override, per-agent model fallback list, agent-definition model
+		// spec, and dispatch arbiter are all bypassed; a requested spec is reported through
+		// the `warning` that is prepended to the child's output below.
+		if (!parentModel) {
+			return {
+				agent: name,
+				task,
+				exitCode: 1,
+				output: "",
+				stderr: "",
+				errorMessage:
+					"Single model mode is enabled, but the parent session's model is unavailable, so subagent " +
+					`"${name}" cannot be spawned. Disable singleModelMode or run the parent session with a model.`,
+			};
+		}
+		const parentResolution = resolveModelStringSingle(parentModel, parentProvider, registry);
+		if (!parentResolution.ok) {
+			return {
+				agent: name,
+				task,
+				exitCode: 1,
+				output: "",
+				stderr: "",
+				errorMessage: `Single model mode: ${parentResolution.error}`,
+			};
+		}
+		effectiveConfig = { ...effectiveConfig, model: parentResolution.modelId };
+		if (parentResolution.provider) resolvedProvider = parentResolution.provider;
+		if (registry && resolvedProvider) resolvedModel = registry.find(resolvedProvider, parentResolution.modelId);
+		if (configuredModelSpec) {
+			warning =
+				`The user has enabled "single model mode" in the settings, so the model selection for this subagent ` +
+				`was ignored. Using parent model "${canonicalModelRef(resolvedProvider, parentResolution.modelId)}".`;
+		}
+	} else if (modelSpec) {
+		// Explicit per-call model choices are hard locks and must never silently
+		// degrade to the parent model. Defaults may retain the legacy fallback.
+		const parentFallback = configuredModelSpec && modelOverride === undefined ? parentModel : undefined;
+		const resolved = await resolveModelForSubagentSpawn(
+			modelSpec,
+			parentProvider,
+			registry,
+			parentFallback,
+			signal,
+			"[subagent]",
+			parentSessionId,
+		);
 		skippedModels = resolved.skippedModels;
 		if (!resolved.ok) {
 			const skippedDetails = formatSkippedModelFailureDetails(skippedModels);
@@ -1263,17 +1352,38 @@ export async function executeSingle(
 			errorMessage: `Cannot validate thinking level "${thinkingOverride}" because agent "${name}" has no configured model and no parent model is available. Set a model on the agent or pass a per-call model override.`,
 		};
 	}
+	if (thinkingOverride !== undefined) {
+		const validation = validateThinkingLevelForModel(resolvedModel, thinkingOverride);
+		if (!validation.ok) {
+			return {
+				agent: name,
+				task,
+				exitCode: 1,
+				output: "",
+				stderr: "",
+				errorMessage: validation.error,
+			};
+		}
+	}
 
 	const proposalModelId = Array.isArray(effectiveConfig.model) ? effectiveConfig.model[0] : effectiveConfig.model;
 	const proposalSelectedModel = proposalModelId ? canonicalModelRef(resolvedProvider, proposalModelId) : undefined;
 	let finalThinking = thinkingOverride;
 	let arbitrationEnabled = false;
-	if (arbitration) {
+	// Single-model mode (issue 517) bypasses the dispatch arbiter: the parent model is the
+	// final route, and the requested thinking is validated against it below like any other.
+	if (arbitration && !singleModelMode) {
 		const proposed: DispatchRoute = {
 			agent: name,
 			model: proposalSelectedModel ?? "",
 			thinking: resolveEffectiveThinkingLevel(resolvedModel, thinkingOverride, arbitration.defaultThinkingLevel),
 		};
+		const locked = arbitration.locked ?? explicitRouteLocks(agentName, modelOverride, thinkingOverride);
+		const agentSummaries = summarizeAgentsForArbitration(agents, arbitration.getAgentModelsForAgent);
+		const codingRisk = classifyCodingRisk({
+			task,
+			tools: agentSummaries.find((agent) => agent.name === name)?.tools,
+		});
 		let arbitrationResult: DispatchArbitrationResult;
 		try {
 			arbitrationResult = await arbitration.arbitrate(
@@ -1281,7 +1391,9 @@ export async function executeSingle(
 					task,
 					cwd,
 					proposed,
-					agents: summarizeAgentsForArbitration(agents, arbitration.getAgentModelsForAgent),
+					locked,
+					codingRisk,
+					agents: agentSummaries,
 					parentSessionFile,
 					step: arbitration.step,
 				},
@@ -1295,6 +1407,8 @@ export async function executeSingle(
 					proposed,
 					final: null,
 					changed: [],
+					locked,
+					codingRisk,
 					step: arbitration.step,
 					errorCode: "internal_error",
 					errorMessage,
@@ -1317,6 +1431,8 @@ export async function executeSingle(
 					proposed,
 					final: null,
 					changed: [],
+					locked,
+					codingRisk,
 					step: arbitration.step,
 					errorCode: arbitrationResult.code,
 					errorMessage: arbitrationResult.error,
@@ -1337,6 +1453,32 @@ export async function executeSingle(
 			}
 
 			const decision = arbitrationResult.decision;
+			const changedLockedField = locked.find((field) => proposed[field] !== decision[field]);
+			if (changedLockedField) {
+				const errorMessage = `Arbiter changed explicit ${changedLockedField}; explicit per-call routing choices are immutable.`;
+				const record: DispatchArbitrationRecord = {
+					status: "failure",
+					proposed,
+					final: null,
+					changed: [],
+					locked,
+					codingRisk,
+					step: arbitration.step,
+					errorCode: "locked_route_changed",
+					errorMessage,
+				};
+				try {
+					arbitration.onRecord(record);
+				} catch {}
+				return {
+					agent: name,
+					task,
+					exitCode: 1,
+					output: "",
+					stderr: "",
+					errorMessage: `Dispatch arbitration failed: ${errorMessage}`,
+				};
+			}
 			const selectedConfig = agents.get(decision.agent);
 			const slash = decision.model.indexOf("/");
 			const selectedProvider = slash > 0 ? decision.model.slice(0, slash) : "";
@@ -1351,6 +1493,8 @@ export async function executeSingle(
 					proposed,
 					final: null,
 					changed: [],
+					locked,
+					codingRisk,
 					step: arbitration.step,
 					errorCode: !selectedConfig ? "unknown_agent" : "out_of_scope_model",
 					errorMessage,
@@ -1375,6 +1519,8 @@ export async function executeSingle(
 					proposed,
 					final: null,
 					changed: [],
+					locked,
+					codingRisk,
 					step: arbitration.step,
 					errorCode: "unsupported_thinking",
 					errorMessage: finalThinkingValidation.error,
@@ -1405,6 +1551,8 @@ export async function executeSingle(
 					proposed,
 					final: decision,
 					changed: arbitrationResult.changed,
+					locked,
+					codingRisk,
 					step: arbitration.step,
 				});
 			} catch (error) {
@@ -1481,6 +1629,14 @@ async function executeChain(
 	onChildEvent?: (event: Record<string, unknown>) => void,
 	arbitration?: Omit<SubagentArbitrationHooks, "step">,
 	onControlAvailable?: (client: RpcClient | undefined) => void,
+	/** Parent session UUID for spawn-time availability probes (issue 500). */
+	parentSessionId?: string,
+	/**
+	 * Live single-model mode getter (issue 517): evaluated per step so each chain step
+	 * runs on the parent session's model when enabled, matching the per-spawn semantics
+	 * of single and parallel modes.
+	 */
+	getSingleModelMode?: () => boolean,
 ): Promise<SubagentResult[]> {
 	const results: SubagentResult[] = [];
 	let previousOutput = "";
@@ -1521,6 +1677,9 @@ async function executeChain(
 		const stepSessionDir = sessionBaseDir ? join(sessionBaseDir, `step-${i + 1}`) : undefined;
 		const stepAgentName = step.agent || defaultAgent || DEFAULT_AGENT;
 		const stepMach6Models = getAgentModelsForAgentFn?.(stepAgentName);
+		// Single-model mode (issue 517) is re-read per step so a mid-chain settings
+		// change applies from the next step onward.
+		const singleModelMode = getSingleModelMode?.() ?? false;
 		const result = await executeSingle(
 			agents,
 			step.agent || defaultAgent,
@@ -1537,8 +1696,20 @@ async function executeChain(
 			parentSessionFile,
 			onChildEvent,
 			resolveSubagentThinkingOverride(step.thinking, defaultThinking),
-			arbitration ? { ...arbitration, step: i + 1 } : undefined,
+			arbitration
+				? {
+						...arbitration,
+						locked: explicitRouteLocks(
+							step.agent ?? defaultAgent,
+							step.model ?? defaultModel,
+							step.thinking ?? defaultThinking,
+						),
+						step: i + 1,
+					}
+				: undefined,
 			onControlAvailable,
+			parentSessionId,
+			singleModelMode,
 		);
 		results.push(result);
 
@@ -1563,12 +1734,31 @@ function generateAgentId(): string {
 // Background agent registry — queryable by TUI / Telegram frontends
 // ---------------------------------------------------------------------------
 
+export type BackgroundAgentStatus = "running" | "completed" | "failed" | "aborted";
+
+export interface BackgroundAgentUsage {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	cost: number;
+}
+
 export interface BackgroundAgentInfo {
 	agentId: string;
 	agentType: string;
 	taskSummary: string;
 	startedAt: number;
-	status: "running" | "completed" | "failed";
+	completedAt?: number;
+	status: BackgroundAgentStatus;
+	/** Registry identity for a nested child; absent for direct children of the current session. */
+	parentAgentId?: string;
+	/** Stable parent conversation UUID for direct children. */
+	parentSessionId?: string;
+	provider?: string;
+	model?: string;
+	thinking?: ThinkingLevel;
+	usage: BackgroundAgentUsage;
 	/** Directory containing the agent's session JSONL file (known at spawn time). */
 	sessionDir?: string;
 	/** Path to the agent's session JSONL file (discovered when the child exits). */
@@ -1580,6 +1770,7 @@ export interface BackgroundAgentInfo {
 }
 
 const backgroundAgentRegistry = new Map<string, BackgroundAgentInfo>();
+const backgroundAgentUsageKeys = new Map<string, Set<string>>();
 const backgroundAbortControllers = new Map<string, AbortController>();
 const backgroundControlClients = new Map<string, RpcClient>();
 
@@ -1591,6 +1782,122 @@ const TAIL_READ_BYTES = 64 * 1024;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
+}
+
+function emptyBackgroundAgentUsage(): BackgroundAgentUsage {
+	return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+}
+
+function finiteNumber(value: unknown): number {
+	return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function applyCanonicalModel(info: BackgroundAgentInfo, model: unknown): void {
+	if (typeof model === "string") {
+		const separator = model.indexOf("/");
+		if (separator > 0) {
+			info.provider = model.slice(0, separator);
+			info.model = model.slice(separator + 1);
+		} else if (model) {
+			info.model = model;
+		}
+		return;
+	}
+	if (!isRecord(model)) return;
+	if (typeof model.provider === "string") info.provider = model.provider;
+	if (typeof model.id === "string") info.model = model.id;
+}
+
+function addAssistantUsage(agentId: string, message: Record<string, unknown>): void {
+	if (message.role !== "assistant" || !isRecord(message.usage)) return;
+	const info = backgroundAgentRegistry.get(agentId);
+	if (!info) return;
+
+	const usage = message.usage;
+	const key = JSON.stringify([
+		message.timestamp,
+		message.provider,
+		message.model,
+		usage.input,
+		usage.output,
+		usage.cacheRead,
+		usage.cacheWrite,
+		isRecord(usage.cost) ? usage.cost.total : undefined,
+	]);
+	const seen = backgroundAgentUsageKeys.get(agentId) ?? new Set<string>();
+	if (seen.has(key)) return;
+	seen.add(key);
+	backgroundAgentUsageKeys.set(agentId, seen);
+
+	info.usage.input += finiteNumber(usage.input);
+	info.usage.output += finiteNumber(usage.output);
+	info.usage.cacheRead += finiteNumber(usage.cacheRead);
+	info.usage.cacheWrite += finiteNumber(usage.cacheWrite);
+	info.usage.cost += isRecord(usage.cost) ? finiteNumber(usage.cost.total) : 0;
+	if (typeof message.provider === "string") info.provider = message.provider;
+	if (typeof message.model === "string") info.model = message.model;
+}
+
+export function applyBackgroundAgentTelemetryEvent(agentId: string, event: Record<string, unknown>): void {
+	const info = backgroundAgentRegistry.get(agentId);
+	if (info) {
+		if (event.type === "agent_start") {
+			applyCanonicalModel(info, event.model);
+			if (typeof event.thinkingLevel === "string") info.thinking = event.thinkingLevel as ThinkingLevel;
+		} else if (event.type === "message_end" && isRecord(event.message)) {
+			addAssistantUsage(agentId, event.message);
+		}
+	}
+
+	if (event.type === "background_agent_start" && typeof event.agentId === "string") {
+		const nested = isRecord(event.agent) ? event.agent : undefined;
+		const nestedId = event.agentId;
+		const nestedInfo: BackgroundAgentInfo = {
+			agentId: nestedId,
+			agentType:
+				typeof nested?.agentType === "string"
+					? nested.agentType
+					: typeof event.agentType === "string"
+						? event.agentType
+						: "agent",
+			taskSummary:
+				typeof nested?.taskSummary === "string"
+					? nested.taskSummary
+					: typeof event.taskSummary === "string"
+						? event.taskSummary
+						: "nested agent",
+			startedAt: typeof nested?.startedAt === "number" ? nested.startedAt : Date.now(),
+			status: "running",
+			parentAgentId: agentId,
+			parentSessionId: typeof nested?.parentSessionId === "string" ? nested.parentSessionId : undefined,
+			usage: emptyBackgroundAgentUsage(),
+			sessionDir:
+				typeof nested?.sessionDir === "string"
+					? nested.sessionDir
+					: typeof event.sessionDir === "string"
+						? event.sessionDir
+						: undefined,
+			cwd: typeof nested?.cwd === "string" ? nested.cwd : undefined,
+		};
+		applyCanonicalModel(nestedInfo, nested?.model);
+		if (typeof nested?.thinking === "string") nestedInfo.thinking = nested.thinking as ThinkingLevel;
+		backgroundAgentRegistry.set(nestedId, nestedInfo);
+	}
+
+	if (event.type === "background_agent_end" && typeof event.agentId === "string") {
+		const nested = backgroundAgentRegistry.get(event.agentId);
+		if (nested) {
+			nested.status = event.cancelled === true ? "aborted" : event.success === true ? "completed" : "failed";
+			nested.completedAt = Date.now();
+			if (typeof event.sessionFile === "string") nested.sessionFile = event.sessionFile;
+			applyCanonicalModel(nested, event.model);
+			if (typeof event.thinking === "string") nested.thinking = event.thinking as ThinkingLevel;
+		}
+	}
+
+	if (event.type === "background_agent_event" && typeof event.agentId === "string" && isRecord(event.event)) {
+		applyBackgroundAgentTelemetryEvent(event.agentId, event.event);
+	}
 }
 
 function isExpectedFilesystemError(err: unknown): boolean {
@@ -1746,7 +2053,7 @@ function findFirstUserMessageSummary(sessionFile: string): string | undefined {
 	return undefined;
 }
 
-function inferCompletedSessionStatus(sessionFile: string): "completed" | "failed" {
+function inferCompletedSessionStatus(sessionFile: string): Exclude<BackgroundAgentStatus, "running"> {
 	const tail = readFileTail(sessionFile, TAIL_READ_BYTES);
 	if (!tail) return "completed";
 
@@ -1758,7 +2065,8 @@ function inferCompletedSessionStatus(sessionFile: string): "completed" | "failed
 		if (entry.message.role !== "assistant") continue;
 
 		const stopReason = entry.message.stopReason;
-		return stopReason === "error" || stopReason === "aborted" ? "failed" : "completed";
+		if (stopReason === "aborted") return "aborted";
+		return stopReason === "error" ? "failed" : "completed";
 	}
 	return "completed";
 }
@@ -1810,43 +2118,96 @@ export function rehydrateBackgroundAgentsFromDisk(
 		throw err;
 	}
 
-	let registered = 0;
-	for (const entry of entries) {
-		if (!entry.isDirectory()) continue;
-
+	const pending = entries.flatMap((entry) => {
+		if (!entry.isDirectory()) return [];
 		const sessionDir = join(subagentSessionsBase, entry.name);
 		const sessionFiles = discoverSessionFiles(sessionDir, entry.name);
-		if (sessionFiles.length === 0) continue;
-
-		let sessionFile: string | undefined;
-		let header: Record<string, unknown> | undefined;
-		for (const candidateFile of sessionFiles) {
-			const candidateHeader = parseSessionHeader(candidateFile);
-			if (candidateHeader?.type !== "session" || typeof candidateHeader.parentSession !== "string") continue;
-			if (!parentSessionMatches(candidateHeader.parentSession, parentSessionFile)) continue;
-			sessionFile = candidateFile;
-			header = candidateHeader;
-			break;
+		for (const sessionFile of sessionFiles) {
+			const header = parseSessionHeader(sessionFile);
+			if (header?.type === "session" && typeof header.parentSession === "string") {
+				return [{ entryName: entry.name, sessionDir, sessionFiles, sessionFile, header }];
+			}
 		}
-		if (!sessionFile || !header) continue;
+		return [];
+	});
+	const knownParents: Array<{ sessionFile: string; agentId?: string }> = [{ sessionFile: parentSessionFile }];
+	for (const info of backgroundAgentRegistry.values()) {
+		if (info.sessionFile) knownParents.push({ sessionFile: info.sessionFile, agentId: info.agentId });
+	}
 
-		const agentId = `${REHYDRATED_AGENT_ID_PREFIX}${entry.name}`;
-		if (backgroundAgentRegistry.has(agentId) || hasRegisteredSession(sessionDir, sessionFile)) continue;
+	let registered = 0;
+	let madeProgress = true;
+	while (madeProgress && pending.length > 0) {
+		madeProgress = false;
+		for (let index = pending.length - 1; index >= 0; index--) {
+			const candidate = pending[index];
+			const recordedParent = candidate.header.parentSession as string;
+			const parent = knownParents.find((known) => parentSessionMatches(recordedParent, known.sessionFile));
+			if (!parent) continue;
+			pending.splice(index, 1);
+			madeProgress = true;
 
-		const statusFile = sessionFiles[sessionFiles.length - 1] ?? sessionFile;
-		const agentType = typeof header.agentType === "string" && header.agentType.trim() ? header.agentType : "agent";
-		const taskSummary = findFirstUserMessageSummary(sessionFile) ?? `${agentType} (${entry.name})`;
-		backgroundAgentRegistry.set(agentId, {
-			agentId,
-			agentType,
-			taskSummary,
-			startedAt: parseStartedAt(header, sessionFile),
-			status: inferCompletedSessionStatus(statusFile),
-			sessionDir,
-			sessionFile,
-			cwd: typeof header.cwd === "string" ? header.cwd : undefined,
-		});
-		registered++;
+			const agentId = `${REHYDRATED_AGENT_ID_PREFIX}${candidate.entryName}`;
+			if (
+				backgroundAgentRegistry.has(agentId) ||
+				hasRegisteredSession(candidate.sessionDir, candidate.sessionFile)
+			) {
+				continue;
+			}
+
+			const statusFile = candidate.sessionFiles[candidate.sessionFiles.length - 1] ?? candidate.sessionFile;
+			const agentType =
+				typeof candidate.header.agentType === "string" && candidate.header.agentType.trim()
+					? candidate.header.agentType
+					: "agent";
+			const taskSummary =
+				findFirstUserMessageSummary(candidate.sessionFile) ?? `${agentType} (${candidate.entryName})`;
+			const parentHeader = parseSessionHeader(recordedParent);
+			let completedAt: number | undefined;
+			try {
+				completedAt = statSync(statusFile).mtime.getTime();
+			} catch (err) {
+				if (!isExpectedFilesystemError(err)) throw err;
+			}
+			const info: BackgroundAgentInfo = {
+				agentId,
+				agentType,
+				taskSummary,
+				startedAt: parseStartedAt(candidate.header, candidate.sessionFile),
+				completedAt,
+				status: inferCompletedSessionStatus(statusFile),
+				parentAgentId: parent.agentId,
+				parentSessionId: typeof parentHeader?.id === "string" ? parentHeader.id : undefined,
+				usage: emptyBackgroundAgentUsage(),
+				sessionDir: candidate.sessionDir,
+				sessionFile: candidate.sessionFile,
+				cwd: typeof candidate.header.cwd === "string" ? candidate.header.cwd : undefined,
+			};
+			backgroundAgentRegistry.set(agentId, info);
+			for (const telemetryFile of candidate.sessionFiles) {
+				let content: string;
+				try {
+					content = readFileSync(telemetryFile, "utf8");
+				} catch (err) {
+					if (isExpectedFilesystemError(err)) continue;
+					throw err;
+				}
+				for (const line of content.split(/\r?\n/)) {
+					const persisted = parseJsonlLine(line);
+					if (persisted?.type === "message" && isRecord(persisted.message)) {
+						addAssistantUsage(agentId, persisted.message);
+					} else if (persisted?.type === "thinking_level_change" && typeof persisted.thinkingLevel === "string") {
+						info.thinking = persisted.thinkingLevel as ThinkingLevel;
+					} else if (persisted?.type === "model_change") {
+						applyCanonicalModel(info, { provider: persisted.provider, id: persisted.modelId });
+					}
+				}
+			}
+			for (const childSessionFile of candidate.sessionFiles) {
+				knownParents.push({ sessionFile: childSessionFile, agentId });
+			}
+			registered++;
+		}
 	}
 
 	return registered;
@@ -1855,18 +2216,28 @@ export function rehydrateBackgroundAgentsFromDisk(
 function cloneBackgroundAgentInfo(info: BackgroundAgentInfo): BackgroundAgentInfo {
 	return {
 		...info,
+		usage: { ...info.usage },
 		arbitrations: info.arbitrations?.map((record) => structuredClone(record)),
 	};
 }
 
-/** Get a snapshot of all tracked background agents (running and recently completed). Returns readonly clones. */
+function compareBackgroundAgents(a: BackgroundAgentInfo, b: BackgroundAgentInfo): number {
+	return a.startedAt - b.startedAt || a.agentId.localeCompare(b.agentId);
+}
+
+/** Get a snapshot of all tracked background agents in stable start/ID order. */
 export function getBackgroundAgents(): readonly Readonly<BackgroundAgentInfo>[] {
-	return [...backgroundAgentRegistry.values()].map(cloneBackgroundAgentInfo);
+	return [...backgroundAgentRegistry.values()].sort(compareBackgroundAgents).map(cloneBackgroundAgentInfo);
+}
+
+export function getBackgroundAgent(agentId: string): Readonly<BackgroundAgentInfo> | undefined {
+	const info = backgroundAgentRegistry.get(agentId);
+	return info ? cloneBackgroundAgentInfo(info) : undefined;
 }
 
 /** Get only currently running background agents. Returns readonly clones. */
 export function getRunningBackgroundAgents(): readonly Readonly<BackgroundAgentInfo>[] {
-	return [...backgroundAgentRegistry.values()].filter((a) => a.status === "running").map(cloneBackgroundAgentInfo);
+	return getBackgroundAgents().filter((agent) => agent.status === "running");
 }
 
 function getBackgroundControlClient(agentId: string): RpcClient {
@@ -1898,7 +2269,8 @@ export function abortBackgroundAgents(): void {
 		controller.abort();
 		const entry = backgroundAgentRegistry.get(id);
 		if (entry && entry.status === "running") {
-			entry.status = "failed";
+			entry.status = "aborted";
+			entry.completedAt = Date.now();
 		}
 	}
 	backgroundAbortControllers.clear();
@@ -1909,8 +2281,9 @@ export function abortBackgroundAgents(): void {
 export function pruneBackgroundAgents(maxAgeMs = 5 * 60 * 1000): void {
 	const now = Date.now();
 	for (const [id, info] of backgroundAgentRegistry) {
-		if (info.status !== "running" && now - info.startedAt > maxAgeMs) {
+		if (info.status !== "running" && now - (info.completedAt ?? info.startedAt) > maxAgeMs) {
 			backgroundAgentRegistry.delete(id);
+			backgroundAgentUsageKeys.delete(id);
 			backgroundAbortControllers.delete(id);
 			backgroundControlClients.delete(id);
 		}
@@ -1934,6 +2307,19 @@ export interface SubagentToolOptions {
 	parentModel?: () => string | undefined;
 	/** Parent session's current session file path. Used to link subagent child sessions back to their parent session. */
 	parentSessionFile?: () => string | undefined;
+	/**
+	 * Parent session's stable conversation UUID. Forwarded to spawn-time model availability
+	 * probes so providers with session-based routing (e.g. OpenCode) can group the probe
+	 * with the parent conversation (issue 500).
+	 */
+	parentSessionId?: () => string | undefined;
+	/**
+	 * Live single-model mode setting, evaluated at each spawn. When true, every child runs
+	 * on the parent session's model: the per-call `model` override, per-agent model fallback
+	 * lists, the agent definition's `model` spec, and the dispatch arbiter are all bypassed,
+	 * and a warning is prepended to child output whenever an ignored model spec was requested.
+	 */
+	singleModelMode?: () => boolean;
 	/** Model registry for validating model names before spawning child processes. */
 	modelRegistry?: ModelRegistry;
 	/** Settings-based model override getter for mach6.models. */
@@ -1976,7 +2362,7 @@ const thinkingLevelSchema = Type.Union(
 );
 
 const taskItemSchema = Type.Object({
-	agent: Type.Optional(Type.String({ description: "Agent type name (default: 'Explore')" })),
+	agent: Type.Optional(Type.String({ minLength: 1, description: "Agent type name (default: 'Explore')" })),
 	task: Type.String({ description: "The task prompt for this subagent" }),
 	cwd: Type.Optional(
 		Type.String({
@@ -1986,6 +2372,7 @@ const taskItemSchema = Type.Object({
 	),
 	model: Type.Optional(
 		Type.String({
+			minLength: 1,
 			description:
 				"Model override for this task. Takes precedence over agent definition model. Note: a single-string override discards the agent's fallback list.",
 		}),
@@ -1994,10 +2381,11 @@ const taskItemSchema = Type.Object({
 });
 
 const subagentSchema = Type.Object({
-	agent: Type.Optional(Type.String({ description: "Agent type name (default: 'Explore')" })),
+	agent: Type.Optional(Type.String({ minLength: 1, description: "Agent type name (default: 'Explore')" })),
 	task: Type.Optional(Type.String({ description: "Task prompt (single mode)", minLength: 1 })),
 	model: Type.Optional(
 		Type.String({
+			minLength: 1,
 			description:
 				"Model override. Takes precedence over agent definition model. Note: a single-string override discards the agent's fallback list. For parallel/chain, set per-task instead.",
 		}),
@@ -2161,6 +2549,8 @@ export function createSubagentToolDefinition(
 	const getParentProvider = options?.parentProvider ?? (() => undefined);
 	const getParentModel = options?.parentModel ?? (() => undefined);
 	const getParentSessionFile = options?.parentSessionFile ?? (() => undefined);
+	const getParentSessionId = options?.parentSessionId ?? (() => undefined);
+	const getSingleModelMode = options?.singleModelMode ?? (() => false);
 	const modelRegistry = options?.modelRegistry;
 	const getAgentModelsForAgent = options?.getAgentModelsForAgent;
 	const arbitrate = options?.arbitrate;
@@ -2289,6 +2679,8 @@ export function createSubagentToolDefinition(
 						taskSummary,
 						startedAt: Date.now(),
 						status: "running",
+						parentSessionId: getParentSessionId(),
+						usage: emptyBackgroundAgentUsage(),
 						sessionDir,
 						cwd: agentCwd,
 					});
@@ -2297,24 +2689,28 @@ export function createSubagentToolDefinition(
 
 					// Relay child JSONL events tagged with this agent's ID. Guarded so a
 					// throwing relay listener can never kill the stdout reader.
-					const onChildEvent = onBackgroundEvent
-						? (event: Record<string, unknown>) => {
-								try {
-									onBackgroundEvent(agentId, event);
-								} catch (err) {
-									log.warn(
-										`[subagent] onBackgroundEvent threw for agent ${agentId}: ${err instanceof Error ? err.message : String(err)}`,
-									);
-								}
-							}
-						: undefined;
+					const onChildEvent = (event: Record<string, unknown>) => {
+						applyBackgroundAgentTelemetryEvent(agentId, event);
+						if (!onBackgroundEvent) return;
+						try {
+							onBackgroundEvent(agentId, event);
+						} catch (err) {
+							log.warn(
+								`[subagent] onBackgroundEvent threw for agent ${agentId}: ${err instanceof Error ? err.message : String(err)}`,
+							);
+						}
+					};
 
 					const onArbitrationRecord = (record: DispatchArbitrationRecord) => {
 						const entry = backgroundAgentRegistry.get(agentId);
 						if (entry) {
 							entry.arbitrations ??= [];
 							entry.arbitrations.push(record);
-							if (record.status === "success" && record.final) entry.agentType = record.final.agent;
+							if (record.status === "success" && record.final) {
+								entry.agentType = record.final.agent;
+								applyCanonicalModel(entry, record.final.model);
+								entry.thinking = record.final.thinking;
+							}
 						}
 						onArbitration?.({ type: "subagent_arbitration", agentId, ...record });
 					};
@@ -2340,13 +2736,21 @@ export function createSubagentToolDefinition(
 						try {
 							const result = await runFn(bgSignal, onChildEvent, onArbitrationRecord, onControlAvailable);
 							const entry = backgroundAgentRegistry.get(agentId);
-							if (entry && !bgSignal.aborted) entry.status = result.exitCode === 0 ? "completed" : "failed";
-							if (entry && result.sessionFile) entry.sessionFile = result.sessionFile;
+							if (entry) {
+								entry.status = bgSignal.aborted ? "aborted" : result.exitCode === 0 ? "completed" : "failed";
+								entry.completedAt = Date.now();
+								if (result.sessionFile) entry.sessionFile = result.sessionFile;
+								applyCanonicalModel(entry, result.model);
+								if (result.thinking) entry.thinking = result.thinking;
+							}
 							backgroundAbortControllers.delete(agentId);
 							safeNotify(result);
 						} catch (err) {
 							const entry = backgroundAgentRegistry.get(agentId);
-							if (entry && !bgSignal.aborted) entry.status = "failed";
+							if (entry) {
+								entry.status = bgSignal.aborted ? "aborted" : "failed";
+								entry.completedAt = Date.now();
+							}
 							backgroundAbortControllers.delete(agentId);
 							safeNotify({
 								agent: agentName,
@@ -2366,7 +2770,10 @@ export function createSubagentToolDefinition(
 							`[subagent] Unhandled background error (${agentId}): ${err instanceof Error ? err.message : String(err)}`,
 						);
 						const entry = backgroundAgentRegistry.get(agentId);
-						if (entry && entry.status === "running") entry.status = "failed";
+						if (entry && entry.status === "running") {
+							entry.status = bgSignal.aborted ? "aborted" : "failed";
+							entry.completedAt = Date.now();
+						}
 						backgroundAbortControllers.delete(agentId);
 						try {
 							onBackgroundComplete(
@@ -2397,9 +2804,10 @@ export function createSubagentToolDefinition(
 					agentName: string,
 					task: string,
 					taskLabel: string,
-					taskCwd?: string,
-					modelOverride?: string,
-					thinkingOverride?: ThinkingLevel,
+					taskCwd: string | undefined,
+					modelOverride: string | undefined,
+					thinkingOverride: ThinkingLevel | undefined,
+					locked: Array<keyof DispatchRoute>,
 				) => {
 					const resolvedCwd = taskCwd ?? cwd;
 					// Each background agent gets its own session subdirectory
@@ -2432,11 +2840,14 @@ export function createSubagentToolDefinition(
 									? {
 											arbitrate,
 											onRecord: onArbitrationRecord,
+											locked,
 											defaultThinkingLevel: getDefaultThinkingLevel?.(),
 											getAgentModelsForAgent,
 										}
 									: undefined,
 								onControlAvailable,
+								getParentSessionId(),
+								getSingleModelMode(),
 							),
 					);
 				};
@@ -2451,6 +2862,7 @@ export function createSubagentToolDefinition(
 						undefined,
 						params.model,
 						params.thinking,
+						explicitRouteLocks(params.agent, params.model, params.thinking),
 					);
 					return {
 						content: [
@@ -2481,6 +2893,11 @@ export function createSubagentToolDefinition(
 							cwdResult.cwd,
 							item.model || params.model,
 							resolveSubagentThinkingOverride(item.thinking, params.thinking),
+							explicitRouteLocks(
+								item.agent ?? params.agent,
+								item.model ?? params.model,
+								item.thinking ?? params.thinking,
+							),
 						);
 						launched.push({ id: agentId, agentName, taskText: item.task });
 					}
@@ -2547,6 +2964,8 @@ export function createSubagentToolDefinition(
 										}
 									: undefined,
 								onControlAvailable,
+								getParentSessionId(),
+								getSingleModelMode,
 							);
 							const resultText = results
 								.map((r, i) => `### Step ${i + 1}\n${formatSingleResult(r)}`)

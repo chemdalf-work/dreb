@@ -1,7 +1,7 @@
 {
-	"name": "dreb dashboard",
-	"short_name": "dreb",
-	"description": "Fleet overview, live chat parity, and session control for dreb agents.",
+	"name": "Pierre Dreb dashboard",
+	"short_name": "Pierre Dreb",
+	"description": "Fleet overview, live chat parity, and session control for Pierre Dreb agents.",
 	"start_url": ".",
 	"scope": ".",
 	"display": "standalone",

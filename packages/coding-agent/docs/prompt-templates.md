@@ -1,4 +1,4 @@
-> dreb can create prompt templates. Ask it to build one for your workflow.
+> Pierre Dreb can create prompt templates. Ask it to build one for your workflow.
 
 # Prompt Templates
 
@@ -6,11 +6,11 @@ Prompt templates are Markdown snippets that expand into full prompts. Type `/nam
 
 ## Locations
 
-dreb loads prompt templates from:
+Pierre Dreb loads prompt templates from:
 
 - Global: `~/.dreb/agent/prompts/*.md`
 - Project: `.dreb/prompts/*.md`
-- Packages: `prompts/` directories or `dreb.prompts` entries in `package.json`
+- Packages: `prompts/` directories or `Pierre Dreb.prompts` entries in `package.json`
 - Settings: `prompts` array with files or directories
 - CLI: `--prompt-template <path>` (repeatable)
 

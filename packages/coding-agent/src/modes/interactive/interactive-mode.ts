@@ -37,7 +37,15 @@ import {
 	visibleWidth,
 } from "@dreb/tui";
 import { spawn, spawnSync } from "child_process";
-import { APP_NAME, getAgentDir, getAuthPath, getDebugLogPath, getUpdateInstruction, VERSION } from "../../config.js";
+import {
+	APP_NAME,
+	CLI_NAME,
+	getAgentDir,
+	getAuthPath,
+	getDebugLogPath,
+	getUpdateInstruction,
+	VERSION,
+} from "../../config.js";
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.js";
 import { BuddyManager, checkOllama } from "../../core/buddy/buddy-manager.js";
 import { Rarity, Stat } from "../../core/buddy/buddy-types.js";
@@ -79,7 +87,13 @@ import { restoreStderr, type StderrCallback, takeOverStderr } from "../../core/s
 import { TabTitleGenerator } from "../../core/tab-title.js";
 import { resolveThinkingDisplay, validateThinkingLevelForModel } from "../../core/thinking.js";
 import { resolveToCwd } from "../../core/tools/path-utils.js";
-import { abortBackgroundAgents, discoverAgentTypes, getRunningBackgroundAgents } from "../../core/tools/subagent.js";
+import {
+	abortBackgroundAgents,
+	discoverAgentTypes,
+	getBackgroundAgents,
+	getRunningBackgroundAgents,
+	rehydrateBackgroundAgentsFromDisk,
+} from "../../core/tools/subagent.js";
 import type { TruncationResult } from "../../core/tools/truncate.js";
 import { copyToClipboard } from "../../utils/clipboard.js";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.js";
@@ -92,6 +106,7 @@ import {
 	toSingleLinePreview,
 } from "../../utils/message-text.js";
 import { ensureTool } from "../../utils/tools-manager.js";
+import { formatBackgroundAgentRow } from "./background-agent-display.js";
 import { ArminComponent } from "./components/armin.js";
 import { AskWizardComponent } from "./components/ask-wizard.js";
 import { AssistantMessageComponent } from "./components/assistant-message.js";
@@ -321,14 +336,14 @@ export class InteractiveMode {
 				if (!model) throw new Error("No model available. Set a model first.");
 				const apiKey = await this.session.modelRegistry.getApiKey(model);
 				if (!apiKey) throw new Error("No API key available for the current model.");
-				return manager.hatch(model, apiKey);
+				return manager.hatch(model, apiKey, this.session.sessionId);
 			},
 			onReroll: async (manager) => {
 				const model = this.session.model;
 				if (!model) throw new Error("No model available. Set a model first.");
 				const apiKey = await this.session.modelRegistry.getApiKey(model);
 				if (!apiKey) throw new Error("No API key available for the current model.");
-				return manager.reroll(model, apiKey);
+				return manager.reroll(model, apiKey, this.session.sessionId);
 			},
 			onVisibilityChange: (visible) => this.syncBuddyWidget(visible),
 		});
@@ -362,6 +377,8 @@ export class InteractiveMode {
 		// Register themes from resource loader and initialize
 		setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
 		initTheme(this.settingsManager.getTheme(), true);
+		rehydrateBackgroundAgentsFromDisk(this.session.sessionFile);
+		this.updateBackgroundAgentStatus();
 	}
 
 	private getAutocompleteSourceTag(sourceInfo?: SourceInfo): string | undefined {
@@ -664,9 +681,9 @@ export class InteractiveMode {
 		const cwdBasename = path.basename(process.cwd());
 		const sessionName = this.sessionManager.getSessionName();
 		if (sessionName) {
-			this.ui.terminal.setTitle(`dreb - ${sessionName} - ${cwdBasename}`);
+			this.ui.terminal.setTitle(`${APP_NAME} - ${sessionName} - ${cwdBasename}`);
 		} else {
-			this.ui.terminal.setTitle(`dreb - ${cwdBasename}`);
+			this.ui.terminal.setTitle(`${APP_NAME} - ${cwdBasename}`);
 		}
 	}
 
@@ -696,6 +713,7 @@ export class InteractiveMode {
 			getModel: () => this.session.model,
 			getModelRegistry: () => this.session.modelRegistry,
 			getProvider: () => this.session.model?.provider,
+			getSessionId: () => this.session.sessionId,
 			getAgentModelsOverride: (name) => this.settingsManager.getAgentModelsForAgent(name),
 			getBranch: () => this.footerDataProvider.getGitBranch(),
 			getRepo: () => path.basename(process.cwd()),
@@ -712,6 +730,7 @@ export class InteractiveMode {
 	 */
 	async run(): Promise<void> {
 		await this.init();
+		await this.refreshDailyCostAndWarn();
 
 		// Start version check asynchronously
 		this.checkForNewVersion().then((newVersion) => {
@@ -2414,6 +2433,11 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
+			if (text === "/agents") {
+				this.handleAgentsCommand();
+				this.editor.setText("");
+				return;
+			}
 
 			if (text === "/hotkeys") {
 				this.handleHotkeysCommand();
@@ -2769,7 +2793,7 @@ export class InteractiveMode {
 				// Buddy reaction: session wrap-up quip
 				this.buddyController.handleEvent(event);
 
-				await this.footerDataProvider.refreshDailyCost();
+				await this.refreshDailyCostAndWarn();
 				this.ui.requestRender();
 				break;
 
@@ -2914,6 +2938,17 @@ export class InteractiveMode {
 			case "background_agent_start":
 			case "background_agent_end": {
 				this.updateBackgroundAgentStatus();
+				await this.refreshDailyCostAndWarn();
+				this.ui.requestRender();
+				break;
+			}
+
+			case "background_agent_event": {
+				this.updateBackgroundAgentStatus();
+				if (this.backgroundEventUpdatesCost(event.event)) {
+					await this.refreshDailyCostAndWarn();
+				}
+				this.ui.requestRender();
 				break;
 			}
 
@@ -2921,7 +2956,7 @@ export class InteractiveMode {
 				const count = event.runningAgentCount;
 				const agentWord = count === 1 ? "agent" : "agents";
 				this.showStatus(
-					`Paused automatically — ${count} background ${agentWord} still working. dreb will resume when they report back, or send a message to continue. (configure via backgroundAgents settings)`,
+					`Paused automatically — ${count} background ${agentWord} still working. ${APP_NAME} will resume when they report back, or send a message to continue. (configure via backgroundAgents settings)`,
 				);
 				this.updateBackgroundAgentStatus();
 				break;
@@ -2953,21 +2988,21 @@ export class InteractiveMode {
 		}
 	}
 
-	/** Update the footer status line with running background agent count. */
+	/** Update the footer with stable rows for running and recently completed descendants. */
 	private updateBackgroundAgentStatus(): void {
-		const running = getRunningBackgroundAgents();
-		if (running.length === 0) {
+		const agents = getBackgroundAgents();
+		const running = agents.filter((agent) => agent.status === "running");
+		if (agents.length === 0) {
 			this.footerDataProvider.setExtensionStatus("bg-agents", undefined);
 		} else {
-			const types = running.map((a) => a.agentType);
-			const label =
-				running.length === 1
-					? `1 background agent (${types[0]})`
-					: `${running.length} background agents (${types.join(", ")})`;
-			const interrupt = keyText("app.interrupt");
+			const width = Math.max(40, this.ui.terminal.columns - 4);
+			const recent = agents.slice(-3);
+			const interrupt = running.length > 0 ? ` · ${keyText("app.interrupt")} to cancel` : "";
+			const header = `${agents.length} descendants · ${running.length} running${interrupt}`;
+			const rows = recent.map((agent) => formatBackgroundAgentRow(agent, width));
 			this.footerDataProvider.setExtensionStatus(
 				"bg-agents",
-				theme.fg("accent", `⟳ ${label}`) + theme.fg("muted", ` (${interrupt} to cancel)`),
+				`${theme.fg("accent", header)}\n${rows.map((row) => theme.fg("muted", row)).join("\n")}`,
 			);
 		}
 		this.footer.invalidate();
@@ -3233,8 +3268,7 @@ export class InteractiveMode {
 	}
 
 	/**
-	 * Gracefully shutdown the agent.
-	 * Emits shutdown event to extensions, then exits.
+	 * Gracefully shutdown the agent, dispose the session, then exit.
 	 */
 	private isShuttingDown = false;
 
@@ -3242,13 +3276,7 @@ export class InteractiveMode {
 		if (this.isShuttingDown) return;
 		this.isShuttingDown = true;
 
-		// Emit shutdown event to extensions
-		const extensionRunner = this.session.extensionRunner;
-		if (extensionRunner?.hasHandlers("session_shutdown")) {
-			await extensionRunner.emit({
-				type: "session_shutdown",
-			});
-		}
+		await this.session.dispose();
 
 		// Wait for any pending renders to complete
 		// requestRender() uses process.nextTick(), so we wait one tick
@@ -3560,6 +3588,29 @@ export class InteractiveMode {
 	// UI helpers
 	// =========================================================================
 
+	private backgroundEventUpdatesCost(event: Record<string, unknown>): boolean {
+		let current: Record<string, unknown> | undefined = event;
+		for (let depth = 0; current && depth < 16; depth++) {
+			if (current.type === "session") return true;
+			if (current.type === "message_end") {
+				const message = current.message;
+				return typeof message === "object" && message !== null && "role" in message && message.role === "assistant";
+			}
+			const nested: unknown = current.event;
+			current = typeof nested === "object" && nested !== null ? (nested as Record<string, unknown>) : undefined;
+		}
+		return false;
+	}
+
+	private async refreshDailyCostAndWarn(): Promise<void> {
+		const warnings = await this.footerDataProvider.refreshDailyCost(this.session.sessionManager.getSessionFile());
+		for (const warning of warnings) {
+			this.showWarning(
+				`Daily API spend crossed the $${warning.threshold.toFixed(0)} threshold (now $${warning.cost.toFixed(2)}). This is warning-only; work continues.`,
+			);
+		}
+	}
+
 	clearEditor(): void {
 		this.editor.setText("");
 		this.ui.requestRender();
@@ -3597,7 +3648,7 @@ export class InteractiveMode {
 	}
 
 	showPackageUpdateNotification(packages: string[]): void {
-		const action = theme.fg("accent", `${APP_NAME} update`);
+		const action = theme.fg("accent", `${CLI_NAME} update`);
 		const updateInstruction = theme.fg("muted", "Package updates are available. Run ") + action;
 		const packageLines = packages.map((pkg) => `- ${pkg}`).join("\n");
 
@@ -3939,6 +3990,7 @@ export class InteractiveMode {
 					currentTheme: this.settingsManager.getTheme() || "dark",
 					availableThemes: getAvailableThemes(),
 					hideThinkingBlock: this.hideThinkingBlock,
+					singleModelMode: this.settingsManager.getSingleModelMode(),
 					thinkingDisplaySupported,
 					thinkingDisplay,
 					doubleEscapeAction: this.settingsManager.getDoubleEscapeAction(),
@@ -4027,6 +4079,10 @@ export class InteractiveMode {
 						this.rebuildChatFromMessages();
 						this.tryCommitPrefix();
 						this.ui.recommitAll();
+					},
+					onSingleModelModeChange: (enabled) => {
+						// Takes effect from the next subagent spawn (read live at spawn time).
+						this.settingsManager.setSingleModelMode(enabled);
 					},
 					onThinkingDisplayChange: (display) => {
 						const model = this.session.model;
@@ -4534,7 +4590,7 @@ export class InteractiveMode {
 
 		// Switch session via AgentSession (emits extension session events)
 		await this.session.switchSession(sessionPath);
-		await this.footerDataProvider.refreshDailyCost();
+		await this.refreshDailyCostAndWarn();
 
 		// Clear and re-render the chat
 		this.resetChatDisplay();
@@ -4960,6 +5016,16 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	private handleAgentsCommand(): void {
+		const agents = getBackgroundAgents();
+		const width = Math.max(40, this.ui.terminal.columns - 4);
+		const lines = agents.map((agent) => formatBackgroundAgentRow(agent, width));
+		const info = `${theme.bold("Descendant Agents")}\n\n${lines.length > 0 ? lines.join("\n") : theme.fg("dim", "No descendant agents recorded for this process.")}`;
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(info, 1, 0, undefined, true));
+		this.ui.requestRender();
+	}
+
 	/**
 	 * Capitalize keybinding for display (e.g., "ctrl+c" -> "Ctrl+C").
 	 */
@@ -5113,7 +5179,7 @@ ${cycleModelForward || cycleModelBackward ? `| \`${cycleModelForward}\` / \`${cy
 
 		// New session via session (emits extension session events)
 		await this.session.newSession();
-		await this.footerDataProvider.refreshDailyCost();
+		await this.refreshDailyCostAndWarn();
 
 		// Clear UI state
 		this.headerContainer.clear();

@@ -29,6 +29,7 @@ import {
 	messagesToEntries,
 	resolveUiRequest as resolveReducerUiRequest,
 	type SessionViewState,
+	syncCompactionStatusEntry,
 	type Toast,
 	updateAttention,
 } from "./reducer.js";
@@ -151,6 +152,11 @@ function restoreSnapshotOutcomeState(session: SessionViewState, messages: any[],
 			}),
 		);
 	}
+	// The snapshot's `compacting` flag is authoritative: sync the matching
+	// status entry so re-entering a compacting session restores the banner
+	// and its stop control even when the start event was not replayed.
+	// session.compacting was set from the same snapshot state by both callers.
+	syncCompactionStatusEntry(session);
 	deriveProviderErrorState(
 		session,
 		messages,
@@ -1275,7 +1281,13 @@ export function createAppStore() {
 				session.closed = undefined;
 				session.entries = messagesToEntries(messages);
 				session.backgroundAgents = Object.fromEntries(
-					snapshot.backgroundAgents.map((agent) => [agent.agentId, agent]),
+					snapshot.backgroundAgents.map((agent) => [
+						agent.agentId,
+						{
+							...agent,
+							usage: agent.usage ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+						},
+					]),
 				);
 				capBackgroundAgents(session);
 				session.streaming = snapshot.state.isStreaming;

@@ -1,6 +1,12 @@
 # Fork Documentation
 
-## Source
+## Current fork source
+- **Product:** Pierre Dreb
+- **Repository:** https://github.com/chemdalf-work/pierre-dreb
+- **Upstream baseline:** https://github.com/aebrer/dreb at `52583b0` (`v2.66.0`)
+- **Compatibility retained:** `@dreb/*`, `~/.dreb`, project `.dreb`, `DREB_*`, and the temporary `dreb` command
+
+## Original source
 - **Repository:** https://github.com/badlogic/pi-mono
 - **Commit:** `fb10d9aef9c9f0b84e690482f044250c6fc2ce49`
 - **Date:** 2026-03-26
@@ -21,11 +27,13 @@
 - `packages/coding-agent/` — CLI, tools, extensions, sessions → `@dreb/coding-agent`
 
 ## Rebranding
-- CLI command: `pi` → `dreb`
-- Config directory: `.pi/` → `.dreb/`
-- Package names: `@mariozechner/pi-*` → `@dreb/*`
-- System prompt: references "dreb" not "pi"
-- Config key: `piConfig` → `drebConfig` in package.json
+- Canonical CLI command: `pi` → `dreb` → `pierre-dreb`
+- Display identity: **Pierre Dreb**
+- Temporary compatibility command: `dreb` (same compiled entry point as `pierre-dreb`)
+- Config directory: `.pi/` → `.dreb/` (retained)
+- Package names: `@mariozechner/pi-*` → `@dreb/*` (retained)
+- Environment prefix: `DREB_*` (retained)
+- Config key: `piConfig` → `drebConfig` in package.json; product and compatibility fields are now independent
 
 ## Maintenance policy
 This is a hard fork, not a tracking fork. We maintain independently.

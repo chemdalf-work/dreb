@@ -1,10 +1,10 @@
-> dreb can create TUI components. Ask it to build one for your use case.
+> Pierre Dreb can create TUI components. Ask it to build one for your use case.
 
 # TUI Components
 
 Extensions and custom tools can render custom TUI components for interactive user interfaces. This page covers the component system and available building blocks.
 
-**Source:** [`@dreb/tui`](https://github.com/aebrer/dreb/tree/master/packages/tui)
+**Source:** [`@dreb/tui`](https://github.com/chemdalf-work/pierre-dreb/tree/master/packages/tui)
 
 ## Component Interface
 
@@ -96,7 +96,7 @@ dreb.on("session_start", async (_event, ctx) => {
 });
 ```
 
-**In custom tools** via `dreb.ui.custom()`:
+**In custom tools** via `Pierre Dreb.ui.custom()`:
 
 ```typescript
 async execute(toolCallId, params, onUpdate, ctx, signal) {
@@ -802,11 +802,15 @@ ctx.ui.setWidget("my-widget", undefined);
 
 ### Built-in Footer
 
-The default footer shows three lines (when space allows):
+The default footer shows these rows:
 
 1. **Path** — Current working directory (with `~` for home), git branch in parentheses, and session name if set. Dimmed.
-2. **Stats** — Cumulative token usage (↑input ↓output Rread Wwrite), cost (with daily total when cross-session), and context-window percentage (colored red above 90%, yellow above 70%). When a model is selected and enough turns have been recorded, a rolling TPS suffix appears: `~31 tok/s [100] · 10% ↑ median [10000]`. The recent median (last 10 turns) is compared against the long-term baseline (last 10,000 turns). Dimmed.
-3. **Extension statuses** — Alphabetical list of persistent status texts set by extensions via `ctx.ui.setStatus()`.
+2. **Stats** — Cumulative main-session token usage (↑input ↓output Rread Wwrite) and context-window percentage (colored red above 90%, yellow above 70%). When a model is selected and enough turns have been recorded, a rolling TPS suffix appears: `~31 tok/s [100] · 10% ↑ median [10000]`. The recent median (last 10 turns) is compared against the long-term baseline (last 10,000 turns). Dimmed.
+3. **Cost totals** — Explicit `main`, all descendant `children`, and all-session `today` currency totals. Main and descendant totals cover the current session tree; today includes every main and child session on the local calendar day.
+4. **Child usage** — One always-expanded row per direct or nested child, with hierarchy, agent type, token/cache usage, cost, and provider/model when available. Completed children and chains are recovered from persisted JSONL after restart.
+5. **Extension statuses** — Alphabetical list of persistent status texts set by extensions via `ctx.ui.setStatus()`.
+
+Daily spend is warning-only: Pierre Dreb warns once at $50, $100, and every additional $50 threshold. Atomic local markers deduplicate warnings across refreshes and process restarts; no threshold cancels work.
 
 ### Pattern 6: Custom Footer
 
@@ -818,7 +822,9 @@ ctx.ui.setFooter((tui, theme, footerData) => ({
   render(width: number): string[] {
     // footerData.getGitBranch(): string | null
     // footerData.getExtensionStatuses(): ReadonlyMap<string, string>
-    // footerData.getDailyCost(): number — aggregate cost across all sessions today
+    // footerData.getDailyCost(): number — aggregate main + child cost today
+    // footerData.getSessionCostSummary(ctx.sessionManager.getSessionFile())
+    //   returns current-session descendant totals and per-child usage
     return [`${ctx.model?.id} (${footerData.getGitBranch() || "no git"})`];
   },
   dispose: footerData.onBranchChange(() => tui.requestRender()), // reactive

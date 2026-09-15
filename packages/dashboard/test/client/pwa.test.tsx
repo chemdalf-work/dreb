@@ -346,7 +346,7 @@ describe("PWA client — notification dispatch gating", () => {
 		await mountAppAndFlush();
 		expect(showNotification).toHaveBeenCalled();
 		const call = showNotification.mock.calls[0];
-		expect(call?.[0]).toContain("dreb");
+		expect(call?.[0]).toContain("Pierre Dreb");
 		const opts = call?.[1] as { data?: { sessionKey?: string } };
 		expect(opts?.data?.sessionKey).toBe("att-1");
 	});
@@ -369,7 +369,7 @@ describe("PWA client — notification dispatch gating", () => {
 		// (confirm/select/input/editor) fall back to the generic reason.
 		expect(document.title).toContain("◆");
 		expect(showNotification).toHaveBeenCalledWith(
-			"dreb — Review Session",
+			"Pierre Dreb — Review Session",
 			expect.objectContaining({
 				body: "needs attention",
 				tag: "sess-ui",
@@ -400,7 +400,7 @@ describe("PWA client — notification dispatch gating", () => {
 
 		expect(document.title).toContain("◆");
 		expect(showNotification).toHaveBeenCalledWith(
-			"dreb — Ask Session",
+			"Pierre Dreb — Ask Session",
 			expect.objectContaining({
 				body: "waiting for input — 1 question",
 				tag: "sess-ask",
@@ -424,7 +424,7 @@ describe("PWA client — notification dispatch gating", () => {
 		await flushEffects();
 
 		expect(showNotification).toHaveBeenCalledWith(
-			"dreb — Error Session",
+			"Pierre Dreb — Error Session",
 			expect.objectContaining({
 				body: "model failed hard",
 				tag: "sess-error",
@@ -498,15 +498,15 @@ describe("PWA client — notification dispatch gating", () => {
 
 describe("PWA client — browser tab ◆ attention badge", () => {
 	// The ◆ prefix on document.title is the primary in-tab attention signal and
-	// the no-SW fallback. Prior rounds had only a single `toContain("◆")`
-	// assertion; these cover badge presence for a fleet-runtime attention flag,
-	// name formatting ("◆ <name> — dreb"), the no-name "◆ dreb" form, and badge
-	// removal once attention clears.
+	// the no-SW fallback. These assertions cover the Pierre Dreb product name,
+	// badge presence for a fleet-runtime attention flag, named and unnamed title
+	// formatting, and badge removal once attention clears.
 
-	it("shows a plain title with no ◆ when nothing needs attention", async () => {
+	it("shows Pierre Dreb branding with no ◆ when nothing needs attention", async () => {
 		vi.mocked(api.fleet).mockResolvedValue({ runtimes: [], diskSessions: [] });
 		await mountAppAndFlush();
-		expect(document.title).toBe("dreb");
+		expect(document.title).toBe("Pierre Dreb");
+		expect(document.querySelector(".wordmark")?.textContent?.trim()).toBe("Pierre Dreb");
 		expect(document.title).not.toContain("◆");
 	});
 
@@ -526,14 +526,14 @@ describe("PWA client — browser tab ◆ attention badge", () => {
 		window.location.hash = "#/session/k1";
 		try {
 			await mountAppAndFlush();
-			expect(document.title).toBe("◆ Deploy — dreb");
+			expect(document.title).toBe("◆ Deploy — Pierre Dreb");
 		} finally {
 			window.location.hash = "#/";
 		}
 	});
 
-	it("shows `◆ dreb` for a fleet runtime needing attention when not viewing a named session", async () => {
-		// Routed to fleet (no current session): displayName is undefined → base "dreb".
+	it("shows `◆ Pierre Dreb` for a fleet runtime needing attention when not viewing a named session", async () => {
+		// Routed to fleet (no current session): displayName is undefined → base "Pierre Dreb".
 		// The badge still fires because attention is global across runtimes/sessions,
 		// not gated on the current route.
 		vi.mocked(api.fleet).mockResolvedValue({
@@ -541,7 +541,7 @@ describe("PWA client — browser tab ◆ attention badge", () => {
 			diskSessions: [],
 		});
 		await mountAppAndFlush();
-		expect(document.title).toBe("◆ dreb");
+		expect(document.title).toBe("◆ Pierre Dreb");
 	});
 
 	it("removes the ◆ badge once attention clears (fleet runtime no longer needs attention)", async () => {
@@ -563,12 +563,12 @@ describe("PWA client — browser tab ◆ attention badge", () => {
 		await flushEffects();
 
 		expect(document.title).not.toContain("◆");
-		expect(document.title).toBe("dreb");
+		expect(document.title).toBe("Pierre Dreb");
 	});
 });
 
 describe("PWA client — notification title name fallback", () => {
-	it("notifies with `dreb — <id.slice(0,8)>` when the attention runtime has no sessionName", async () => {
+	it("notifies with `Pierre Dreb — <id.slice(0,8)>` when the attention runtime has no sessionName", async () => {
 		// item.name = runtime.state.sessionName ?? runtime.state.sessionId.slice(0, 8).
 		// With no sessionName the notification title falls back to the truncated id
 		// (first 8 chars), so a still-unnamed session shows a meaningful label.
@@ -580,6 +580,6 @@ describe("PWA client — notification title name fallback", () => {
 		expect(showNotification).toHaveBeenCalled();
 		const title = showNotification.mock.calls[0]?.[0] as string;
 		expect(title).toContain("abcdef12"); // first 8 chars of the session id
-		expect(title).toContain("dreb");
+		expect(title).toContain("Pierre Dreb");
 	});
 });

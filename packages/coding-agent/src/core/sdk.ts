@@ -70,6 +70,8 @@ export interface CreateAgentSessionOptions {
 
 	/** Built-in tools to use. Default: all standard tools [read, bash, edit, write, grep, find, ls, web_search, web_fetch, subagent, wait, watch_github_ci, ask_user]. `skill`, `tasks_update`, `search`, and `repo_graph` are always active regardless of this setting. */
 	tools?: Tool[];
+	/** Replacement base-tool set for constrained or custom runtimes. This bypasses the standard base tools. */
+	baseToolsOverride?: Record<string, Tool>;
 	/** Custom tools to register (in addition to built-in tools). */
 	customTools?: ToolDefinition[];
 
@@ -156,6 +158,11 @@ function getDefaultAgentDir(): string {
  * ```typescript
  * // Minimal - uses defaults
  * const { session } = await createAgentSession();
+ * try {
+ *   await session.prompt('Summarize this project.');
+ * } finally {
+ *   await session.dispose();
+ * }
  *
  * // With explicit model
  * import { getModel } from '@dreb/ai';
@@ -163,11 +170,21 @@ function getDefaultAgentDir(): string {
  *   model: getModel('anthropic', 'claude-opus-4-5'),
  *   thinkingLevel: 'high',
  * });
+ * try {
+ *   await session.prompt('Review the current changes.');
+ * } finally {
+ *   await session.dispose();
+ * }
  *
  * // Continue previous session
  * const { session, modelFallbackMessage } = await createAgentSession({
  *   continueSession: true,
  * });
+ * try {
+ *   console.log(modelFallbackMessage);
+ * } finally {
+ *   await session.dispose();
+ * }
  *
  * // Full control
  * const loader = new DefaultResourceLoader({
@@ -182,6 +199,11 @@ function getDefaultAgentDir(): string {
  *   resourceLoader: loader,
  *   sessionManager: SessionManager.inMemory(),
  * });
+ * try {
+ *   await session.prompt('Use the configured tools.');
+ * } finally {
+ *   await session.dispose();
+ * }
  * ```
  */
 export async function createAgentSession(options: CreateAgentSessionOptions = {}): Promise<CreateAgentSessionResult> {
@@ -239,6 +261,11 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		model = result.model;
 		if (!model) {
 			modelFallbackMessage = `No models available. Use /login or set an API key environment variable. See ${join(getDocsPath(), "providers.md")}. Then use /model to select a model.`;
+		} else if (result.fallbackMessage) {
+			modelFallbackMessage = modelFallbackMessage
+				? `${modelFallbackMessage}. ${result.fallbackMessage}`
+				: result.fallbackMessage;
+			console.warn(`[model-fallback] ${modelFallbackMessage}`);
 		} else if (modelFallbackMessage) {
 			modelFallbackMessage += `. Using ${model.provider}/${model.id}`;
 		}
@@ -289,7 +316,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const initialActiveToolNames: string[] = options.tools
 		? [...options.tools.map((t) => t.name).filter((n): n is ToolName => n in allTools), ...alwaysActiveBuiltins]
 		: [...defaultActiveToolNames, ...alwaysActiveBuiltins];
-
 	let agent: Agent;
 
 	// Create convertToLlm wrapper that filters images if blockImages is enabled (defense-in-depth)
@@ -428,6 +454,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		customTools: options.customTools,
 		modelRegistry,
 		initialActiveToolNames,
+		baseToolsOverride: options.baseToolsOverride,
 		maxConcurrentSubagents: settingsManager.getMaxConcurrentSubagents(),
 		extensionRunnerRef,
 		uiType: options.uiType,

@@ -1,6 +1,7 @@
 import { existsSync, type FSWatcher, watch } from "node:fs";
 import { dirname, join } from "node:path";
-import { DailyCostTracker } from "./daily-cost-tracker.js";
+import { getAgentDir } from "../config.js";
+import { DailyCostTracker, type DailyCostWarning, type SessionCostSummary } from "./daily-cost-tracker.js";
 import { findGitPaths, type GitPaths, getGitBranch, getGitBranchAsync } from "./git-branch.js";
 
 /**
@@ -26,7 +27,9 @@ export class FooterDataProvider {
 	constructor() {
 		this.gitPaths = findGitPaths();
 		this.setupGitWatcher();
-		this.dailyCostTracker = new DailyCostTracker();
+		this.dailyCostTracker = new DailyCostTracker({
+			warningStateDir: join(getAgentDir(), "daily-cost-warnings"),
+		});
 	}
 
 	/** Current git branch, null if not in repo, "detached" if detached HEAD */
@@ -67,9 +70,15 @@ export class FooterDataProvider {
 		return this.dailyCostTracker.getDailyCost();
 	}
 
-	/** Force refresh of the daily cost cache. */
-	async refreshDailyCost(): Promise<void> {
-		await this.dailyCostTracker.refresh();
+	/** Current session's cached all-time descendant usage and per-child breakdown. */
+	getSessionCostSummary(parentSessionFile?: string): SessionCostSummary {
+		return this.dailyCostTracker.getSessionCostSummary(parentSessionFile);
+	}
+
+	/** Force refresh of daily and current-session child usage caches. */
+	async refreshDailyCost(parentSessionFile?: string): Promise<DailyCostWarning[]> {
+		await this.dailyCostTracker.refresh(parentSessionFile);
+		return this.dailyCostTracker.consumeWarnings();
 	}
 
 	/** Number of unique providers with available models (for footer display) */
@@ -184,5 +193,10 @@ export class FooterDataProvider {
 /** Read-only view for extensions - excludes setExtensionStatus, setAvailableProviderCount and dispose */
 export type ReadonlyFooterDataProvider = Pick<
 	FooterDataProvider,
-	"getGitBranch" | "getExtensionStatuses" | "getAvailableProviderCount" | "onBranchChange" | "getDailyCost"
+	| "getGitBranch"
+	| "getExtensionStatuses"
+	| "getAvailableProviderCount"
+	| "onBranchChange"
+	| "getDailyCost"
+	| "getSessionCostSummary"
 >;

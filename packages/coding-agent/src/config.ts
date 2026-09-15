@@ -53,7 +53,7 @@ export function getUpdateInstruction(packageName: string): string {
 	const method = detectInstallMethod();
 	switch (method) {
 		case "bun-binary":
-			return `Download from: https://github.com/aebrer/dreb/releases/latest`;
+			return `Download from: https://github.com/chemdalf-work/pierre-dreb/releases/latest`;
 		case "pnpm":
 			return `Run: pnpm install -g ${packageName}`;
 		case "yarn":
@@ -168,12 +168,19 @@ export function getExamplesPath(): string {
 
 const pkg = JSON.parse(readFileSync(getPackageJsonPath(), "utf-8"));
 
-export const APP_NAME: string = pkg.drebConfig?.name || "dreb";
+export const PRODUCT_NAME: string = pkg.drebConfig?.displayName || pkg.drebConfig?.name || "dreb";
+export const CLI_NAME: string = pkg.drebConfig?.commandName || pkg.drebConfig?.name || "dreb";
+export const COMPATIBILITY_NAME: string = pkg.drebConfig?.compatibilityName || pkg.drebConfig?.name || "dreb";
 export const CONFIG_DIR_NAME: string = pkg.drebConfig?.configDir || ".dreb";
+export const ENV_PREFIX: string = pkg.drebConfig?.envPrefix || COMPATIBILITY_NAME.toUpperCase();
+export const UPSTREAM_BASELINE: string = pkg.drebConfig?.upstreamBaseline || "unknown";
 export const VERSION: string = pkg.version;
 
-// e.g., DREB_CODING_AGENT_DIR
-export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
+/** @deprecated Use PRODUCT_NAME for display text or CLI_NAME for command examples. */
+export const APP_NAME = PRODUCT_NAME;
+
+// Retained compatibility name, e.g. DREB_CODING_AGENT_DIR.
+export const ENV_AGENT_DIR = `${ENV_PREFIX}_CODING_AGENT_DIR`;
 
 // =============================================================================
 // User Config Paths (~/.dreb/agent/*)
@@ -238,7 +245,7 @@ export function getSubagentSessionsDir(): string {
 
 /** Get path to debug log file */
 export function getDebugLogPath(): string {
-	return join(getAgentDir(), `${APP_NAME}-debug.log`);
+	return join(getAgentDir(), `${COMPATIBILITY_NAME}-debug.log`);
 }
 
 /** Get path to performance log file */
@@ -248,7 +255,7 @@ export function getPerformanceLogPath(): string {
 
 /** Get path to secrets directory */
 export function getSecretsDir(): string {
-	return join(homedir(), `.${APP_NAME}`, "secrets");
+	return join(homedir(), CONFIG_DIR_NAME, "secrets");
 }
 
 /**

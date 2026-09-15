@@ -1,6 +1,6 @@
 # SDK Examples
 
-Programmatic usage of dreb coding-agent via `createAgentSession()`.
+Programmatic usage of Pierre Dreb coding-agent via `createAgentSession()`.
 
 ## Examples
 
@@ -102,7 +102,10 @@ session.subscribe((event) => {
   }
 });
 await session.prompt("Hello");
+await session.dispose();
 ```
+
+Always `await session.dispose()` when finished. It waits for extension shutdown handlers before releasing session resources, then rejects if any handler failed.
 
 ## Options
 

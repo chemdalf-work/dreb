@@ -6,7 +6,7 @@ import { arch, platform } from "os";
 import { join } from "path";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
-import { APP_NAME, getBinDir } from "../config.js";
+import { CLI_NAME, getBinDir } from "../config.js";
 
 const TOOLS_DIR = getBinDir();
 const NETWORK_TIMEOUT_MS = 10_000;
@@ -103,7 +103,7 @@ export function getToolPath(tool: "fd" | "rg"): string | null {
 // Fetch latest release version from GitHub
 async function getLatestVersion(repo: string): Promise<string> {
 	const response = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
-		headers: { "User-Agent": `${APP_NAME}-coding-agent` },
+		headers: { "User-Agent": `${CLI_NAME}-coding-agent` },
 		signal: AbortSignal.timeout(NETWORK_TIMEOUT_MS),
 	});
 

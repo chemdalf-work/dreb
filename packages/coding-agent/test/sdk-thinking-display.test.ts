@@ -27,7 +27,7 @@ describe("createAgentSession thinkingDisplay seeding", () => {
 		try {
 			expect(session.agent.thinkingDisplay).toBe("summarized");
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
@@ -38,7 +38,7 @@ describe("createAgentSession thinkingDisplay seeding", () => {
 		try {
 			expect(session.agent.thinkingDisplay).toBe("omitted");
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
@@ -47,7 +47,7 @@ describe("createAgentSession thinkingDisplay seeding", () => {
 		try {
 			expect(session.agent.thinkingDisplay).toBeUndefined();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
@@ -58,7 +58,7 @@ describe("createAgentSession thinkingDisplay seeding", () => {
 		try {
 			expect(session.agent.thinkingDisplay).toBeUndefined();
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 });

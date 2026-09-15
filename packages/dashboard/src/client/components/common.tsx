@@ -5,6 +5,7 @@
  */
 
 import { For, type JSX, Show } from "solid-js";
+import type { RuntimeInfoDto } from "../../shared/protocol.js";
 import type { Toast } from "../state/reducer.js";
 import type { AppStore } from "../state/store.js";
 
@@ -16,6 +17,18 @@ export function StatusChip(props: { status: "running" | "attention" | "idle" | "
 			<span class="dot">{glyphs[props.status]}</span> {props.label ?? labels[props.status]}
 		</span>
 	);
+}
+
+/**
+ * Live-session status derivation, shared by the fleet page and the session
+ * fleet sidebar: a runtime-level error wins, then the needs-attention flag,
+ * then any active work (stream/retry/compaction), else idle.
+ */
+export function runtimeStatus(runtime: RuntimeInfoDto): "running" | "attention" | "idle" | "error" {
+	if (runtime.error) return "error";
+	if (runtime.needsAttention) return "attention";
+	if (runtime.state.isStreaming || runtime.state.isRetrying || runtime.state.isCompacting) return "running";
+	return "idle";
 }
 
 export function ModeBadge(props: { store: AppStore }): JSX.Element {
@@ -46,7 +59,7 @@ export function Topbar(props: { store: AppStore; active: "fleet" | "files" | "me
 		<header class="topbar">
 			<div class="topbar-inner">
 				<a class="wordmark" href="#/">
-					dreb
+					Pierre Dreb
 				</a>
 				<nav>
 					<a href="#/" aria-current={props.active === "fleet" ? "page" : undefined}>

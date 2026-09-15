@@ -8,6 +8,7 @@ type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.js";
 import { hasBedrockCredentials } from "./bedrock-utils.js";
+import { getCopilotTestModel } from "./fixtures/copilot-models.js";
 import { ZAI_GLM_47_FLASH } from "./fixtures/zai-models.js";
 import { applyCopilotBaseUrl, resolveApiKey } from "./oauth.js";
 
@@ -408,55 +409,55 @@ describe("AI Providers Unicode Surrogate Pair Tests", () => {
 
 	describe("GitHub Copilot Provider Unicode Handling", () => {
 		it.skipIf(process.env.DREB_SKIP_LIVE_API === "1" || !githubCopilotToken)(
-			"gpt-5.4 - should handle emoji in tool results",
+			"OpenAI completions - should handle emoji in tool results",
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = applyCopilotBaseUrl(getModel("github-copilot", "gpt-5.4"), githubCopilotToken);
+				const llm = applyCopilotBaseUrl(getCopilotTestModel("openai-completions"), githubCopilotToken);
 				await testEmojiInToolResults(llm, { apiKey: githubCopilotToken });
 			},
 		);
 
 		it.skipIf(process.env.DREB_SKIP_LIVE_API === "1" || !githubCopilotToken)(
-			"gpt-5.4 - should handle real-world LinkedIn comment data with emoji",
+			"OpenAI completions - should handle real-world LinkedIn comment data with emoji",
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = applyCopilotBaseUrl(getModel("github-copilot", "gpt-5.4"), githubCopilotToken);
+				const llm = applyCopilotBaseUrl(getCopilotTestModel("openai-completions"), githubCopilotToken);
 				await testRealWorldLinkedInData(llm, { apiKey: githubCopilotToken });
 			},
 		);
 
 		it.skipIf(process.env.DREB_SKIP_LIVE_API === "1" || !githubCopilotToken)(
-			"gpt-5.4 - should handle unpaired high surrogate (0xD83D) in tool results",
+			"OpenAI completions - should handle unpaired high surrogate (0xD83D) in tool results",
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = applyCopilotBaseUrl(getModel("github-copilot", "gpt-5.4"), githubCopilotToken);
+				const llm = applyCopilotBaseUrl(getCopilotTestModel("openai-completions"), githubCopilotToken);
 				await testUnpairedHighSurrogate(llm, { apiKey: githubCopilotToken });
 			},
 		);
 
 		it.skipIf(process.env.DREB_SKIP_LIVE_API === "1" || !githubCopilotToken)(
-			"claude-opus-4.7 - should handle emoji in tool results",
+			"Anthropic Messages - should handle emoji in tool results",
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = applyCopilotBaseUrl(getModel("github-copilot", "claude-opus-4.7"), githubCopilotToken);
+				const llm = applyCopilotBaseUrl(getCopilotTestModel("anthropic-messages"), githubCopilotToken);
 				await testEmojiInToolResults(llm, { apiKey: githubCopilotToken });
 			},
 		);
 
 		it.skipIf(process.env.DREB_SKIP_LIVE_API === "1" || !githubCopilotToken)(
-			"claude-opus-4.7 - should handle real-world LinkedIn comment data with emoji",
+			"Anthropic Messages - should handle real-world LinkedIn comment data with emoji",
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = applyCopilotBaseUrl(getModel("github-copilot", "claude-opus-4.7"), githubCopilotToken);
+				const llm = applyCopilotBaseUrl(getCopilotTestModel("anthropic-messages"), githubCopilotToken);
 				await testRealWorldLinkedInData(llm, { apiKey: githubCopilotToken });
 			},
 		);
 
 		it.skipIf(process.env.DREB_SKIP_LIVE_API === "1" || !githubCopilotToken)(
-			"claude-opus-4.7 - should handle unpaired high surrogate (0xD83D) in tool results",
+			"Anthropic Messages - should handle unpaired high surrogate (0xD83D) in tool results",
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = applyCopilotBaseUrl(getModel("github-copilot", "claude-opus-4.7"), githubCopilotToken);
+				const llm = applyCopilotBaseUrl(getCopilotTestModel("anthropic-messages"), githubCopilotToken);
 				await testUnpairedHighSurrogate(llm, { apiKey: githubCopilotToken });
 			},
 		);
@@ -806,28 +807,28 @@ describe("AI Providers Unicode Surrogate Pair Tests", () => {
 
 	describe("OpenAI Codex Provider Unicode Handling", () => {
 		it.skipIf(process.env.DREB_SKIP_LIVE_API === "1" || !openaiCodexToken)(
-			"gpt-5.4 - should handle emoji in tool results",
+			"gpt-5.6-luna - should handle emoji in tool results",
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = getModel("openai-codex", "gpt-5.4");
+				const llm = getModel("openai-codex", "gpt-5.6-luna");
 				await testEmojiInToolResults(llm, { apiKey: openaiCodexToken });
 			},
 		);
 
 		it.skipIf(process.env.DREB_SKIP_LIVE_API === "1" || !openaiCodexToken)(
-			"gpt-5.4 - should handle real-world LinkedIn comment data with emoji",
+			"gpt-5.6-luna - should handle real-world LinkedIn comment data with emoji",
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = getModel("openai-codex", "gpt-5.4");
+				const llm = getModel("openai-codex", "gpt-5.6-luna");
 				await testRealWorldLinkedInData(llm, { apiKey: openaiCodexToken });
 			},
 		);
 
 		it.skipIf(process.env.DREB_SKIP_LIVE_API === "1" || !openaiCodexToken)(
-			"gpt-5.4 - should handle unpaired high surrogate (0xD83D) in tool results",
+			"gpt-5.6-luna - should handle unpaired high surrogate (0xD83D) in tool results",
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = getModel("openai-codex", "gpt-5.4");
+				const llm = getModel("openai-codex", "gpt-5.6-luna");
 				await testUnpairedHighSurrogate(llm, { apiKey: openaiCodexToken });
 			},
 		);

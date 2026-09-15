@@ -1,6 +1,6 @@
 # Termux (Android) Setup
 
-dreb runs on Android via [Termux](https://termux.dev/), a terminal emulator and Linux environment for Android.
+Pierre Dreb runs on Android via [Termux](https://termux.dev/), a terminal emulator and Linux environment for Android.
 
 ## Prerequisites
 
@@ -16,14 +16,14 @@ pkg update && pkg upgrade
 # Install dependencies
 pkg install nodejs termux-api git
 
-# Install dreb
+# Install pierre-dreb
 npm install -g @dreb/coding-agent
 
 # Create config directory
 mkdir -p ~/.dreb/agent
 
-# Run dreb
-dreb
+# Run pierre-dreb
+pierre-dreb
 ```
 
 ## Clipboard Support

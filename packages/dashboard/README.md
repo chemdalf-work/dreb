@@ -1,12 +1,12 @@
 # @dreb/dashboard
 
-Web dashboard for [dreb](https://github.com/aebrer/dreb) — a visual, real-time,
+Web dashboard for [Pierre Dreb](https://github.com/chemdalf-work/pierre-dreb) — a visual, real-time,
 mobile-friendly interface for browsing projects and sessions, controlling
-multiple dreb agents, watching background subagents live, and using dreb from
+multiple Pierre Dreb agents, watching background subagents live, and using Pierre Dreb from
 devices that are not sitting at the host terminal.
 
-Live agent control goes through RPC: the dashboard spawns `dreb --mode rpc`
-child processes (one per live session). The server also uses dreb's public
+Live agent control goes through RPC: the dashboard spawns `pierre-dreb --mode rpc`
+child processes (one per live session). The server also uses Pierre Dreb's public
 session APIs for on-disk inventory/delete and serves its own host file API.
 
 ## Install & launch
@@ -17,12 +17,12 @@ npm install -g @dreb/dashboard
 # local-only (default): binds 127.0.0.1, no auth needed
 dreb-dashboard
 
-# If you installed the main dreb CLI (@dreb/coding-agent), the same server is
+# If you installed the main pierre-dreb CLI (@dreb/coding-agent), the same server is
 # also available through:
-dreb dashboard
+pierre-dreb dashboard
 
 # remote over Tailscale with HTTPS (mobile PWA + notifications)
-dreb dashboard --remote --allow you@example.com \
+pierre-dreb dashboard --remote --allow you@example.com \
   --https --cert /path/cert.pem --key /path/key.pem
 ```
 
@@ -49,7 +49,15 @@ Open `http://127.0.0.1:5343`.
   queued-message restore, persistent session-header live indicator, footer-parity info bar (branch, tokens, cost, ctx%,
   latest-100 median tok/s with sample count and long-term delta), stats/loaded-context/fork modals, steer/follow-up composer
   modes, ■ abort, model/thinking switchers, extension-UI modals, export HTML,
-  and live auto-naming.
+  and live auto-naming. A fleet sidebar lists other live sessions in stable order
+  with the fleet cards' display information and attention/error highlighting.
+  Desktop collapse and pointer/keyboard-resizable width persist; a hidden
+  sidebar's toggle border shows the highest-priority other-session status.
+  At <=700px it becomes a safe-area-aware drawer, initially closed,
+  with managed keyboard focus and a close button, scrim, and Escape dismissal
+  that does not abort a pending agent question. Window breakpoint changes preserve
+  desktop preferences independently of mobile drawer sizing. The sidebar also
+  appears in subagent drill-in, excluding its parent.
 - **Subagent drill-in** — transcript of a background agent: live events via
   the relay, hydrated from the agent's on-disk session log so the view survives
   browser reloads. While the child is running, its composer queues user-written
@@ -69,10 +77,10 @@ Open `http://127.0.0.1:5343`.
   matching safe index links.
 - **Settings** — persistent defaults (provider-grouped model dropdown,
   thinking, queue modes, image handling, skill commands, transport,
-  hide-thinking, compaction/retry, opt-in continuation after every successful automatic compaction, and maximum concurrent subagents), automatic tab-title enable/model controls, a scoped-models editor, per-agent model
+  hide-thinking, compaction/retry, opt-in continuation of pending work after successful automatic compaction, and maximum concurrent subagents), automatic tab-title enable/model controls, a scoped-models editor, per-agent model
   fallback editor, and the global-only nested-context policy: an auditable trusted-roots list with
   revoke and simple add-by-path controls, plus a prominent expert trust-all
-  warning. The Files view remains the primary trust-grant flow. The auto-compaction continuation toggle is off by default, may keep unattended model turns and costs running indefinitely, and never affects manual `/compact`. Most defaults
+  warning. The Files view remains the primary trust-grant flow. The auto-compaction continuation toggle is off by default, may keep unattended model turns and costs running indefinitely, does not restart completed answers, and never affects manual `/compact`. Most defaults
   seed new sessions; opening Settings flushes pending writes and reloads durable
   global + project settings so external edits appear, while read/parse/write
   failures are shown instead of stale values. Maximum concurrent subagents defaults to 4; `0` starts new parents without the subagent tool and adds explicit self-execution guidance. Trust changes are observed by
@@ -88,12 +96,44 @@ Open `http://127.0.0.1:5343`.
   paired-device expiry/unpair management.
 - **Pairing** — remote first-login rotating-code flow.
 
+### Fleet sidebar
+
+Sidebar cards share the fleet page's project, name/status, attention/error reason,
+activity/latest-assistant preview, running/done subagent counts (up to three live
+summaries), task progress, model, ctx%, cost, message count, and last activity.
+Current working text or a suggested-next command takes precedence over the
+bounded assistant preview; unvisited sessions use the server-provided preview.
+Cards navigate on click, without adding the fleet page's stop-runtime action.
+
+On desktop, drag the right-edge separator or focus it and use Left/Right (10px),
+Home, or End. The default is 260px; preferred widths range from 240–560px, further
+constrained to leave 360px for the transcript. Collapse and width are saved in
+localStorage (`Pierre Dreb.dashboard.sessionSidebarCollapsed` and
+`Pierre Dreb.dashboard.sessionSidebarWidth`) across navigation and reload. Narrowing a
+window temporarily clamps the rendered width without replacing the saved choice;
+mobile ignores that width. Cancelling a drag discards its uncommitted change.
+While the sidebar/drawer is hidden, the toggle uses the highest-priority status
+among its cards: error → needs attention → running → idle, with theme colors
+and a textual accessible description. The viewed session/parent is excluded.
+
+Switching directly between sessions or subagents loads the destination transcript
+with fresh screen-local state, including after leaving a closed session. Live
+sessions retain their own unsent text drafts for the tab's lifetime; attachments,
+modals, and local errors never transfer to a different session. Abandoned
+hydration is cancelled so late responses cannot replace the destination view.
+
 ### Notifications and navigation
 
 Notices, warnings, and errors for the viewed main session or subagent share a
-manually dismissible banner region at the top of the transcript. Long mobile
-messages scroll within a capped text area while banner actions and dismissal
-remain reachable. App-global notices and notifications from other sessions use
+manually dismissible banner region inside the transcript column. Banners align
+with transcript content and never move or shorten the adjacent fleet sidebar.
+Long or stacked messages scroll within bounded space while banner actions and
+dismissal remain reachable. The session header groups back navigation on the
+left, session identity in the middle, and live/details controls on the right;
+model/thinking controls occupy a separate row. The fleet sidebar toggle sits on
+the left of the bottom usage/context-stats row, separate from the back link,
+and remains available with details collapsed. Subagent headers likewise put
+the sidebar toggle in their own bottom row. App-global notices and notifications from other sessions use
 a separate fixed top-center stack; neither surface expires automatically.
 
 Creating a runtime from Fleet or Files leaves the current screen in place.
@@ -110,7 +150,7 @@ The selected project context reads effective global + project settings, but save
 
 ### Memories
 
-The Memories screen exposes only dreb memory scopes: global `~/.dreb/memory` and populated project `.dreb/memory` directories derived from currently active sessions plus on-disk session cwd inventory. Empty or missing project memory directories are omitted because this screen cannot create entries; the global scope remains visible. Documents are existing-only: `MEMORY.md` is the special index, and entries are direct child `.md` files (excluding hidden/internal/path-like names). Local direct-child links in the rendered index open that entry in the current scope, while external links keep their normal safe behavior. Scope and document changes replace stale editor content with visible loading feedback.
+The Memories screen exposes only Pierre Dreb memory scopes: global `~/.dreb/memory` and populated project `.dreb/memory` directories derived from currently active sessions plus on-disk session cwd inventory. Empty or missing project memory directories are omitted because this screen cannot create entries; the global scope remains visible. Documents are existing-only: `MEMORY.md` is the special index, and entries are direct child `.md` files (excluding hidden/internal/path-like names). Local direct-child links in the rendered index open that entry in the current scope, while external links keep their normal safe behavior. Scope and document changes replace stale editor content with visible loading feedback.
 
 Saves require the exact opaque SHA-256 revision of the UTF-8 content that was loaded. A stale revision returns a conflict and leaves the browser draft intact. Entry saves validate `name`, `description`, and `type` frontmatter (`user-preferences`, `good-practices`, `project`, or `navigation`); listing/reading malformed entries surfaces a metadata error instead of hiding them so they can be repaired. The index accepts Markdown, is shown complete, and warns when it exceeds the 200-line memory-index convention.
 
@@ -128,7 +168,7 @@ sends only `{id, mimeType, size}` references; SVG, malformed data, and MIME
 mismatches are dropped. Image bytes therefore never consume SSE frame/replay
 budgets or cause an `oversized_event` barrier.
 
-The browser-local `dreb.dashboard.imageDisplayMode` preference is separate from
+The browser-local `Pierre Dreb.dashboard.imageDisplayMode` preference is separate from
 model-input auto-resize/block settings. **Bounded previews** are the default:
 they are generated lazily in a worker, fit within 1024 × 1024 and 256 KiB, and
 a click enlarges the same preview without fetching the original. **Placeholders**
@@ -177,10 +217,12 @@ browser DTO and bounds its first-message preview to 256 Unicode characters;
 internal parent paths and complete searchable transcript text never cross this
 boundary. The client narrowly refreshes inventory with `GET /api/sessions` after
 create, resume, stop, or delete, rather than reloading the whole fleet. While the
-Fleet screen is visible, it refreshes
-per-runtime stats no more often than every 30 seconds; the refresh is
+Fleet screen or a session/subagent fleet sidebar is visible, it refreshes
+per-runtime stats on a shared 30-second cadence; the refresh is
 single-flight, preserves each card's last good values, and exposes refresh
-failures in the UI.
+failures in the visible fleet surface. Hiding or unmounting that surface stops
+its timer; direct session switching preserves the cadence without hydrating
+other cards' transcripts or refetching the full fleet.
 
 Cards use the latest assistant text in hydrated client transcript entries for
 their activity preview. The authoritative initial-load or resync fleet value is
@@ -239,7 +281,7 @@ See the full [dashboard recovery contract](../coding-agent/docs/dashboard.md#liv
 ## Nested context trust
 
 The Files trust controls apply only to **lazy nested/out-of-cwd** context
-loading. They do not control dreb's separate initial upward scan for
+loading. They do not control Pierre Dreb's separate initial upward scan for
 `AGENTS.md`/`CLAUDE.md` from a session's launch cwd.
 
 Lazy loading is off by default. The Files view is the primary grant flow:
@@ -307,7 +349,7 @@ Running the dashboard inside **WSL2** and reaching it from a Windows browser can
 intermittently show an access-denied / pairing screen on `http://127.0.0.1`
 right after the WSL VM has been idle. It's a WSL mirrored-networking quirk (the
 loopback source address is transiently `10.255.255.254`, which fails local-mode
-auth's `127.x`/`::1` check), not a dreb bug. Keeping a WSL terminal open — or a
+auth's `127.x`/`::1` check), not a Pierre Dreb bug. Keeping a WSL terminal open — or a
 headless keep-alive — avoids it. Full explanation and workarounds:
 [WSL2 gotcha](../coding-agent/docs/dashboard.md#wsl2-gotcha).
 
@@ -343,7 +385,7 @@ is unchanged (the peer address stays the real tailnet IP). See
 ```
 Browser (SolidJS, hash-routed SPA)
   ⇄ REST + SSE (Express server, fail-closed auth middleware)
-  ⇄ RpcClient pool — one `dreb --mode rpc` child per live session
+  ⇄ RpcClient pool — one `pierre-dreb --mode rpc` child per live session
 ```
 
 - Events stream over one SSE connection carrying `{seq, key, event}` envelopes.

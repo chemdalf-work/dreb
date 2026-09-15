@@ -5,11 +5,12 @@
  *
  * Test with: npx tsx src/cli.ts [args...]
  */
-process.title = "dreb";
-process.emitWarning = (() => {}) as typeof process.emitWarning;
-
 import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
+import { CLI_NAME } from "./config.js";
 import { main } from "./main.js";
+
+process.title = CLI_NAME;
+process.emitWarning = (() => {}) as typeof process.emitWarning;
 
 setGlobalDispatcher(new EnvHttpProxyAgent());
 

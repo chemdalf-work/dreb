@@ -43,10 +43,10 @@ There are exactly two supported scope sources. Apply these rules in order, choos
 3. This skill-only workflow does **not** receive the current session's runtime `--models` value or later in-session scope changes. Never try to discover them from session logs, process state, the current model, or another file. If the user wants the runtime `--models` scope, they must pass the same comma-separated patterns as skill arguments.
 4. Do not infer scope from the current model, agent-definition defaults, all authenticated models, `agentModels.models`, or subagent session history.
 5. If neither source provides a non-empty pattern list, **stop with an actionable error before researching or writing a guide**. Tell the user to pass skill arguments or configure `enabledModels`.
-6. Run `dreb --list-models` to obtain the complete available-model listing. If the command fails or returns no usable listing, stop loudly.
+6. Run `pierre-dreb --list-models` to obtain the complete available-model listing. If the command fails or returns no usable listing, stop loudly.
 7. Resolve every selected pattern against that listing using the same normal model-pattern semantics as `--models`, including case-insensitive canonical/exact matching, fuzzy single-model matching, and globs. Preserve provider identity: the same upstream model through two providers is two candidates.
 8. Fail loudly and name every selected pattern that resolves to no available candidate.
-9. Compare the resolved candidate set with the complete `dreb --list-models` set. If they are equal, or the selected patterns otherwise amount to unbounded all-model research (for example a bare `*`), **refuse and ask the user for a narrower scope**.
+9. Compare the resolved candidate set with the complete `pierre-dreb --list-models` set. If they are equal, or the selected patterns otherwise amount to unbounded all-model research (for example a bare `*`), **refuse and ask the user for a narrower scope**.
 
 Keep the canonical candidate list. It is the coverage checklist for every later step. From this point onward, "selected candidates" means only that list; it never means an undiscovered runtime/session scope.
 

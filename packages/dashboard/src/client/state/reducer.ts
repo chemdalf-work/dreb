@@ -436,6 +436,17 @@ export function messagesToEntries(messages: MessageLike[]): TranscriptEntry[] {
 				tag: m.customType ?? "extension",
 				text: m.displayText ?? contentToText(message.content),
 			});
+		} else if (message.role === "compactionSummary") {
+			// Persisted compaction summaries ride snapshot messages as their own
+			// role; render them the same way the live auto_compaction_end handler
+			// does so the card survives leaving and re-entering the session view.
+			const m = message as { summary?: string; tokensBefore?: number };
+			entries.push({
+				kind: "summary",
+				label: "compaction",
+				text: m.summary ?? "context compacted",
+				tokensBefore: m.tokensBefore,
+			});
 		}
 	}
 	return entries;
@@ -453,6 +464,23 @@ export function createStatusLineEntry(entry: Omit<StatusLineEntry, "id" | "dismi
 	return { id: statusEntryCounter, ...entry };
 }
 
+/**
+ * Keep the "compacting context…" status entry in sync with the authoritative
+ * `compacting` flag. Live start/end events and every snapshot-apply path
+ * (drill-in hydrate, full resync) converge on this so the banner — and the
+ * "stop compaction" control driven by it — exists whenever compaction is in
+ * flight, even when the start event was consumed before the snapshot barrier
+ * and is no longer replayed. The entry is re-created rather than revived,
+ * including after dismissal, so re-entering a compacting session restores
+ * the indication.
+ */
+export function syncCompactionStatusEntry(state: SessionViewState): void {
+	state.statusEntries = state.statusEntries.filter((entry) => entry.key !== "compaction");
+	if (state.compacting) {
+		state.statusEntries.push(createStatusLineEntry({ key: "compaction", text: "compacting context…", tone: "info" }));
+	}
+}
+
 // The UI renders only the newest few global toasts; keep a bounded per-session
 // backing list so older, undismissable notifications do not accumulate forever.
 const MAX_TOASTS = 20;
@@ -466,6 +494,71 @@ function capToasts(state: SessionViewState): void {
 function startedAtTime(agent: BackgroundAgentDto): number {
 	const time = Date.parse(agent.startedAt);
 	return Number.isFinite(time) ? time : 0;
+}
+
+function backgroundAgentFromSnapshot(
+	snapshot: Record<string, unknown> | undefined,
+	fallback: Pick<BackgroundAgentDto, "agentId" | "agentType" | "taskSummary"> & Partial<BackgroundAgentDto>,
+): BackgroundAgentDto {
+	const usage = (snapshot?.usage as BackgroundAgentDto["usage"] | undefined) ?? fallback.usage;
+	return {
+		agentId: fallback.agentId,
+		agentType: (snapshot?.agentType as string | undefined) ?? fallback.agentType,
+		taskSummary: (snapshot?.taskSummary as string | undefined) ?? fallback.taskSummary,
+		startedAt:
+			typeof snapshot?.startedAt === "number"
+				? new Date(snapshot.startedAt).toISOString()
+				: (fallback.startedAt ?? new Date().toISOString()),
+		completedAt:
+			typeof snapshot?.completedAt === "number"
+				? new Date(snapshot.completedAt).toISOString()
+				: fallback.completedAt,
+		status: (snapshot?.status as BackgroundAgentDto["status"] | undefined) ?? fallback.status ?? "running",
+		parentAgentId: (snapshot?.parentAgentId as string | undefined) ?? fallback.parentAgentId,
+		parentSessionId: (snapshot?.parentSessionId as string | undefined) ?? fallback.parentSessionId,
+		provider: (snapshot?.provider as string | undefined) ?? fallback.provider,
+		model: (snapshot?.model as string | undefined) ?? fallback.model,
+		thinking: (snapshot?.thinking as string | undefined) ?? fallback.thinking,
+		usage: usage ? { ...usage } : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+		sessionDir: (snapshot?.sessionDir as string | undefined) ?? fallback.sessionDir,
+		sessionFile: (snapshot?.sessionFile as string | undefined) ?? fallback.sessionFile,
+		cwd: (snapshot?.cwd as string | undefined) ?? fallback.cwd,
+		arbitrations: (snapshot?.arbitrations as SubagentArbitrationDto[] | undefined) ?? fallback.arbitrations,
+	};
+}
+
+function applyNestedBackgroundLifecycle(
+	state: SessionViewState,
+	parentAgentId: string,
+	event: Record<string, unknown> | undefined,
+): void {
+	if (!event) return;
+	const agentId = typeof event.agentId === "string" ? event.agentId : undefined;
+	const snapshot = event.agent as Record<string, unknown> | undefined;
+	if (event.type === "background_agent_start" && agentId) {
+		state.backgroundAgents[agentId] = backgroundAgentFromSnapshot(snapshot, {
+			agentId,
+			agentType: String(event.agentType ?? "agent"),
+			taskSummary: String(event.taskSummary ?? "nested agent"),
+			sessionDir: event.sessionDir as string | undefined,
+			parentAgentId,
+		});
+	} else if (event.type === "background_agent_end" && agentId) {
+		const existing = state.backgroundAgents[agentId];
+		if (existing) {
+			const updated = backgroundAgentFromSnapshot(snapshot, existing);
+			updated.status =
+				(event.status as BackgroundAgentDto["status"] | undefined) ?? (event.success ? "completed" : "failed");
+			updated.completedAt ??= new Date().toISOString();
+			state.backgroundAgents[agentId] = updated;
+		}
+	} else if (event.type === "background_agent_event" && agentId && snapshot) {
+		const existing = state.backgroundAgents[agentId];
+		if (existing) state.backgroundAgents[agentId] = backgroundAgentFromSnapshot(snapshot, existing);
+	}
+	if (event.type === "background_agent_event" && agentId && event.event && typeof event.event === "object") {
+		applyNestedBackgroundLifecycle(state, agentId, event.event as Record<string, unknown>);
+	}
 }
 
 export function capBackgroundAgents(state: SessionViewState): void {
@@ -768,22 +861,34 @@ export function applySessionEvent(state: SessionViewState, event: any): void {
 			// Context-overflow errors are provisional while automatic compaction
 			// recovers the turn, just like provider errors entering auto-retry.
 			if (event.reason === "overflow") clearProviderErrorState(state);
-			state.statusEntries.push(
-				createStatusLineEntry({ key: "compaction", text: "compacting context…", tone: "info" }),
-			);
+			syncCompactionStatusEntry(state);
 			break;
 		}
 		case "auto_compaction_end": {
 			state.compacting = false;
-			state.statusEntries = state.statusEntries.filter((s) => s.key !== "compaction");
+			syncCompactionStatusEntry(state);
 			const result = event.result as { tokensBefore?: number; summary?: string } | undefined;
 			if (result && !event.aborted) {
-				state.entries.push({
-					kind: "summary",
-					label: "compaction",
-					text: result.summary ?? "context compacted",
-					tokensBefore: result.tokensBefore,
-				});
+				const text = result.summary ?? "context compacted";
+				// The same compaction can surface twice when it completes between
+				// the snapshot barrier and the snapshot read: the snapshot
+				// messages already carry the summary, and this (replayed) event
+				// would otherwise add a second identical card.
+				const alreadyPresent = state.entries.some(
+					(entry) =>
+						entry.kind === "summary" &&
+						entry.label === "compaction" &&
+						entry.text === text &&
+						entry.tokensBefore === result.tokensBefore,
+				);
+				if (!alreadyPresent) {
+					state.entries.push({
+						kind: "summary",
+						label: "compaction",
+						text,
+						tokensBefore: result.tokensBefore,
+					});
+				}
 			}
 			if (event.errorMessage) {
 				state.statusEntries.push(
@@ -850,14 +955,16 @@ export function applySessionEvent(state: SessionViewState, event: any): void {
 			break;
 		}
 		case "background_agent_start": {
-			state.backgroundAgents[String(event.agentId)] = {
-				agentId: String(event.agentId),
-				agentType: String(event.agentType),
-				taskSummary: String(event.taskSummary),
-				startedAt: new Date().toISOString(),
-				status: "running",
-				sessionDir: event.sessionDir as string | undefined,
-			};
+			const agentId = String(event.agentId);
+			state.backgroundAgents[agentId] = backgroundAgentFromSnapshot(
+				event.agent as Record<string, unknown> | undefined,
+				{
+					agentId,
+					agentType: String(event.agentType),
+					taskSummary: String(event.taskSummary),
+					sessionDir: event.sessionDir as string | undefined,
+				},
+			);
 			break;
 		}
 		case "subagent_arbitration": {
@@ -868,6 +975,8 @@ export function applySessionEvent(state: SessionViewState, event: any): void {
 					proposed: event.proposed as SubagentArbitrationDto["proposed"],
 					final: (event.final as SubagentArbitrationDto["final"]) ?? null,
 					changed: (event.changed as SubagentArbitrationDto["changed"]) ?? [],
+					locked: event.locked as SubagentArbitrationDto["locked"],
+					codingRisk: event.codingRisk as SubagentArbitrationDto["codingRisk"],
 					step: event.step as number | undefined,
 					errorCode: event.errorCode as string | undefined,
 					errorMessage: event.errorMessage as string | undefined,
@@ -878,24 +987,38 @@ export function applySessionEvent(state: SessionViewState, event: any): void {
 			break;
 		}
 		case "background_agent_end": {
-			const agent = state.backgroundAgents[String(event.agentId)];
+			const agentId = String(event.agentId);
+			const agent = state.backgroundAgents[agentId];
 			if (agent) {
-				agent.status = event.success ? "completed" : "failed";
-				agent.sessionFile = (event.sessionFile as string | undefined) ?? agent.sessionFile;
+				const snapshot = event.agent as Record<string, unknown> | undefined;
+				const updated = backgroundAgentFromSnapshot(snapshot, agent);
+				updated.status =
+					(event.status as BackgroundAgentDto["status"] | undefined) ?? (event.success ? "completed" : "failed");
+				updated.completedAt ??= new Date().toISOString();
+				updated.sessionFile = (event.sessionFile as string | undefined) ?? updated.sessionFile;
+				state.backgroundAgents[agentId] = updated;
 			}
-			const sub = state.subagents[String(event.agentId)];
+			const sub = state.subagents[agentId];
 			if (sub) sub.streaming = false;
 			capBackgroundAgents(state);
 			break;
 		}
 		case "background_agent_event": {
 			const agentId = String(event.agentId);
+			const existing = state.backgroundAgents[agentId];
+			if (existing && event.agent) {
+				state.backgroundAgents[agentId] = backgroundAgentFromSnapshot(
+					event.agent as Record<string, unknown>,
+					existing,
+				);
+			}
 			let sub = state.subagents[agentId];
 			if (!sub) {
 				sub = { agentId, entries: [], streaming: true };
 				state.subagents[agentId] = sub;
 			}
 			const child = event.event as any;
+			applyNestedBackgroundLifecycle(state, agentId, child);
 			if (child?.type === "session") break; // header — no transcript effect
 			if (child?.type === "agent_start" && child.model) sub.model = child.model.id;
 			applyTranscriptEvent(sub, child);

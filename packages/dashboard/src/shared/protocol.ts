@@ -38,6 +38,8 @@ export interface SubagentArbitrationDto {
 	proposed: ArbitrationRouteDto;
 	final: ArbitrationRouteDto | null;
 	changed: Array<"agent" | "model" | "thinking">;
+	locked?: Array<"agent" | "model" | "thinking">;
+	codingRisk?: { level: "low" | "medium" | "high"; signals: string[] };
 	step?: number;
 	errorCode?: string;
 	errorMessage?: string;
@@ -49,7 +51,14 @@ export interface BackgroundAgentDto {
 	agentType: string;
 	taskSummary: string;
 	startedAt: string;
-	status: "running" | "completed" | "failed";
+	completedAt?: string;
+	status: "running" | "completed" | "failed" | "aborted";
+	parentAgentId?: string;
+	parentSessionId?: string;
+	provider?: string;
+	model?: string;
+	thinking?: string;
+	usage: { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number };
 	sessionDir?: string;
 	sessionFile?: string;
 	cwd?: string;
@@ -547,6 +556,8 @@ export interface SettingsDto {
 	effectiveTrustedContextRoots?: string[];
 	transport?: "sse" | "websocket" | "auto";
 	hideThinkingBlock?: boolean;
+	/** Single-model mode (issue 517): every subagent spawn runs on the parent session's model. */
+	singleModelMode?: boolean;
 	agentModels?: Record<string, string[]>;
 	/** Global-only Dispatch Arbiter configuration. */
 	subagentArbiter?: SubagentArbiterSettingsDto | null;
@@ -582,6 +593,7 @@ export type SettingsUpdateDto = Partial<
 		| "trustedContextFolders"
 		| "transport"
 		| "hideThinkingBlock"
+		| "singleModelMode"
 		| "agentModels"
 		| "subagentArbiter"
 	>

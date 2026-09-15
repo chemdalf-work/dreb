@@ -10,8 +10,8 @@ See [AGENTS.md](../../../AGENTS.md) for build requirements, release protocol, an
 ## Setup
 
 ```bash
-git clone https://github.com/aebrer/dreb
-cd dreb
+git clone https://github.com/chemdalf-work/pierre-dreb
+cd pierre-dreb
 npm install
 npm run build
 ```
@@ -22,7 +22,7 @@ Run from source:
 node /path/to/dreb/packages/coding-agent/dist/cli.js
 ```
 
-The script can be run from any directory. dreb keeps the caller's current working directory.
+The script can be run from any directory. Pierre Dreb keeps the caller's current working directory.
 
 ## Monorepo structure
 
@@ -38,6 +38,10 @@ packages/
 ```
 
 Dependencies flow one way through the workspace: `coding-agent` depends on `agent`, `ai`, and `tui`; frontend packages such as `telegram`, `dashboard`, and `semantic-search` build on the published workspace APIs instead of creating reverse dependencies. Changes to a dependency require rebuilding downstream packages — `npm run build` handles this automatically in the correct order.
+
+## Optional external analysis package
+
+[dreb-context-mode](https://github.com/chemdalf-work/dreb-context-mode) is an optional installable extension package, not a generic MCP client in core. Its automatic main-session and subagent discovery, advisory routing, OS-process privileges, and package-owned persistent storage belong to that package's documentation and tests. Keep core documentation explicit about that boundary; do not add `ctx_*` tools, arbitrary MCP dispatch, or RTK interception to core. RTK remains rejected because its fidelity, exit-code, and actionable-diagnostic failures are unsafe for automatic use.
 
 ## Code style
 
@@ -55,10 +59,13 @@ A pre-commit hook runs biome checks, tests, and `tsgo --noEmit` (matching CI) au
 ```bash
 npm test                                           # All workspace tests
 npx vitest --run packages/coding-agent/test/some.test.ts  # Single file
-bash test.sh                                       # Match CI exactly (unsets API keys first)
+bash test.sh                                       # Full suite, including configured live providers
+bash test.sh --no-live-api                         # Offline suite (skips live provider calls)
 ```
 
-Tests that require API keys are skipped when keys aren't available. CI runs `bash test.sh`, which unsets all API keys before running the suite for clean isolation. Use this locally when you want to match CI exactly.
+CI runs `bash test.sh`. The script does not unset API keys: provider tests run when their credentials are available, including OAuth credentials from `~/.dreb/agent/auth.json`, and can consume tokens or subscription quota. CI normally has no provider credentials, so its live tests skip. Use `--no-live-api` for explicit offline isolation; it sets `DREB_SKIP_LIVE_API=1`. Both script modes disable local LLM tests.
+
+When updating live model fixtures, check protocol behavior as well as catalog membership. Adaptive Claude tests that assert visible thinking must request `thinkingDisplay: "summarized"`. A conservative registry window is not necessarily the endpoint's hard limit: overflow tests may need to check full input usage (`input + cacheRead + cacheWrite`) when the server accepts a request beyond the configured window.
 
 ## Type checking
 
@@ -79,22 +86,30 @@ The pre-commit hook runs in order: biome check → `tsgo --noEmit` → `test.sh`
 
 ## Forking / Rebranding
 
-Configure via `package.json`:
+Product identity and compatibility paths are configured independently in `package.json`:
 
 ```json
 {
   "drebConfig": {
-    "name": "dreb",
-    "configDir": ".dreb"
+    "displayName": "Pierre Dreb",
+    "commandName": "pierre-dreb",
+    "compatibilityName": "dreb",
+    "configDir": ".dreb",
+    "envPrefix": "DREB",
+    "upstreamBaseline": "aebrer/dreb@52583b0"
+  },
+  "bin": {
+    "pierre-dreb": "dist/cli.js",
+    "dreb": "dist/cli.js"
   }
 }
 ```
 
-Change `name`, `configDir`, and `bin` field for your fork. Affects CLI banner, config paths, and environment variable names.
+`displayName` controls user-facing branding and `commandName` controls examples and diagnostics. `compatibilityName`, `configDir`, and `envPrefix` remain independent so a fork can change its visible identity without breaking existing `~/.dreb`, project `.dreb`, or `DREB_*` behavior. During a command transition, both bin names should point to the same compiled entry point.
 
 ## Path Resolution
 
-dreb runs in three execution modes (npm install, standalone binary, tsx from source), all of which need to find package assets correctly.
+Pierre Dreb runs in three execution modes (npm install, standalone binary, tsx from source), all of which need to find package assets correctly.
 
 **Always use `src/config.ts`** for package assets:
 

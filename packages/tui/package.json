@@ -1,6 +1,6 @@
 {
 	"name": "@dreb/tui",
-	"version": "2.64.0",
+	"version": "2.66.0",
 	"description": "Terminal User Interface library with differential rendering for efficient text-based applications",
 	"type": "module",
 	"main": "dist/index.js",
@@ -31,7 +31,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/aebrer/dreb.git",
+		"url": "https://github.com/chemdalf-work/pierre-dreb.git",
 		"directory": "packages/tui"
 	},
 	"engines": {

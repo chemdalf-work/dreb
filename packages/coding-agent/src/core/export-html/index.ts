@@ -1,7 +1,7 @@
 import type { AgentState } from "@dreb/agent-core";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { basename, join } from "path";
-import { APP_NAME, getExportTemplateDir } from "../../config.js";
+import { CLI_NAME, getExportTemplateDir } from "../../config.js";
 import { getResolvedThemeColors, getThemeExportColors } from "../../modes/interactive/theme/theme.js";
 import type { ToolDefinition } from "../extensions/types.js";
 import type { SessionEntry } from "../session-manager.js";
@@ -273,7 +273,7 @@ export async function exportSessionToHtml(
 	let outputPath = opts.outputPath;
 	if (!outputPath) {
 		const sessionBasename = basename(sessionFile, ".jsonl");
-		outputPath = `${APP_NAME}-session-${sessionBasename}.html`;
+		outputPath = `${CLI_NAME}-session-${sessionBasename}.html`;
 	}
 
 	writeFileSync(outputPath, html, "utf8");
@@ -306,7 +306,7 @@ export async function exportFromFile(inputPath: string, options?: ExportOptions 
 	let outputPath = opts.outputPath;
 	if (!outputPath) {
 		const inputBasename = basename(inputPath, ".jsonl");
-		outputPath = `${APP_NAME}-session-${inputBasename}.html`;
+		outputPath = `${CLI_NAME}-session-${inputBasename}.html`;
 	}
 
 	writeFileSync(outputPath, html, "utf8");

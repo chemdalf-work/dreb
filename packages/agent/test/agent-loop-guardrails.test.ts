@@ -143,6 +143,60 @@ describe("endTurn on tool result", () => {
 		expect(agentEnd).toBeDefined();
 	});
 
+	it("should preserve an explicit error result while ending the turn", async () => {
+		const toolSchema = Type.Object({});
+		const tool: AgentTool<typeof toolSchema> = {
+			name: "uncertain-command",
+			label: "Uncertain command",
+			description: "Reports a command outcome that requires reconciliation",
+			parameters: toolSchema,
+			async execute() {
+				return {
+					content: [{ type: "text", text: "Command outcome requires reconciliation" }],
+					details: { outcome: "uncertain" },
+					endTurn: true,
+					isError: true,
+				};
+			},
+		};
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [tool] };
+		let callIndex = 0;
+		const streamFn = () => {
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				const message = createAssistantMessage(
+					[{ type: "toolCall", id: "tool-1", name: "uncertain-command", arguments: {} }],
+					"toolUse",
+				);
+				stream.push({ type: "done", reason: "toolUse", message });
+				callIndex++;
+			});
+			return stream;
+		};
+		const events: AgentEvent[] = [];
+		for await (const event of agentLoop(
+			[createUserMessage("go")],
+			context,
+			{ model: createModel(), convertToLlm: identityConverter },
+			undefined,
+			streamFn,
+		)) {
+			events.push(event);
+		}
+
+		expect(callIndex).toBe(1);
+		expect(events.find((event) => event.type === "tool_execution_end")).toMatchObject({
+			type: "tool_execution_end",
+			isError: true,
+		});
+		expect(events.find((event) => event.type === "message_end" && event.message.role === "toolResult")).toMatchObject(
+			{
+				type: "message_end",
+				message: { role: "toolResult", isError: true },
+			},
+		);
+	});
+
 	it("should execute all tool calls in the same response before stopping", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const executed: string[] = [];

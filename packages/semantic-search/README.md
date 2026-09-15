@@ -14,7 +14,7 @@ npm install @dreb/semantic-search
 
 ## Claude Code Plugin
 
-The package ships as a Claude Code plugin. Add the dreb marketplace and install:
+The package ships as a Claude Code plugin. Add the Pierre Dreb marketplace and install:
 
 ```
 /plugin marketplace add aebrer/dreb
@@ -107,7 +107,7 @@ SearchEngine.isAvailable();         // check for node:sqlite
 
 ## Dependency Graph
 
-`prepareDependencyGraph()` builds or incrementally refreshes structural index data without generating embeddings. The dreb coding-agent calls it automatically when a top-level CLI process starts in a Git repository. `dependencyGraph()` updates that same index before traversing its file-import relationships. Traversal is deterministic and breadth-first, supports dependencies, dependents, or both directions, and is bounded to three hops and 100 results. In `both` mode, a mutual import is returned once with the `imports_and_imported_by` relationship. A later semantic search fills missing vectors on demand.
+`prepareDependencyGraph()` builds or incrementally refreshes structural index data without generating embeddings. The Pierre Dreb coding-agent calls it automatically when a top-level CLI process starts in a Git repository. `dependencyGraph()` updates that same index before traversing its file-import relationships. Traversal is deterministic and breadth-first, supports dependencies, dependents, or both directions, and is bounded to three hops and 100 results. In `both` mode, a mutual import is returned once with the `imports_and_imported_by` relationship. A later semantic search fills missing vectors on demand.
 
 This graph is deliberately narrower than a call graph. It is derived from static imports and may omit dynamic imports, reflection, generated code, framework wiring, and unresolved package aliases. Treat it as navigation evidence and verify runtime claims in source and tests.
 

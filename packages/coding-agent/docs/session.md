@@ -14,7 +14,7 @@ Where `<path>` is the working directory with `/` replaced by `-`.
 
 Sessions can be removed by deleting their `.jsonl` files under `~/.dreb/agent/sessions/`.
 
-dreb also supports deleting sessions interactively from `/resume` (select a session and press `Ctrl+D`, then confirm). When available, dreb uses the `trash` CLI to avoid permanent deletion.
+Pierre Dreb also supports deleting sessions interactively from `/resume` (select a session and press `Ctrl+D`, then confirm). When available, Pierre Dreb uses the `trash` CLI to avoid permanent deletion.
 
 ## Session Version
 
@@ -23,16 +23,17 @@ Sessions have a version field in the header:
 - **Version 1**: Linear entry sequence (legacy, auto-migrated on load)
 - **Version 2**: Tree structure with `id`/`parentId` linking
 - **Version 3**: Renamed `hookMessage` role to `custom` (extensions unification)
+- **Version 4**: Added optional build and runtime provenance to the session header
 
-Existing sessions are automatically migrated to the current version (v3) when loaded.
+Existing sessions are automatically migrated to the current version (v4) when loaded. Version 3 sessions remain readable; their header cannot gain historical provenance that was never recorded.
 
 ## Source Files
 
-Source on GitHub ([dreb](https://github.com/aebrer/dreb)):
-- [`packages/coding-agent/src/core/session-manager.ts`](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/session-manager.ts) - Session entry types and SessionManager
-- [`packages/coding-agent/src/core/messages.ts`](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/messages.ts) - Extended message types (BashExecutionMessage, CustomMessage, etc.)
-- [`packages/ai/src/types.ts`](https://github.com/aebrer/dreb/blob/master/packages/ai/src/types.ts) - Base message types (UserMessage, AssistantMessage, ToolResultMessage)
-- [`packages/agent/src/types.ts`](https://github.com/aebrer/dreb/blob/master/packages/agent/src/types.ts) - AgentMessage union type
+Source on GitHub ([Pierre Dreb](https://github.com/chemdalf-work/pierre-dreb)):
+- [`packages/coding-agent/src/core/session-manager.ts`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/session-manager.ts) - Session entry types and SessionManager
+- [`packages/coding-agent/src/core/messages.ts`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/messages.ts) - Extended message types (BashExecutionMessage, CustomMessage, etc.)
+- [`packages/ai/src/types.ts`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/ai/src/types.ts) - Base message types (UserMessage, AssistantMessage, ToolResultMessage)
+- [`packages/agent/src/types.ts`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/agent/src/types.ts) - AgentMessage union type
 
 For TypeScript definitions in your project, inspect `node_modules/@dreb/coding-agent/dist/` and `node_modules/@dreb/ai/dist/`.
 
@@ -188,20 +189,14 @@ interface SessionEntryBase {
 First line of the file. Metadata only, not part of the tree (no `id`/`parentId`).
 
 ```json
-{"type":"session","version":3,"id":"uuid","timestamp":"2024-12-03T14:00:00.000Z","cwd":"/path/to/project"}
+{"type":"session","version":4,"id":"uuid","timestamp":"2024-12-03T14:00:00.000Z","cwd":"/path/to/project","provenance":{"product":"Pierre Dreb","version":"2.66.0","sourceCommit":"0123456789abcdef","dirty":false,"executablePath":"/path/to/pierre-dreb/dist/cli.js","packagePath":"/path/to/pierre-dreb","upstreamBaseline":"aebrer/dreb@52583b0"}}
 ```
 
-For sessions with a parent (created via `/fork` or `newSession({ parentSession })`):
+`provenance` contains only product/build identity and runtime paths. It never serializes environment variables, credentials, or settings. The same schema is printed by `pierre-dreb diagnostics --json`.
 
-```json
-{"type":"session","version":3,"id":"uuid","timestamp":"2024-12-03T14:00:00.000Z","cwd":"/path/to/project","parentSession":"/path/to/original/session.jsonl"}
-```
+For sessions with a parent (created via `/fork` or `newSession({ parentSession })`), `parentSession` is added to the same version 4 header.
 
-For subagent child sessions (set via `--agent-type` and `--parent-session`):
-
-```json
-{"type":"session","version":3,"id":"uuid","timestamp":"2024-12-03T14:00:00.000Z","cwd":"/path/to/project","agentType":"feature-dev","parentSession":"/path/to/parent/session.jsonl"}
-```
+For subagent child sessions, `agentType` and `parentSession` are also added. Version 3 and older headers remain accepted and are migrated without inventing unavailable historical provenance.
 
 ### SessionMessageEntry
 
@@ -294,7 +289,7 @@ Set `label` to `undefined` to clear a label.
 
 ### SessionInfoEntry
 
-Session metadata (e.g., user-defined display name). Set via `/name` command or `dreb.setSessionName()` in extensions.
+Session metadata (e.g., user-defined display name). Set via `/name` command or `Pierre Dreb.setSessionName()` in extensions.
 
 ```json
 {"type":"session_info","id":"k1l2m3n4","parentId":"j0k1l2m3","timestamp":"2024-12-03T14:35:00.000Z","name":"Refactor auth module"}

@@ -138,6 +138,12 @@ type RunnerEmitResult<TEvent extends RunnerEmitEvent> = TEvent extends { type: "
 
 export type ExtensionErrorListener = (error: ExtensionError) => void;
 
+/** Internal controls for event emission failure handling. */
+interface EmitOptions {
+	/** Re-throw handler errors after every handler has run and been diagnosed. */
+	throwOnError?: boolean;
+}
+
 export type NewSessionHandler = (options?: {
 	parentSession?: string;
 	setup?: (sessionManager: SessionManager) => Promise<void>;
@@ -162,9 +168,12 @@ export type ShutdownHandler = () => void;
  */
 export async function emitSessionShutdownEvent(extensionRunner: ExtensionRunner | undefined): Promise<boolean> {
 	if (extensionRunner?.hasHandlers("session_shutdown")) {
-		await extensionRunner.emit({
-			type: "session_shutdown",
-		});
+		await extensionRunner.emit(
+			{
+				type: "session_shutdown",
+			},
+			{ throwOnError: true },
+		);
 		return true;
 	}
 	return false;
@@ -582,8 +591,12 @@ export class ExtensionRunner {
 		);
 	}
 
-	async emit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
+	async emit<TEvent extends RunnerEmitEvent>(
+		event: TEvent,
+		options: EmitOptions = {},
+	): Promise<RunnerEmitResult<TEvent>> {
 		const ctx = this.createContext();
+		const errors: unknown[] = [];
 		let result: SessionBeforeEventResult | undefined;
 
 		for (const ext of this.extensions) {
@@ -609,8 +622,18 @@ export class ExtensionRunner {
 						error: message,
 						stack,
 					});
+					if (options.throwOnError) {
+						errors.push(err);
+					}
 				}
 			}
+		}
+
+		if (errors.length === 1) {
+			throw errors[0];
+		}
+		if (errors.length > 1) {
+			throw new AggregateError(errors, `Multiple extension handlers failed during ${event.type}`);
 		}
 
 		return result as RunnerEmitResult<TEvent>;

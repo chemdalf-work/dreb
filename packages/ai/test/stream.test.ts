@@ -13,6 +13,7 @@ type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 import { StringEnum } from "../src/utils/typebox-helpers.js";
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.js";
 import { hasBedrockCredentials } from "./bedrock-utils.js";
+import { getCopilotTestModel } from "./fixtures/copilot-models.js";
 import { ZAI_GLM_5_EXTENDED } from "./fixtures/zai-models.js";
 import { applyCopilotBaseUrl, resolveApiKey } from "./oauth.js";
 
@@ -977,8 +978,8 @@ describe("Generate E2E Tests", () => {
 		);
 	});
 
-	describe("GitHub Copilot Provider (claude-opus-4.7 via Anthropic Messages)", () => {
-		const llm = applyCopilotBaseUrl(getModel("github-copilot", "claude-opus-4.7"), githubCopilotToken);
+	describe("GitHub Copilot Provider (reasoning Claude via Anthropic Messages)", () => {
+		const llm = applyCopilotBaseUrl(getCopilotTestModel("anthropic-messages"), githubCopilotToken);
 
 		it.skipIf(process.env.DREB_SKIP_LIVE_API === "1" || !githubCopilotToken)(
 			"should complete basic text generation",
@@ -1008,7 +1009,12 @@ describe("Generate E2E Tests", () => {
 			"should handle thinking",
 			{ retry: 2, timeout: 60000 },
 			async () => {
-				await handleThinking(llm, { apiKey: githubCopilotToken, thinkingEnabled: true });
+				// Opus 4.7+ defaults to omitted thinking text. This test asserts visible deltas.
+				await handleThinking(llm, {
+					apiKey: githubCopilotToken,
+					thinkingEnabled: true,
+					thinkingDisplay: "summarized",
+				});
 			},
 		);
 
@@ -1234,8 +1240,8 @@ describe("Generate E2E Tests", () => {
 		);
 	});
 
-	describe("OpenAI Codex Provider (gpt-5.4)", () => {
-		const llm = getModel("openai-codex", "gpt-5.4");
+	describe("OpenAI Codex Provider (gpt-5.6-luna)", () => {
+		const llm = getModel("openai-codex", "gpt-5.6-luna");
 
 		it.skipIf(process.env.DREB_SKIP_LIVE_API === "1" || !openaiCodexToken)(
 			"should complete basic text generation",
@@ -1286,8 +1292,8 @@ describe("Generate E2E Tests", () => {
 		);
 	});
 
-	describe("OpenAI Codex Provider (gpt-5.4)", () => {
-		const llm = getModel("openai-codex", "gpt-5.4");
+	describe("OpenAI Codex Provider (gpt-5.6-luna)", () => {
+		const llm = getModel("openai-codex", "gpt-5.6-luna");
 
 		it.skipIf(process.env.DREB_SKIP_LIVE_API === "1" || !openaiCodexToken)(
 			"should complete basic text generation",
@@ -1338,8 +1344,8 @@ describe("Generate E2E Tests", () => {
 		);
 	});
 
-	describe("OpenAI Codex Provider (gpt-5.4 via WebSocket)", () => {
-		const llm = getModel("openai-codex", "gpt-5.4");
+	describe("OpenAI Codex Provider (gpt-5.6-luna via WebSocket)", () => {
+		const llm = getModel("openai-codex", "gpt-5.6-luna");
 		const wsOptions = { apiKey: openaiCodexToken, transport: "websocket" as const };
 
 		it.skipIf(process.env.DREB_SKIP_LIVE_API === "1" || !openaiCodexToken)(

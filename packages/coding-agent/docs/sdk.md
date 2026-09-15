@@ -1,8 +1,10 @@
-> dreb can help you use the SDK. Ask it to build an integration for your use case.
+> Pierre Dreb can help you use the SDK. Ask it to build an integration for your use case.
 
 # SDK
 
-The SDK provides programmatic access to dreb's agent capabilities. Use it to embed dreb in other applications, build custom interfaces, or integrate with automated workflows.
+The SDK provides programmatic access to Pierre Dreb's agent capabilities. Use it to embed Pierre Dreb in other applications, build custom interfaces, or integrate with automated workflows.
+
+`createAgentSession()` owns one conversation lifecycle. Awaited `prompt()` completion, `agent.waitForIdle()`, `getContextUsage()`, persisted `SessionManager` files, and parent-linked `newSession()` provide the primitives for a host to coordinate work, but coding-agent core does not persist or autonomously drive a multi-session goal. Use the standalone [`@dreb/long-horizon`](../../long-horizon/) package when you need durable planning/execution rounds, crash recovery, safe context rollover, resource limits, command authorization, and evidence-gated completion.
 
 **Example use cases:**
 - Build a custom UI (web, desktop, mobile)
@@ -123,10 +125,13 @@ interface AgentSession {
   warnInSession(message: string, options?: { informational?: boolean }): void;
   warnResourceDiagnostics(resourceLoader: ResourceLoader): void;
   
-  // Cleanup
-  dispose(): void;
+  // Cleanup. Awaits session_shutdown handlers before releasing resources,
+  // then rejects if any handler failed. Safe to call concurrently or more than once.
+  dispose(): Promise<void>;
 }
 ```
+
+Always close SDK-created sessions with `await session.dispose()` (usually in a `finally` block). This awaits extension `session_shutdown` handlers before agent listeners and other session resources are released, then rejects if any handler failed.
 
 ### Prompting and Message Queueing
 
@@ -147,7 +152,7 @@ await session.prompt("After you're done, also check X", { streamingBehavior: "fo
 ```
 
 **Behavior:**
-- **Extension commands** (e.g., `/mycommand`): Execute immediately, even during streaming. They manage their own LLM interaction via `dreb.sendMessage()`.
+- **Extension commands** (e.g., `/mycommand`): Execute immediately, even during streaming. They manage their own LLM interaction via `Pierre Dreb.sendMessage()`.
 - **File-based prompt templates** (from `.md` files): Expanded to their content before sending/queueing.
 - **During streaming without `streamingBehavior`**: Throws an error. Use `steer()` or `followUp()` directly, or specify the option.
 
@@ -404,44 +409,28 @@ const { session } = await createAgentSession({
 });
 ```
 
-#### Tools with Custom cwd
+#### Tool implementations and custom runtimes
 
-**Important:** The pre-built tool instances (`readTool`, `bashTool`, etc.) use `process.cwd()` for path resolution. When you specify a custom `cwd` AND provide explicit `tools`, you must use the tool factory functions to ensure paths resolve correctly:
+The `tools` option selects active built-in tool names. `AgentSession` normally rebuilds their implementations for the configured `cwd`, so selecting `readTool` does not install that exact object.
+
+Constrained runtimes that wrap or replace built-in implementations must pass the replacement set explicitly through `baseToolsOverride` as well as selecting the active tools:
 
 ```typescript
-import {
-  createCodingTools,    // Creates [read, bash, edit, write] for specific cwd
-  createReadOnlyTools,  // Creates [read, grep, find, ls] for specific cwd
-  createReadTool,
-  createBashTool,
-  createEditTool,
-  createWriteTool,
-  createGrepTool,
-  createFindTool,
-  createLsTool,
-} from "@dreb/coding-agent";
+import { createAgentSession, createReadOnlyTools } from "@dreb/coding-agent";
 
 const cwd = "/path/to/project";
+const tools = createReadOnlyTools(cwd).map((tool) => wrapForMySandbox(tool));
 
-// Use factory for tool sets
 const { session } = await createAgentSession({
   cwd,
-  tools: createCodingTools(cwd),  // Tools resolve paths relative to cwd
-});
-
-// Or pick specific tools
-const { session } = await createAgentSession({
-  cwd,
-  tools: [createReadTool(cwd), createBashTool(cwd), createGrepTool(cwd)],
+  tools,
+  baseToolsOverride: Object.fromEntries(tools.map((tool) => [tool.name, tool])),
 });
 ```
 
-**When you don't need factories:**
-- If you omit `tools`, dreb automatically creates them with the correct `cwd`
-- If you use `process.cwd()` as your `cwd`, the pre-built instances work fine
+`baseToolsOverride` replaces the standard base-tool registry. Tools omitted from the replacement set are unavailable, including normally always-active tools. Custom tools supplied through `customTools` and extension-registered tools remain separate.
 
-**When you must use factories:**
-- When you specify both `cwd` (different from `process.cwd()`) AND `tools`
+If you only need the standard tools to resolve against a custom working directory, set `cwd`; no base-tool override is required.
 
 > See [examples/sdk/05-tools.ts](../examples/sdk/05-tools.ts)
 
@@ -471,7 +460,7 @@ const { session } = await createAgentSession({
 });
 ```
 
-Custom tools passed via `customTools` are combined with extension-registered tools. Extensions loaded by the ResourceLoader can also register tools via `dreb.registerTool()`.
+Custom tools passed via `customTools` are combined with extension-registered tools. Extensions loaded by the ResourceLoader can also register tools via `Pierre Dreb.registerTool()`.
 
 > See [examples/sdk/05-tools.ts](../examples/sdk/05-tools.ts)
 
@@ -499,7 +488,7 @@ const { session } = await createAgentSession({ resourceLoader: loader });
 
 Extensions can register tools, subscribe to events, add commands, and more. See [extensions.md](extensions.md) for the full API.
 
-**Event Bus:** Extensions can communicate via `dreb.events`. Pass a shared `eventBus` to `DefaultResourceLoader` if you need to emit or listen from outside:
+**Event Bus:** Extensions can communicate via `Pierre Dreb.events`. Pass a shared `eventBus` to `DefaultResourceLoader` if you need to emit or listen from outside:
 
 ```typescript
 import { createEventBus, DefaultResourceLoader } from "@dreb/coding-agent";
@@ -909,7 +898,7 @@ See [RPC documentation](rpc.md) for the JSON protocol.
 For subprocess-based integration without building with the SDK, use the CLI directly:
 
 ```bash
-dreb --mode rpc --no-session
+pierre-dreb --mode rpc --no-session
 ```
 
 See [RPC documentation](rpc.md) for the JSON protocol.

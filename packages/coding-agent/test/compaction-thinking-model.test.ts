@@ -51,7 +51,7 @@ describe.skipIf(process.env.DREB_SKIP_LIVE_API === "1" || !HAS_ANTIGRAVITY_AUTH)
 
 		afterEach(async () => {
 			if (session) {
-				session.dispose();
+				await session.dispose();
 			}
 			if (tempDir && existsSync(tempDir)) {
 				rmSync(tempDir, { recursive: true });
@@ -160,7 +160,7 @@ describe.skipIf(process.env.DREB_SKIP_LIVE_API === "1" || !HAS_ANTHROPIC_AUTH)(
 
 		afterEach(async () => {
 			if (session) {
-				session.dispose();
+				await session.dispose();
 			}
 			if (tempDir && existsSync(tempDir)) {
 				rmSync(tempDir, { recursive: true });

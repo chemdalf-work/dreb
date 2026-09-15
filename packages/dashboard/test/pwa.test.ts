@@ -71,8 +71,8 @@ describe("dashboard PWA — manifest + service worker serving", () => {
 		const staticDir = await mkdtemp(join(tmpdir(), "dreb-dash-pwa-"));
 		tempDirs.push(staticDir);
 		const manifest = {
-			name: "dreb dashboard",
-			short_name: "dreb",
+			name: "Pierre Dreb dashboard",
+			short_name: "Pierre Dreb",
 			display: "standalone",
 			start_url: ".",
 			icons: [{ src: "icons/punk-192.png", sizes: "192x192", type: "image/png" }],
@@ -89,7 +89,7 @@ describe("dashboard PWA — manifest + service worker serving", () => {
 
 		expect(res.status).toBe(200);
 		const parsed = JSON.parse(res.body) as Record<string, unknown>;
-		expect(parsed.name).toBe("dreb dashboard");
+		expect(parsed.name).toBe("Pierre Dreb dashboard");
 		expect(parsed.display).toBe("standalone");
 		const icons = parsed.icons as Array<Record<string, unknown>>;
 		expect(icons.length).toBeGreaterThan(0);

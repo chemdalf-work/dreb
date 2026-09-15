@@ -1,6 +1,6 @@
 # Custom Providers
 
-Extensions can register custom model providers via `dreb.registerProvider()`. This enables:
+Extensions can register custom model providers via `Pierre Dreb.registerProvider()`. This enables:
 
 - **Proxies** - Route requests through corporate proxies or API gateways
 - **Custom endpoints** - Use self-hosted or private model deployments
@@ -119,7 +119,7 @@ When `models` is provided, it **replaces** all existing models for that provider
 
 ## Unregister Provider
 
-Use `dreb.unregisterProvider(name)` to remove a provider that was previously registered via `dreb.registerProvider(name, ...)`:
+Use `Pierre Dreb.unregisterProvider(name)` to remove a provider that was previously registered via `Pierre Dreb.registerProvider(name, ...)`:
 
 ```typescript
 // Register
@@ -188,7 +188,7 @@ models: [{
   }]
 ```
 
-Use `qwen-chat-template` instead for local Qwen-compatible servers that read `chat_template_kwargs.enable_thinking`. When reasoning is enabled, dreb sends the mapped effort as a top-level `reasoning_effort`; Qwen3.8+ models (which natively support exactly `low`/`medium`/`xhigh`, default `xhigh`) get this map by default:
+Use `qwen-chat-template` instead for local Qwen-compatible servers that read `chat_template_kwargs.enable_thinking`. When reasoning is enabled, Pierre Dreb sends the mapped effort as a top-level `reasoning_effort`; Qwen3.8+ models (which natively support exactly `low`/`medium`/`xhigh`, default `xhigh`) get this map by default:
 
 ```typescript
 models: [{
@@ -223,7 +223,7 @@ dreb.registerProvider("company-anthropic", {
 });
 ```
 
-For the built-in `anthropic-messages` implementation, this selects Bearer-only auth: dreb sends the request-time resolved credential as `Authorization` and does not also send `x-api-key`. Without `authHeader`, third-party Anthropic-compatible endpoints use `x-api-key` by default. `apiKey` can name any environment variable or use a literal or `!command`; it does not need to be named `ANTHROPIC_AUTH_TOKEN`.
+For the built-in `anthropic-messages` implementation, this selects Bearer-only auth: Pierre Dreb sends the request-time resolved credential as `Authorization` and does not also send `x-api-key`. Without `authHeader`, third-party Anthropic-compatible endpoints use `x-api-key` by default. `apiKey` can name any environment variable or use a literal or `!command`; it does not need to be named `ANTHROPIC_AUTH_TOKEN`.
 
 The same option works when redirecting an existing provider without replacing its models:
 
@@ -235,7 +235,7 @@ dreb.registerProvider("anthropic", {
 });
 ```
 
-For custom `streamSimple` implementations with a configured `apiKey`, dreb also exposes its load-time resolved Bearer header through `model.headers`; the custom implementation remains responsible for applying those headers or using `model.authMode` with the request-time `options.apiKey`.
+For custom `streamSimple` implementations with a configured `apiKey`, Pierre Dreb also exposes its load-time resolved Bearer header through `model.headers`; the custom implementation remains responsible for applying those headers or using `model.authMode` with the request-time `options.apiKey`.
 
 ## OAuth Support
 
@@ -335,12 +335,12 @@ interface OAuthCredentials {
 For providers with non-standard APIs, implement `streamSimple`. Study the existing provider implementations before writing your own:
 
 **Reference implementations:**
-- [anthropic.ts](https://github.com/aebrer/dreb/blob/master/packages/ai/src/providers/anthropic.ts) - Anthropic Messages API
-- [mistral.ts](https://github.com/aebrer/dreb/blob/master/packages/ai/src/providers/mistral.ts) - Mistral Conversations API
-- [openai-completions.ts](https://github.com/aebrer/dreb/blob/master/packages/ai/src/providers/openai-completions.ts) - OpenAI Chat Completions
-- [openai-responses.ts](https://github.com/aebrer/dreb/blob/master/packages/ai/src/providers/openai-responses.ts) - OpenAI Responses API
-- [google.ts](https://github.com/aebrer/dreb/blob/master/packages/ai/src/providers/google.ts) - Google Generative AI
-- [amazon-bedrock.ts](https://github.com/aebrer/dreb/blob/master/packages/ai/src/providers/amazon-bedrock.ts) - AWS Bedrock
+- [anthropic.ts](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/ai/src/providers/anthropic.ts) - Anthropic Messages API
+- [mistral.ts](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/ai/src/providers/mistral.ts) - Mistral Conversations API
+- [openai-completions.ts](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/ai/src/providers/openai-completions.ts) - OpenAI Chat Completions
+- [openai-responses.ts](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/ai/src/providers/openai-responses.ts) - OpenAI Responses API
+- [google.ts](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/ai/src/providers/google.ts) - Google Generative AI
+- [amazon-bedrock.ts](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/ai/src/providers/amazon-bedrock.ts) - AWS Bedrock
 
 ### Stream Pattern
 
@@ -532,7 +532,7 @@ dreb.registerProvider("my-provider", {
 
 ## Testing Your Implementation
 
-Test your provider against the same test suites used by built-in providers. Copy and adapt these test files from [packages/ai/test/](https://github.com/aebrer/dreb/tree/master/packages/ai/test):
+Test your provider against the same test suites used by built-in providers. Copy and adapt these test files from [packages/ai/test/](https://github.com/chemdalf-work/pierre-dreb/tree/master/packages/ai/test):
 
 | Test | Purpose |
 |------|---------|

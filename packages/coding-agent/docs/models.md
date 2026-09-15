@@ -36,7 +36,7 @@ For local models (Ollama, LM Studio, vLLM), only `id` is required per model:
 
 The `apiKey` is required but Ollama ignores it, so any value works.
 
-Some OpenAI-compatible servers do not understand the `developer` role used for reasoning-capable models. For those providers, set `compat.supportsDeveloperRole` to `false` so dreb sends the system prompt as a `system` message instead. If the server also does not support `reasoning_effort`, set `compat.supportsReasoningEffort` to `false` too.
+Some OpenAI-compatible servers do not understand the `developer` role used for reasoning-capable models. For those providers, set `compat.supportsDeveloperRole` to `false` so Pierre Dreb sends the system prompt as a `system` message instead. If the server also does not support `reasoning_effort`, set `compat.supportsReasoningEffort` to `false` too.
 
 You can set `compat` at the provider level to apply to all models, or at the model level to override a specific model. This commonly applies to Ollama, vLLM, SGLang, and similar OpenAI-compatible servers.
 
@@ -153,7 +153,7 @@ Third-party Anthropic-compatible endpoints use `x-api-key` by default. If an end
 }
 ```
 
-For the built-in `anthropic-messages` implementation, this selects Bearer-only auth: dreb sends the request-time resolved credential as `Authorization` and does not also send `x-api-key`. The credential can use any [value resolution](#value-resolution) format; the environment variable does not need a special Anthropic SDK name.
+For the built-in `anthropic-messages` implementation, this selects Bearer-only auth: Pierre Dreb sends the request-time resolved credential as `Authorization` and does not also send `x-api-key`. The credential can use any [value resolution](#value-resolution) format; the environment variable does not need a special Anthropic SDK name.
 
 The flag also works when redirecting a built-in provider without redefining its models:
 
@@ -203,7 +203,7 @@ Leave `authHeader` unset or `false` for endpoints that expect `x-api-key`.
 | `maxTokens` | No | `16384` | Maximum output tokens |
 | `cost` | No | all zeros | `{"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}` (per million tokens) |
 | `compat` | No | provider `compat` | OpenAI compatibility overrides. Merged with provider-level `compat` when both are set. |
-| `systemPrompt` | No | — | Replace dreb's built-in prompt whenever this exact custom model is active. Mutually exclusive with `appendSystemPrompt`. |
+| `systemPrompt` | No | — | Replace Pierre Dreb's built-in prompt whenever this exact custom model is active. Mutually exclusive with `appendSystemPrompt`. |
 | `appendSystemPrompt` | No | — | Preserve the selected base prompt and append model-specific instructions. Mutually exclusive with `systemPrompt`. |
 
 Current behavior:
@@ -212,13 +212,13 @@ Current behavior:
 
 A custom model can keep its behavioral prompt beside its transport and capability metadata:
 set exactly one of `systemPrompt` and `appendSystemPrompt` on that model object. Values must
-be non-empty strings. Model IDs may contain `/`; dreb retains the provider and complete model
+be non-empty strings. Model IDs may contain `/`; Pierre Dreb retains the provider and complete model
 ID as an exact identity.
 
 The same behavior is also configurable through an exact `provider/model` entry under
 [`modelSettings`](settings.md#modelsettings) in `settings.json`. Configure prompt behavior for
 a canonical model in only one file. If both `models.json` and `settings.json` declare either
-prompt field for that model, dreb fails loudly instead of selecting a source.
+prompt field for that model, Pierre Dreb fails loudly instead of selecting a source.
 
 An explicit session replacement from `--system-prompt`, `SYSTEM.md`, or an SDK resource
 loader remains stronger than a model's `systemPrompt`. `appendSystemPrompt` follows the
@@ -333,7 +333,7 @@ For providers with partial OpenAI compatibility, use the `compat` field.
 | `supportsStore` | Provider supports `store` field |
 | `supportsDeveloperRole` | Use `developer` vs `system` role |
 | `supportsReasoningEffort` | Support for `reasoning_effort` parameter |
-| `reasoningEffortMap` | Map dreb thinking levels to provider-specific `reasoning_effort` values |
+| `reasoningEffortMap` | Map Pierre Dreb thinking levels to provider-specific `reasoning_effort` values |
 | `supportsUsageInStreaming` | Supports `stream_options: { include_usage: true }` (default: `true`) |
 | `maxTokensField` | Use `max_completion_tokens` or `max_tokens` |
 | `requiresToolResultName` | Include `name` on tool result messages |
@@ -344,9 +344,9 @@ For providers with partial OpenAI compatibility, use the `compat` field.
 | `openRouterRouting` | OpenRouter routing config passed to OpenRouter for model/provider selection |
 | `vercelGatewayRouting` | Vercel AI Gateway routing config for provider selection (`only`, `order`) |
 
-The normalized scale is `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` (`off` disables reasoning at the session layer). Native normalized `max` is model-aware and currently supported by GPT-5.6 aliases and Sol/Terra/Luna variants; unsupported defaults fall back `max` → `xhigh` → `high`. Existing provider mappings remain independent—for example, Claude can still map dreb's `xhigh` to Anthropic's provider-native `max`. Codex `ultra` also enables local multi-agent orchestration and is therefore not a raw effort value.
+The normalized scale is `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` (`off` disables reasoning at the session layer). Native normalized `max` is model-aware and currently supported by GPT-5.6 aliases and Sol/Terra/Luna variants, plus the GPT-6 family (Astra and future variants); unsupported defaults fall back `max` → `xhigh` → `high`. Existing provider mappings remain independent—for example, Claude can still map Pierre Dreb's `xhigh` to Anthropic's provider-native `max`. Codex `ultra` also enables local multi-agent orchestration and is therefore not a raw effort value.
 
-`qwen` uses top-level `enable_thinking`. Use `qwen-chat-template` for local Qwen-compatible servers that require `chat_template_kwargs.enable_thinking`. When reasoning is enabled, dreb sends the mapped effort as a top-level `reasoning_effort`; Qwen3.8+ models default-map dreb's levels onto the three native tiers (`minimal`/`low` → `low`, `medium` → `medium`, `high`/`xhigh`/`max` → `xhigh`).
+`qwen` uses top-level `enable_thinking`. Use `qwen-chat-template` for local Qwen-compatible servers that require `chat_template_kwargs.enable_thinking`. When reasoning is enabled, Pierre Dreb sends the mapped effort as a top-level `reasoning_effort`; Qwen3.8+ models default-map Pierre Dreb's levels onto the three native tiers (`minimal`/`low` → `low`, `medium` → `medium`, `high`/`xhigh`/`max` → `xhigh`).
 
 Example:
 

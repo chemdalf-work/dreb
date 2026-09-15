@@ -4,7 +4,7 @@
 
 import type { ThinkingLevel } from "@dreb/agent-core";
 import chalk from "chalk";
-import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR } from "../config.js";
+import { APP_NAME, CLI_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR } from "../config.js";
 import { log } from "../core/logger.js";
 import { allTools, type ToolName } from "../core/tools/index.js";
 
@@ -196,17 +196,18 @@ export function printHelp(): void {
 	console.log(`${chalk.bold(APP_NAME)} - AI coding assistant with read, bash, edit, write tools
 
 ${chalk.bold("Usage:")}
-  ${APP_NAME} [options] [@files...] [messages...]
+  ${CLI_NAME} [options] [@files...] [messages...]
 
 ${chalk.bold("Commands:")}
-  ${APP_NAME} install <source> [-l]     Install extension source and add to settings
-  ${APP_NAME} remove <source> [-l]      Remove extension source from settings
-  ${APP_NAME} uninstall <source> [-l]   Alias for remove
-  ${APP_NAME} update [source]           Update installed extensions (skips pinned sources)
-  ${APP_NAME} list                      List installed extensions from settings
-  ${APP_NAME} config                    Open TUI to enable/disable package resources
-  ${APP_NAME} dashboard [options]       Launch the web dashboard (requires @dreb/dashboard)
-  ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list
+  ${CLI_NAME} install <source> [-l]     Install extension source and add to settings
+  ${CLI_NAME} remove <source> [-l]      Remove extension source from settings
+  ${CLI_NAME} uninstall <source> [-l]   Alias for remove
+  ${CLI_NAME} update [source]           Update installed extensions (skips pinned sources)
+  ${CLI_NAME} list                      List installed extensions from settings
+  ${CLI_NAME} config                    Open TUI to enable/disable package resources
+  ${CLI_NAME} dashboard [options]       Launch the web dashboard (requires @dreb/dashboard)
+  ${CLI_NAME} diagnostics [--json]      Print build and runtime provenance without loading credentials
+  ${CLI_NAME} <command> --help          Show help for install/remove/uninstall/update/list
 
 ${chalk.bold("Options:")}
   --provider <name>              Provider name (default: google)
@@ -250,50 +251,50 @@ Extensions can register additional flags (e.g., --plan from plan-mode extension)
 
 ${chalk.bold("Examples:")}
   # Interactive mode
-  ${APP_NAME}
+  ${CLI_NAME}
 
   # Interactive mode with initial prompt
-  ${APP_NAME} "List all .ts files in src/"
+  ${CLI_NAME} "List all .ts files in src/"
 
   # Include files in initial message
-  ${APP_NAME} @prompt.md @image.png "What color is the sky?"
+  ${CLI_NAME} @prompt.md @image.png "What color is the sky?"
 
   # Non-interactive mode (process and exit)
-  ${APP_NAME} -p "List all .ts files in src/"
+  ${CLI_NAME} -p "List all .ts files in src/"
 
   # Multiple messages (interactive)
-  ${APP_NAME} "Read package.json" "What dependencies do we have?"
+  ${CLI_NAME} "Read package.json" "What dependencies do we have?"
 
   # Continue previous session
-  ${APP_NAME} --continue "What did we discuss?"
+  ${CLI_NAME} --continue "What did we discuss?"
 
   # Use different model
-  ${APP_NAME} --provider openai --model gpt-4o-mini "Help me refactor this code"
+  ${CLI_NAME} --provider openai --model gpt-4o-mini "Help me refactor this code"
 
   # Use model with provider prefix (no --provider needed)
-  ${APP_NAME} --model openai/gpt-4o "Help me refactor this code"
+  ${CLI_NAME} --model openai/gpt-4o "Help me refactor this code"
 
   # Use model with thinking level shorthand
-  ${APP_NAME} --model sonnet:high "Solve this complex problem"
+  ${CLI_NAME} --model sonnet:high "Solve this complex problem"
 
   # Limit model cycling to specific models
-  ${APP_NAME} --models claude-sonnet,claude-haiku,gpt-4o
+  ${CLI_NAME} --models claude-sonnet,claude-haiku,gpt-4o
 
   # Limit to a specific provider with glob pattern
-  ${APP_NAME} --models "github-copilot/*"
+  ${CLI_NAME} --models "github-copilot/*"
 
   # Cycle models with fixed thinking levels
-  ${APP_NAME} --models sonnet:high,haiku:low
+  ${CLI_NAME} --models sonnet:high,haiku:low
 
   # Start with a specific thinking level
-  ${APP_NAME} --thinking high "Solve this complex problem"
+  ${CLI_NAME} --thinking high "Solve this complex problem"
 
   # Read-only mode (no file modifications possible)
-  ${APP_NAME} --tools read,grep,find,ls -p "Review the code in src/"
+  ${CLI_NAME} --tools read,grep,find,ls -p "Review the code in src/"
 
   # Export a session file to HTML
-  ${APP_NAME} --export ~/${CONFIG_DIR_NAME}/agent/sessions/--path--/session.jsonl
-  ${APP_NAME} --export session.jsonl output.html
+  ${CLI_NAME} --export ~/${CONFIG_DIR_NAME}/agent/sessions/--path--/session.jsonl
+  ${CLI_NAME} --export session.jsonl output.html
 
 ${chalk.bold("Environment Variables:")}
   ANTHROPIC_API_KEY                - Anthropic Claude API key

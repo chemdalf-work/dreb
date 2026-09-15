@@ -8,6 +8,7 @@ import {
 	messagesToEntries,
 	pendingQuestionsReason,
 	resolveUiRequest,
+	syncCompactionStatusEntry,
 } from "../src/client/state/reducer.js";
 import type { BackgroundAgentDto } from "../src/shared/protocol.js";
 
@@ -36,6 +37,7 @@ function backgroundAgent(agentId: string, startedAt: string, status: BackgroundA
 		taskSummary: `task ${agentId}`,
 		startedAt,
 		status,
+		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
 	};
 }
 
@@ -69,6 +71,28 @@ describe("messagesToEntries — hydration", () => {
 			],
 			model: "m1",
 		});
+	});
+
+	it("hydrates compactionSummary messages as compaction summary entries", () => {
+		const entries = messagesToEntries([
+			{ role: "compactionSummary", summary: "earlier work summarized", tokensBefore: 52410 },
+			{ role: "user", content: "after compaction", timestamp: 3 },
+		]);
+
+		expect(entries.map((e) => e.kind)).toEqual(["summary", "user"]);
+		expect(entries[0]).toMatchObject({
+			kind: "summary",
+			label: "compaction",
+			text: "earlier work summarized",
+			tokensBefore: 52410,
+		});
+	});
+
+	it("falls back to a generic compaction summary when the message has no text", () => {
+		const entries = messagesToEntries([{ role: "compactionSummary", tokensBefore: 1000 }]);
+		expect(entries).toEqual([
+			{ kind: "summary", label: "compaction", text: "context compacted", tokensBefore: 1000 },
+		]);
 	});
 
 	it("retains uploaded-image references on hydrated user transcript entries", () => {
@@ -798,6 +822,41 @@ describe("applySessionEvent — session-level events", () => {
 		expect(state.entries[0]).toMatchObject({ kind: "summary", label: "compaction", tokensBefore: 52410 });
 	});
 
+	it("does not duplicate a summary entry already present from snapshot hydration", () => {
+		const state = makeState();
+		state.entries = messagesToEntries([
+			{ role: "compactionSummary", summary: "earlier work summarized", tokensBefore: 52410 },
+		]);
+		applySessionEvent(state, { type: "auto_compaction_start", reason: "threshold" });
+		applySessionEvent(state, {
+			type: "auto_compaction_end",
+			result: { tokensBefore: 52410, summary: "earlier work summarized" },
+			aborted: false,
+			willRetry: false,
+		});
+
+		const summaries = state.entries.filter((e) => e.kind === "summary" && e.label === "compaction");
+		expect(summaries).toHaveLength(1);
+	});
+
+	it("still appends a summary entry when an earlier compaction differs", () => {
+		const state = makeState();
+		state.entries = messagesToEntries([
+			{ role: "compactionSummary", summary: "first compaction", tokensBefore: 1000 },
+		]);
+		applySessionEvent(state, { type: "auto_compaction_start", reason: "threshold" });
+		applySessionEvent(state, {
+			type: "auto_compaction_end",
+			result: { tokensBefore: 2000, summary: "second compaction" },
+			aborted: false,
+			willRetry: false,
+		});
+
+		const summaries = state.entries.filter((e) => e.kind === "summary" && e.label === "compaction");
+		expect(summaries).toHaveLength(2);
+		expect(summaries[1]).toMatchObject({ text: "second compaction", tokensBefore: 2000 });
+	});
+
 	it("clears provisional provider state while overflow compaction recovers", () => {
 		const state = makeState();
 		applySessionEvent(state, {
@@ -958,6 +1017,54 @@ describe("applySessionEvent — session-level events", () => {
 		expect(secondRetry).toMatchObject({ id: expect.any(Number), key: "retry" });
 		expect(paused).toMatchObject({ id: expect.any(Number), key: "paused" });
 		expect(new Set([firstRetry?.id, secondRetry?.id, paused?.id]).size).toBe(3);
+	});
+});
+
+describe("syncCompactionStatusEntry", () => {
+	it("creates the compaction status entry when compacting is true", () => {
+		const state = makeState();
+		state.compacting = true;
+		syncCompactionStatusEntry(state);
+		expect(state.statusEntries).toEqual([
+			expect.objectContaining({ key: "compaction", text: "compacting context…", tone: "info" }),
+		]);
+	});
+
+	it("keeps exactly one compaction status entry when called repeatedly", () => {
+		const state = makeState();
+		state.compacting = true;
+		syncCompactionStatusEntry(state);
+		syncCompactionStatusEntry(state);
+		expect(state.statusEntries.filter((s) => s.key === "compaction")).toHaveLength(1);
+	});
+
+	it("re-exposes the entry after dismissal while still compacting", () => {
+		const state = makeState();
+		state.compacting = true;
+		syncCompactionStatusEntry(state);
+		const previous = state.statusEntries.find((s) => s.key === "compaction");
+		previous!.dismissed = true;
+		syncCompactionStatusEntry(state);
+		const current = state.statusEntries.find((s) => s.key === "compaction");
+		expect(current?.dismissed).toBeUndefined();
+		expect(current?.id).not.toBe(previous!.id);
+	});
+
+	it("removes the compaction status entry when compacting is false", () => {
+		const state = makeState();
+		state.compacting = true;
+		syncCompactionStatusEntry(state);
+		state.compacting = false;
+		syncCompactionStatusEntry(state);
+		expect(state.statusEntries.some((s) => s.key === "compaction")).toBe(false);
+	});
+
+	it("leaves other status entries untouched", () => {
+		const state = makeState();
+		applySessionEvent(state, { type: "parent_paused_for_background_agents", runningAgentCount: 1 });
+		state.compacting = true;
+		syncCompactionStatusEntry(state);
+		expect(state.statusEntries.map((s) => s.key).sort()).toEqual(["compaction", "paused"]);
 	});
 });
 
@@ -1269,8 +1376,27 @@ describe("applySessionEvent — subagent relay", () => {
 			agentType: "Explore",
 			taskSummary: "look",
 			sessionDir: "/dir",
+			agent: {
+				agentId: "bg1",
+				agentType: "Explore",
+				taskSummary: "look",
+				startedAt: 1_700_000_000_000,
+				status: "running",
+				provider: "anthropic",
+				model: "claude-sonnet",
+				thinking: "high",
+				usage: { input: 100, output: 20, cacheRead: 30, cacheWrite: 4, cost: 0.125 },
+				sessionDir: "/dir",
+			},
 		});
-		expect(state.backgroundAgents.bg1).toMatchObject({ status: "running", sessionDir: "/dir" });
+		expect(state.backgroundAgents.bg1).toMatchObject({
+			status: "running",
+			sessionDir: "/dir",
+			provider: "anthropic",
+			model: "claude-sonnet",
+			thinking: "high",
+			usage: { input: 100, output: 20, cacheRead: 30, cacheWrite: 4, cost: 0.125 },
+		});
 
 		applySessionEvent(state, {
 			type: "subagent_arbitration",
@@ -1279,6 +1405,8 @@ describe("applySessionEvent — subagent relay", () => {
 			proposed: { agent: "Explore", model: "provider/frontier", thinking: "high" },
 			final: { agent: "feature-dev", model: "provider/cheap", thinking: "low" },
 			changed: ["agent", "model", "thinking"],
+			locked: ["agent"],
+			codingRisk: { level: "low", signals: ["bounded-research"] },
 		});
 		expect(state.backgroundAgents.bg1).toMatchObject({
 			agentType: "feature-dev",
@@ -1286,6 +1414,8 @@ describe("applySessionEvent — subagent relay", () => {
 				{
 					status: "success",
 					final: { agent: "feature-dev", model: "provider/cheap", thinking: "low" },
+					locked: ["agent"],
+					codingRisk: { level: "low", signals: ["bounded-research"] },
 				},
 			],
 		});
@@ -1315,7 +1445,39 @@ describe("applySessionEvent — subagent relay", () => {
 		expect(sub.streaming).toBe(true);
 		expect(sub.entries[0]).toMatchObject({ kind: "assistant", blocks: [{ kind: "text", text: "scanning" }] });
 
-		applySessionEvent(state, { type: "background_agent_end", agentId: "bg1", agentType: "Explore", success: true });
+		applySessionEvent(state, {
+			type: "background_agent_event",
+			agentId: "bg1",
+			event: {
+				type: "background_agent_start",
+				agentId: "nested-1",
+				agentType: "test-reviewer",
+				taskSummary: "nested review",
+				agent: {
+					agentId: "nested-1",
+					agentType: "test-reviewer",
+					taskSummary: "nested review",
+					startedAt: 1_700_000_000_100,
+					status: "running",
+					parentAgentId: "bg1",
+					usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+				},
+			},
+		});
+		expect(state.backgroundAgents["nested-1"]).toMatchObject({
+			parentAgentId: "bg1",
+			agentType: "test-reviewer",
+			status: "running",
+		});
+
+		applySessionEvent(state, {
+			type: "background_agent_end",
+			agentId: "bg1",
+			agentType: "Explore",
+			success: true,
+			cancelled: false,
+			status: "completed",
+		});
 		expect(state.backgroundAgents.bg1?.status).toBe("completed");
 		expect(state.subagents.bg1?.streaming).toBe(false);
 	});

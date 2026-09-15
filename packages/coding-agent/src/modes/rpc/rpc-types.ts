@@ -531,8 +531,16 @@ export interface RpcBackgroundAgentInfo {
 	taskSummary: string;
 	/** ISO timestamp of launch */
 	startedAt: string;
+	/** ISO timestamp of terminal completion, when known. */
+	completedAt?: string;
 	/** Lifecycle status */
-	status: "running" | "completed" | "failed";
+	status: "running" | "completed" | "failed" | "aborted";
+	parentAgentId?: string;
+	parentSessionId?: string;
+	provider?: string;
+	model?: string;
+	thinking?: ThinkingLevel;
+	usage: { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number };
 	/** Directory containing the agent's session JSONL file (known at spawn time) */
 	sessionDir?: string;
 	/** Path to the agent's session JSONL file (available after the child exits) */
@@ -599,7 +607,7 @@ export interface RpcSettingsSnapshot {
 	followUpMode: "all" | "one-at-a-time";
 	/** Whether automatic context compaction is enabled */
 	compactionEnabled: boolean;
-	/** Whether every successful automatic compaction starts another model turn */
+	/** Whether successful automatic compaction continues pending work (never restarts a completed answer) */
 	continueAfterAutoCompaction: boolean;
 	/** Whether automatic retry on transient errors is enabled */
 	retryEnabled: boolean;
@@ -621,6 +629,8 @@ export interface RpcSettingsSnapshot {
 	transport?: Transport;
 	/** Whether raw thinking blocks are hidden in rendered transcripts */
 	hideThinkingBlock?: boolean;
+	/** Single-model mode (issue 517): every subagent spawn runs on the parent session's model */
+	singleModelMode?: boolean;
 	/** Per-agent model fallback lists, merged global + project with project entries winning */
 	agentModels?: Record<string, string[]>;
 	/** Global-only fail-closed Dispatch Arbiter configuration. */
@@ -693,6 +703,8 @@ export interface RpcSettingsUpdate {
 	trustedContextFolders?: string[];
 	transport?: Transport;
 	hideThinkingBlock?: boolean;
+	/** Single-model mode (issue 517): every subagent spawn runs on the parent session's model */
+	singleModelMode?: boolean;
 	agentModels?: Record<string, string[]>;
 	/** Ordered exact model references; null removes the filter and restores implicit all. */
 	enabledModels?: string[] | null;

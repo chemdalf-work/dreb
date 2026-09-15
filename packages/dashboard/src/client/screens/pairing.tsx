@@ -37,7 +37,7 @@ export function PairingScreen(props: { store: AppStore }): JSX.Element {
 				when={!denied()}
 				fallback={
 					<main class="denied-card">
-						<span class="wordmark">dreb</span>
+						<span class="wordmark">Pierre Dreb</span>
 						<h1>access denied</h1>
 						<p>{auth()?.error}</p>
 						<Show when={auth()?.identity}>
@@ -51,7 +51,7 @@ export function PairingScreen(props: { store: AppStore }): JSX.Element {
 				}
 			>
 				<main class="pair-card">
-					<span class="wordmark">dreb</span>
+					<span class="wordmark">Pierre Dreb</span>
 					<h1>pair this device</h1>
 					<p class="sub">First login from a new device needs the current pairing code.</p>
 

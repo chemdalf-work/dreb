@@ -1,7 +1,21 @@
 // Core session management
 
-// Config paths
-export { getAgentDir, getSecretsDir, loadProvidersEnv, VERSION } from "./config.js";
+// Product/build identity and compatibility paths
+export { type BuildProvenance, getBuildProvenance } from "./build-provenance.js";
+export {
+	APP_NAME,
+	CLI_NAME,
+	COMPATIBILITY_NAME,
+	CONFIG_DIR_NAME,
+	ENV_AGENT_DIR,
+	ENV_PREFIX,
+	getAgentDir,
+	getSecretsDir,
+	loadProvidersEnv,
+	PRODUCT_NAME,
+	UPSTREAM_BASELINE,
+	VERSION,
+} from "./config.js";
 export {
 	AgentSession,
 	type AgentSessionConfig,
