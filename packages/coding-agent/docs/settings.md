@@ -19,6 +19,7 @@ Edit directly or use `/settings` for common options.
 | `defaultModel` | string | - | Default model ID |
 | `defaultThinkingLevel` | string | - | `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in output |
+| `singleModelMode` | boolean | `false` | Force every subagent to run on the parent session's model — per-invocation overrides, per-agent model lists, agent-definition models, and the dispatch arbiter are bypassed, and any requested model selection is reported as a warning prepended to the child's output. See [agent-models.md](agent-models.md#single-model-mode) |
 | `thinkingBudgets` | object | - | Custom token budgets per thinking level |
 | `agentModels.models` | object | - | Per-agent model fallback lists for subagents (map of agent name → ordered model IDs). See [agent-models.md](agent-models.md) |
 | `modelSettings` | object | - | Per-model thinking-display and provider/model system-prompt overrides. See [modelSettings](#modelsettings) |
@@ -215,7 +216,7 @@ For either permitted lazy-load path, each context file is realpath-deduplicated 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `compaction.enabled` | boolean | `true` | Enable auto-compaction |
-| `compaction.continueAfterAutoCompaction` | boolean | `false` | Start another model turn after every successful automatic compaction; manual `/compact` never continues because of this setting |
+| `compaction.continueAfterAutoCompaction` | boolean | `false` | Continue pending work after successful automatic compaction; completed answers and manual `/compact` stay finished |
 | `compaction.reserveTokens` | number | `16384` | Tokens reserved for LLM response |
 | `compaction.keepRecentTokens` | number | `20000` | Recent tokens to keep (not summarized) |
 

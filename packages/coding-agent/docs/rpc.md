@@ -18,6 +18,12 @@ await client.start();
 
 This enables per-user filesystem isolation by plain Unix DAC: give each authenticated user a dedicated UID and a working directory owned by that UID at mode `0700`. If the parent lacks the required capability (or the platform doesn't support `uid`/`gid`, e.g. Windows), the spawn fails and `start()` rejects rather than silently running as the parent user.
 
+### Process exit and pipe errors
+
+`RpcClient.onExit(listener)` receives an `RpcExitInfo` when the child dies: `{ code, signal }` from a process `exit`, or `{ error }` from a spawn/runtime `error`. Process exits also carry `stderrTail` — the last **2000 characters** of the child's captured stderr — so a host that only watches for exit codes can still surface the child's own diagnostic (for example the stdout backpressure guard's abort message) instead of an opaque exit code. In-flight requests are rejected with the exit reason.
+
+Child stdio pipe failures (e.g. an `EPIPE` when writing a large prompt to a dying child) are handled the same way: each pipe's `error` event fails in-flight requests with the pipe error and the captured stderr tail instead of crashing the host process.
+
 
 ## Starting RPC Mode
 
@@ -489,7 +495,7 @@ Set the reasoning/thinking level for models that support it.
 
 Levels: `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`
 
-Note: `"xhigh"` is supported by GPT-5.2 through GPT-5.6 model families, Claude Opus 4.6–4.x and Claude 5 families (where it maps to adaptive effort `"max"`), and Kimi Code K3. The separate normalized `"max"` tier is model-aware and currently supported by GPT-5.6 aliases and Sol/Terra/Luna variants.
+Note: `"xhigh"` is supported by GPT-5.2 through GPT-5.6 model families, the GPT-6 family (Astra and future variants), Claude Opus 4.6–4.x and Claude 5 families (where it maps to adaptive effort `"max"`), and Kimi Code K3. The separate normalized `"max"` tier is model-aware and currently supported by GPT-5.6 aliases and Sol/Terra/Luna variants, plus the GPT-6 family.
 
 Response:
 ```json
@@ -1325,7 +1331,7 @@ Note: with `summarize: true` the command is LLM-bound and can take a while. `Rpc
 
 Persistent settings, backed by the settings file (see [settings.md](settings.md)). They are normally distinct from live session state, with global-only control/security-policy exceptions:
 
-- **Persistent defaults** (`get_settings` / `set_settings`): provider/model, thinking level, queue modes, compaction/retry/image/skill/thinking-display/transport toggles, automatic-compaction continuation, `maxConcurrentSubagents`, `enabledModels`, `tabTitle`, and per-agent model fallback lists seed fresh runtimes. Writing these ordinary defaults does **not** change a running session.
+- **Persistent defaults** (`get_settings` / `set_settings`): provider/model, thinking level, queue modes, compaction/retry/image/skill/thinking-display/transport toggles, automatic-compaction continuation, `maxConcurrentSubagents`, `enabledModels`, `tabTitle`, and per-agent model fallback lists seed fresh runtimes. Writing these ordinary defaults does **not** change a running session—except `singleModelMode`, which is read at each subagent spawn, so a write takes effect from the next spawn in the writing session (and from session start everywhere else).
 - **Global nested-context trust policy** (`autoLoadNestedContext`, `trustedContextFolders`, `effectiveTrustedContextRoots`, and the trust commands below): this is read from `~/.dreb/agent/settings.json` only, never project settings. Active main/subagent processes observe it for **future lazy nested/out-of-cwd loads**; it cannot remove content already injected into a conversation. It does not govern the separate initial upward context scan from the launch cwd.
 - **Global Dispatch Arbiter policy** (`subagentArbiter`): the complete object is read/written globally and project settings cannot shadow it. Enabled runtimes consume it before future subagent spawns; it does not rewrite already-started children.
 - **Runtime state** (`get_state` / `set_model` / `set_thinking_level` / `set_steering_mode` / `set_follow_up_mode` / `set_auto_compaction` / `set_auto_retry`): the state of the live session. Note that the runtime setters also persist their values as new defaults as a side effect.
@@ -1364,6 +1370,7 @@ Response:
     "effectiveTrustedContextRoots": ["/home/user/src/my-company"],
     "transport": "sse",
     "hideThinkingBlock": false,
+    "singleModelMode": false,
     "agentModels": {
       "Explore": ["anthropic/sonnet", "openai/gpt-5"]
     },
@@ -1401,7 +1408,7 @@ Response:
 
 `tabTitle` is the effective merged object and is absent when unconfigured. Its optional `model` is one exact `provider/model`; when absent, title generation preserves the Explore-agent resolution route documented in [settings.md](settings.md#tab-title).
 
-`continueAfterAutoCompaction` defaults to `false`. When true, every successful automatic threshold or overflow compaction starts another model turn even without queued messages. It does not make failed, cancelled, or manual compaction continue.
+`continueAfterAutoCompaction` defaults to `false`. When true, successful automatic compaction keeps pending or interrupted work moving, but it does not start a fresh model turn after a completed assistant answer with no queued input. It does not make failed, cancelled, or manual compaction continue.
 
 #### set_settings
 
@@ -1508,6 +1515,7 @@ Response is the full settings snapshot after the write (same shape as `get_setti
     "effectiveTrustedContextRoots": ["/home/user/src/my-company"],
     "transport": "sse",
     "hideThinkingBlock": false,
+    "singleModelMode": false,
     "agentModels": {}
   }
 }
@@ -1535,6 +1543,7 @@ Project-shadow warning example (the global write still lands, but the returned m
     "effectiveTrustedContextRoots": [],
     "transport": "sse",
     "hideThinkingBlock": false,
+    "singleModelMode": false,
     "agentModels": {
       "Explore": ["project/model"]
     },
@@ -1554,7 +1563,7 @@ Valid keys and values:
 | `steeringMode` | `"all"`, `"one-at-a-time"` |
 | `followUpMode` | `"all"`, `"one-at-a-time"` |
 | `compactionEnabled` | boolean |
-| `continueAfterAutoCompaction` | boolean; default `false`. Starts another model turn after every successful automatic compaction and never affects manual compaction. |
+| `continueAfterAutoCompaction` | boolean; default `false`. Continues pending work after successful automatic compaction; completed answers and manual compaction stay finished. |
 | `retryEnabled` | boolean |
 | `maxConcurrentSubagents` | Non-negative safe integer; default `4`. Captured by new parent sessions; `0` removes the subagent tool and adds explicit self-execution guidance. |
 | `imageAutoResize` | boolean |
@@ -1564,6 +1573,7 @@ Valid keys and values:
 | `trustedContextFolders` | Replaces the global list atomically. Array of non-empty paths that expand to absolute, existing directories; each is canonicalized with native `realpath`, then deduplicated/subsumed. Relative, missing, non-directory, and broken-symlink entries are rejected. |
 | `transport` | `"sse"`, `"websocket"`, `"auto"` |
 | `hideThinkingBlock` | boolean |
+| `singleModelMode` | boolean; default `false`. When `true`, every subagent runs on the parent session's model — per-invocation overrides, per-agent model lists, agent-definition models, and the dispatch arbiter are bypassed, and any requested model selection is reported as a warning prepended to the child's output |
 | `agentModels` | Plain object mapping agent names to arrays of non-empty model id strings; empty arrays remove the global entry for that agent |
 | `enabledModels` | Non-empty ordered array of available exact `provider/model` references, or explicit `null` to remove the global filter and restore implicit all. Duplicate, glob, fuzzy, and thinking-suffix entries are rejected. |
 | `subagentArbiter` | Complete global-only object or `null`. Keys: `enabled` boolean, exact available `model`, optional valid/capability-supported `thinking`, non-empty `guidePath`. Enabling requires `model`. Unknown nested keys are rejected. |
@@ -1871,6 +1881,14 @@ When the RPC server is launched with `--ui dashboard`, `message_update` events a
 
 The projection applies recursively to `message_update` events nested inside `background_agent_event` payloads. It does **not** apply to command responses — `get_dashboard_snapshot` still returns complete messages — and `message_end` always carries the full final message as the authoritative transcript record. RPC servers launched without `--ui dashboard` emit the full unprojected protocol shown above.
 
+The same dashboard-mode projection also dedupes images across the wire. Inline `image` blocks (PNG, JPEG, GIF, WebP) are content-identified by `sha256(mimeType + 0x00 + decodedBytes)`; the first occurrence of each unique image is sent inline, and every later occurrence anywhere in the event stream is replaced with
+
+```json
+{"type": "image_reference", "id": "<64 hex chars>", "mimeType": "image/png", "size": 12345}
+```
+
+The child process emits each unique image's bytes at most once per process lifetime, which keeps multi-image turns from filling the stdout pipe while the dashboard is busy decoding. The child only dedupes blocks the dashboard's strict decode accepts — allowlisted MIME type, canonical base64, matching byte signature; everything else is left inline at every occurrence (the dashboard rejects it, as before, so it never becomes an unresolvable reference). Command responses are untouched — `get_messages` and `get_dashboard_snapshot` always carry full base64 payloads — and the dedupe state is per-process: a restarted child re-sends. See [Transcript images](dashboard.md#transcript-images) for how the dashboard resolves these references.
+
 ### tool_execution_start / tool_execution_update / tool_execution_end
 
 Emitted when a tool begins, streams progress, and completes execution.
@@ -1940,11 +1958,11 @@ The `reason` field is `"threshold"` (context getting large) or `"overflow"` (con
 }
 ```
 
-If `reason` was `"overflow"` and compaction succeeds, `willRetry` is `true` and the agent will automatically retry the prompt. Independently, persistent `continueAfterAutoCompaction: true` starts another model turn after any successful automatic compaction, including a threshold compaction with `willRetry: false` and no queued message. Manual `compact` is outside this event path and does not continue because of that setting.
+`willRetry` is `true` whenever another model request is imminent after this event. That includes overflow recovery, resuming an interrupted assistant error, threshold compaction inside an active tool loop, and an active loop proceeding with intact context after mid-turn compaction is cancelled or fails. In-loop requests continue without calling `continue()`. Persistent `continueAfterAutoCompaction: true` can keep other pending work moving, but it does not restart a completed assistant answer with no queued input. Manual `compact` is outside this event path and does not continue because of that setting.
 
-If compaction was aborted, `result` is `null` and `aborted` is `true`.
+If compaction was aborted, `result` is `null` and `aborted` is `true`. `willRetry` can still be `true` when the active agent loop will proceed without the compaction.
 
-If compaction failed (e.g., API quota exceeded), `result` is `null`, `aborted` is `false`, and `errorMessage` contains the error description.
+If compaction failed (e.g., API quota exceeded), `result` is `null`, `aborted` is `false`, and `errorMessage` contains the error description. As with cancellation, `willRetry` reflects whether the active loop will make another request.
 
 ### auto_retry_start / auto_retry_end
 

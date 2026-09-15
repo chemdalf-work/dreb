@@ -60,7 +60,7 @@ import {
 } from "../../core/tools/subagent.js";
 import { type Theme, theme } from "../interactive/theme/theme.js";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.js";
-import { projectDashboardRpcEvent } from "./rpc-event-projection.js";
+import { createDashboardRpcEventProjector } from "./rpc-event-projection.js";
 import type {
 	RpcAgentTypeInfo,
 	RpcBackgroundAgentInfo,
@@ -389,6 +389,7 @@ type SettingsReader = Pick<
 	| "getConfiguredTrustedContextFolders"
 	| "getTransport"
 	| "getHideThinkingBlock"
+	| "getSingleModelMode"
 	| "getAgentModels"
 	| "getGlobalSubagentArbiterSettings"
 	| "getTabTitleSettings"
@@ -422,6 +423,7 @@ type SettingsWriter = SettingsRefresher &
 		| "setContextTrust"
 		| "setTransport"
 		| "setHideThinkingBlock"
+		| "setSingleModelMode"
 		| "setAgentModelsForAgent"
 		| "removeAgentModelsForAgent"
 		| "hasProjectAgentModelOverride"
@@ -465,6 +467,7 @@ export function getSettingsForRpc(
 		effectiveTrustedContextRoots: canonicalizeTrustedRoots(contextTrust.trustedFolders),
 		transport: settingsManager.getTransport(),
 		hideThinkingBlock: settingsManager.getHideThinkingBlock(),
+		singleModelMode: settingsManager.getSingleModelMode(),
 		agentModels: settingsManager.getAgentModels(),
 		subagentArbiter: settingsManager.getGlobalSubagentArbiterSettings(),
 		tabTitle: settingsManager.getTabTitleSettings(),
@@ -572,6 +575,7 @@ const SETTINGS_UPDATE_KEYS = [
 	"trustedContextFolders",
 	"transport",
 	"hideThinkingBlock",
+	"singleModelMode",
 	"agentModels",
 	"enabledModels",
 	"subagentArbiter",
@@ -899,6 +903,7 @@ export async function setSettingsForRpc(
 		"enableSkillCommands",
 		"autoLoadNestedContext",
 		"hideThinkingBlock",
+		"singleModelMode",
 	] as const) {
 		const value = update[key];
 		if (value !== undefined && typeof value !== "boolean") {
@@ -1181,6 +1186,9 @@ export async function setSettingsForRpc(
 			}
 			if (update.hideThinkingBlock !== undefined) {
 				settingsManager.setHideThinkingBlock(update.hideThinkingBlock);
+			}
+			if (update.singleModelMode !== undefined) {
+				settingsManager.setSingleModelMode(update.singleModelMode);
 			}
 
 			const warnings: string[] = [];
@@ -1872,6 +1880,7 @@ export async function runRpcMode(session: AgentSession, modelFallbackMessage?: s
 					getModel: () => session.model,
 					getModelRegistry: () => session.modelRegistry,
 					getProvider: () => session.model?.provider,
+					getSessionId: () => session.sessionId,
 					getAgentModelsOverride: (name) => session.settingsManager.getAgentModelsForAgent(name),
 					getBranch: () => getGitBranch(cwd),
 					getRepo: () => basename(cwd),
@@ -1884,14 +1893,17 @@ export async function runRpcMode(session: AgentSession, modelFallbackMessage?: s
 				})
 			: undefined;
 
-	// Dashboard-launched runtimes (--ui dashboard) get message_update events
-	// projected before serialization: the cumulative `message` and
+	// Dashboard-launched runtimes (--ui dashboard) get events projected before
+	// serialization: message_update's cumulative `message` and
 	// `assistantMessageEvent.partial` fields are quadratic in response length on
 	// the JSONL pipe, and no dashboard consumer reads them (deltas, message_end,
-	// and get_dashboard_snapshot responses carry the authoritative data). Generic
-	// RPC consumers keep the full protocol unchanged. Only the event stream is
+	// and get_dashboard_snapshot responses carry the authoritative data). Inline
+	// image blocks are deduped over the process lifetime so each unique image
+	// crosses stdout at most once — later occurrences become image_references
+	// the dashboard resolves from its image cache (issue 495). Generic RPC
+	// consumers keep the full protocol unchanged. Only the event stream is
 	// projected — command responses (output() calls below) always stay complete.
-	const projectEvents = session.uiType === "dashboard";
+	const dashboardEventProjector = session.uiType === "dashboard" ? createDashboardRpcEventProjector() : undefined;
 
 	// Output all agent events as JSON
 	session.subscribe((event) => {
@@ -1906,7 +1918,7 @@ export async function runRpcMode(session: AgentSession, modelFallbackMessage?: s
 				tabTitleGenerator.onMessageEnd(event.message);
 			}
 		}
-		output(projectEvents ? projectDashboardRpcEvent(event as unknown as Record<string, unknown>) : event);
+		output(dashboardEventProjector ? dashboardEventProjector(event as unknown as Record<string, unknown>) : event);
 	});
 
 	// Handle a single command
@@ -2083,7 +2095,7 @@ export async function runRpcMode(session: AgentSession, modelFallbackMessage?: s
 				}
 				const { BuddyManager } = await import("../../core/buddy/buddy-manager.js");
 				const manager = new BuddyManager();
-				const state = await manager.hatch(model, apiKey);
+				const state = await manager.hatch(model, apiKey, session.sessionId);
 				return success(id, "buddy_hatch", { state });
 			}
 
@@ -2101,7 +2113,7 @@ export async function runRpcMode(session: AgentSession, modelFallbackMessage?: s
 				if (!manager.hasStoredBuddy()) {
 					return error(id, "buddy_reroll", "No buddy to reroll. Use hatch first.");
 				}
-				const state = await manager.reroll(model, apiKey);
+				const state = await manager.reroll(model, apiKey, session.sessionId);
 				return success(id, "buddy_reroll", { state });
 			}
 

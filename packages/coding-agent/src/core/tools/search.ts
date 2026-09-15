@@ -208,7 +208,7 @@ export function createSearchToolDefinition(cwd: string): ToolDefinition<typeof s
 			"Search the codebase using natural language queries. Returns ranked code/doc results using semantic similarity and keyword matching. Dreb prepares structural index data at startup; the first semantic query generates missing embeddings. Supports identifier queries (e.g. 'AuthMiddleware'), natural language (e.g. 'where is rate limiting handled'), and path queries (e.g. 'src/auth/').",
 		promptSnippet: "Semantic codebase search — natural language queries over code and docs",
 		promptGuidelines: [
-			"Use `search` as your default exploration tool — for understanding code, finding where things are, and answering questions about the codebase. Use `grep` when you already know the exact text or pattern you're looking for.",
+			"Use `search` when exploring a large code or text corpus without knowing the exact keywords — it ranks results by semantic similarity and keyword matching. It is one optional tool among grep, find, ls, read, and bash; pick whichever fits the task.",
 			"Dreb prepares structural index data at startup. The first semantic query generates missing embeddings; subsequent queries are fast.",
 		],
 		parameters: searchSchema,
