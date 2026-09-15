@@ -1,7 +1,7 @@
 {
 	"name": "@dreb/long-horizon",
 	"version": "2.66.0",
-	"description": "Durable unattended long-horizon supervisor for dreb",
+	"description": "Durable unattended long-horizon supervisor for Pierre Dreb",
 	"license": "MIT",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -44,7 +44,7 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/aebrer/dreb.git",
+		"url": "https://github.com/chemdalf-work/pierre-dreb.git",
 		"directory": "packages/long-horizon"
 	}
 }

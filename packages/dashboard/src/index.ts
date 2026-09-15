@@ -228,7 +228,7 @@ export function createTlsWatchers(deps: TlsWatchDeps): TlsWatchController {
 	return { watchers, clearReloadTimer };
 }
 
-const HELP = `dreb-dashboard — dreb web dashboard server
+const HELP = `dreb-dashboard — Pierre Dreb web dashboard server
 
 Usage: dreb-dashboard [options]
 
@@ -381,7 +381,7 @@ async function main(): Promise<void> {
 	}
 	server.listen(args.port, host, () => {
 		console.log(
-			`dreb dashboard listening on ${scheme}://${host === "0.0.0.0" ? "<tailscale-ip>" : host}:${args.port}`,
+			`Pierre Dreb dashboard listening on ${scheme}://${host === "0.0.0.0" ? "<tailscale-ip>" : host}:${args.port}`,
 		);
 		if (args.remote) {
 			console.log(`remote mode: allowed identities = ${args.allow.join(", ")}`);

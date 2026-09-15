@@ -124,7 +124,9 @@ export function FilesScreen(props: { store: AppStore; initialPath?: string }): J
 								)}
 							</For>
 						</nav>
-						<p class="scope-note">whole host filesystem — you can browse anywhere the dreb process can read</p>
+						<p class="scope-note">
+							whole host filesystem — you can browse anywhere the Pierre Dreb process can read
+						</p>
 					</div>
 					<div class="head-actions">
 						<button type="button" class="btn" onClick={() => setShowMkdir(true)}>

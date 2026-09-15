@@ -958,7 +958,7 @@ export function Transcript(props: {
 	resetKey?: unknown;
 	imageScope?: TranscriptImageScope;
 }): JSX.Element {
-	const who = () => props.who ?? "dreb";
+	const who = () => props.who ?? "Pierre Dreb";
 	const userLabel = () => props.userLabel ?? "you";
 	const imageScope = () => props.imageScope ?? { runtimeKey: "" };
 	const renderItems = createMemo<TranscriptRenderItem[]>((previous) => transcriptRenderItems(props.entries, previous));

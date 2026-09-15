@@ -219,8 +219,8 @@ export function MemoriesScreen(props: { store: AppStore }): JSX.Element {
 					<div>
 						<h1>Memories</h1>
 						<p class="scope-note">
-							Edit dreb memory only: global ~/.dreb/memory plus known project .dreb/memory scopes. Claude memory
-							paths are never included.
+							Edit Pierre Dreb memory only: global ~/.dreb/memory plus known project .dreb/memory scopes. Claude
+							memory paths are never included.
 						</p>
 					</div>
 					<button
@@ -247,7 +247,7 @@ export function MemoriesScreen(props: { store: AppStore }): JSX.Element {
 							<Show when={!scopes.loading} fallback={<p class="muted">loading scopes…</p>}>
 								<Show
 									when={(scopes() ?? []).length > 0}
-									fallback={<p class="muted">No active dreb memory scopes.</p>}
+									fallback={<p class="muted">No active Pierre Dreb memory scopes.</p>}
 								>
 									<For each={scopes() ?? []}>
 										{(scope) => (

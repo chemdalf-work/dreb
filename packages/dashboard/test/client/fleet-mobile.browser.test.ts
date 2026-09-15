@@ -244,7 +244,9 @@ describe("mobile fleet SSE snapshots in a throttled real browser", () => {
 			await page.waitForFunction((key) => window.location.hash === `#/session/${key}`, runtimeKey, {
 				timeout: 10_000,
 			});
-			await page.locator("textarea[placeholder^='Message dreb']").waitFor({ state: "visible", timeout: 10_000 });
+			await page
+				.locator("textarea[placeholder^='Message Pierre Dreb']")
+				.waitFor({ state: "visible", timeout: 10_000 });
 			// Let the session screen's independent details requests start before
 			// asserting its hydration route inventory.
 			await page.waitForTimeout(400);

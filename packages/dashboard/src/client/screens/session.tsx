@@ -2335,7 +2335,9 @@ export function SessionScreen(props: { store: AppStore; sessionKey: string }): J
 										<textarea
 											ref={composerRef}
 											placeholder={
-												streaming() ? "Message dreb — sends as steer while it works…" : "Message dreb…"
+												streaming()
+													? "Message Pierre Dreb — sends as steer while it works…"
+													: "Message Pierre Dreb…"
 											}
 											value={composerText()}
 											aria-controls={showCommandMenu() ? "command-listbox" : undefined}

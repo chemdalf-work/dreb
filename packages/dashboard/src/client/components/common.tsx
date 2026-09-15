@@ -59,7 +59,7 @@ export function Topbar(props: { store: AppStore; active: "fleet" | "files" | "me
 		<header class="topbar">
 			<div class="topbar-inner">
 				<a class="wordmark" href="#/">
-					dreb
+					Pierre Dreb
 				</a>
 				<nav>
 					<a href="#/" aria-current={props.active === "fleet" ? "page" : undefined}>

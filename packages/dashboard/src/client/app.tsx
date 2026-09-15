@@ -98,7 +98,7 @@ export function App(): JSX.Element {
 			? store.fleet().runtimes.find((runtime) => runtime.key === currentSessionKey)
 			: undefined;
 		const displayName = currentSession?.title ?? currentSession?.sessionName ?? currentRuntime?.state.sessionName;
-		const base = displayName ? `${displayName} — dreb` : "dreb";
+		const base = displayName ? `${displayName} — Pierre Dreb` : "Pierre Dreb";
 		document.title = attention ? `◆ ${base}` : base;
 
 		for (const [key, item] of sessionAttention) {
@@ -122,7 +122,7 @@ export function App(): JSX.Element {
 				pendingAttention.add(key);
 				serviceWorkerReadyWithTimeout(navigator.serviceWorker.ready)
 					.then((reg) =>
-						reg.showNotification(`dreb — ${item.name}`, {
+						reg.showNotification(`Pierre Dreb — ${item.name}`, {
 							body: item.reason,
 							tag: key,
 							data: { sessionKey: key },
