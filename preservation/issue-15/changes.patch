@@ -1,0 +1,135 @@
+diff --git a/packages/ai/src/models.ts b/packages/ai/src/models.ts
+index 2d3a531..9566651 100644
+--- a/packages/ai/src/models.ts
++++ b/packages/ai/src/models.ts
+@@ -214,6 +214,7 @@ export function supportsMax<TApi extends Api>(model: Model<TApi>): boolean {
+ export function supportsXhigh<TApi extends Api>(model: Model<TApi>): boolean {
+ 	if (model.provider === "kimi-coding-oauth" && model.id === "k3") return true;
+ 	if (isQwen38OrLater(model.id)) return true;
++	if (model.id === "deepseek-v4-pro") return true;
+ 	if (
+ 		model.id.includes("gpt-5.2") ||
+ 		model.id.includes("gpt-5.3") ||
+diff --git a/packages/ai/src/providers/amazon-bedrock.ts b/packages/ai/src/providers/amazon-bedrock.ts
+index 35d5563..abf2420 100644
+--- a/packages/ai/src/providers/amazon-bedrock.ts
++++ b/packages/ai/src/providers/amazon-bedrock.ts
+@@ -42,7 +42,7 @@ import type {
+ import { AssistantMessageEventStream } from "../utils/event-stream.js";
+ import { parseStreamingJson } from "../utils/json-parse.js";
+ import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
+-import { adjustMaxTokensForThinking, buildBaseOptions, clampReasoning } from "./simple-options.js";
++import { adjustMaxTokensForThinking, buildBaseOptions, clampReasoning, resolveReasoningEffort } from "./simple-options.js";
+ import { transformMessages } from "./transform-messages.js";
+ 
+ export interface BedrockOptions extends StreamOptions {
+@@ -258,6 +258,7 @@ export const streamSimpleBedrock: StreamFunction<"bedrock-converse-stream", Simp
+ 			model.maxTokens,
+ 			options.reasoning,
+ 			options.thinkingBudgets,
++			model,
+ 		);
+ 
+ 		return streamBedrock(model, context, {
+@@ -266,7 +267,7 @@ export const streamSimpleBedrock: StreamFunction<"bedrock-converse-stream", Simp
+ 			reasoning: options.reasoning,
+ 			thinkingBudgets: {
+ 				...(options.thinkingBudgets || {}),
+-				[clampReasoning(options.reasoning)!]: adjusted.thinkingBudget,
++				[resolveReasoningEffort(model, options.reasoning)!]: adjusted.thinkingBudget,
+ 			},
+ 		} satisfies BedrockOptions);
+ 	}
+diff --git a/packages/ai/src/providers/anthropic.ts b/packages/ai/src/providers/anthropic.ts
+index fee30fb..0b0ecf7 100644
+--- a/packages/ai/src/providers/anthropic.ts
++++ b/packages/ai/src/providers/anthropic.ts
+@@ -518,6 +518,7 @@ export const streamSimpleAnthropic: StreamFunction<"anthropic-messages", SimpleS
+ 		model.maxTokens,
+ 		options.reasoning,
+ 		options.thinkingBudgets,
++		model,
+ 	);
+ 
+ 	return streamAnthropic(model, context, {
+diff --git a/packages/ai/src/providers/azure-openai-responses.ts b/packages/ai/src/providers/azure-openai-responses.ts
+index 0208ea6..c8a6e10 100644
+--- a/packages/ai/src/providers/azure-openai-responses.ts
++++ b/packages/ai/src/providers/azure-openai-responses.ts
+@@ -236,7 +236,7 @@ function buildParams(
+ 	if (model.reasoning) {
+ 		if (options?.reasoningEffort || options?.reasoningSummary) {
+ 			params.reasoning = {
+-				effort: options?.reasoningEffort || "medium",
++				effort: (options?.reasoningEffort || "medium") as any,
+ 				summary: options?.reasoningSummary || "auto",
+ 			};
+ 			params.include = ["reasoning.encrypted_content"];
+diff --git a/packages/ai/src/providers/openai-responses.ts b/packages/ai/src/providers/openai-responses.ts
+index e1dbe50..e3668c5 100644
+--- a/packages/ai/src/providers/openai-responses.ts
++++ b/packages/ai/src/providers/openai-responses.ts
+@@ -216,7 +216,7 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
+ 	if (model.reasoning) {
+ 		if (options?.reasoningEffort || options?.reasoningSummary) {
+ 			params.reasoning = {
+-				effort: options?.reasoningEffort || "medium",
++				effort: (options?.reasoningEffort || "medium") as any,
+ 				summary: options?.reasoningSummary || "auto",
+ 			};
+ 			params.include = ["reasoning.encrypted_content"];
+diff --git a/packages/ai/src/providers/simple-options.ts b/packages/ai/src/providers/simple-options.ts
+index 500b7b8..f6616d0 100644
+--- a/packages/ai/src/providers/simple-options.ts
++++ b/packages/ai/src/providers/simple-options.ts
+@@ -43,17 +43,20 @@ export function adjustMaxTokensForThinking(
+ 	modelMaxTokens: number,
+ 	reasoningLevel: ThinkingLevel,
+ 	customBudgets?: ThinkingBudgets,
++	model?: Model<Api>,
+ ): { maxTokens: number; thinkingBudget: number } {
+ 	const defaultBudgets: ThinkingBudgets = {
+ 		minimal: 1024,
+ 		low: 2048,
+ 		medium: 8192,
+ 		high: 16384,
++		xhigh: 32768,
++		max: 65536,
+ 	};
+ 	const budgets = { ...defaultBudgets, ...customBudgets };
+ 
+ 	const minOutputTokens = 1024;
+-	const level = clampReasoning(reasoningLevel)!;
++	const level = model ? resolveReasoningEffort(model, reasoningLevel)! : clampReasoning(reasoningLevel)!;
+ 	let thinkingBudget = budgets[level]!;
+ 	const maxTokens = Math.min(baseMaxTokens + thinkingBudget, modelMaxTokens);
+ 
+diff --git a/packages/ai/src/types.ts b/packages/ai/src/types.ts
+index 76a01b1..5339839 100644
+--- a/packages/ai/src/types.ts
++++ b/packages/ai/src/types.ts
+@@ -50,6 +50,8 @@ export interface ThinkingBudgets {
+ 	low?: number;
+ 	medium?: number;
+ 	high?: number;
++	xhigh?: number;
++	max?: number;
+ }
+ 
+ // Base options all providers share
+diff --git a/packages/ai/test/supports-xhigh.test.ts b/packages/ai/test/supports-xhigh.test.ts
+index c4481e6..a564f0c 100644
+--- a/packages/ai/test/supports-xhigh.test.ts
++++ b/packages/ai/test/supports-xhigh.test.ts
+@@ -53,6 +53,11 @@ describe("supportsXhigh", () => {
+ 		expect(supportsXhigh(model!)).toBe(true);
+ 	});
+ 
++	it("returns true for DeepSeek V4 Pro", () => {
++		const base = getModel("anthropic", "claude-opus-4-6");
++		expect(supportsXhigh({ ...base, id: "deepseek-v4-pro" })).toBe(true);
++	});
++
+ 	it.each(["kimi-for-coding", "kimi-for-coding-highspeed"] as const)(
+ 		"returns false for the K2.7 managed variant %s",
+ 		(id) => {
