@@ -42,7 +42,7 @@ import type {
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
-import { adjustMaxTokensForThinking, buildBaseOptions, clampReasoning } from "./simple-options.js";
+import { adjustMaxTokensForThinking, buildBaseOptions, resolveReasoningEffort } from "./simple-options.js";
 import { transformMessages } from "./transform-messages.js";
 
 export interface BedrockOptions extends StreamOptions {
@@ -258,6 +258,7 @@ export const streamSimpleBedrock: StreamFunction<"bedrock-converse-stream", Simp
 			model.maxTokens,
 			options.reasoning,
 			options.thinkingBudgets,
+			model,
 		);
 
 		return streamBedrock(model, context, {
@@ -266,7 +267,7 @@ export const streamSimpleBedrock: StreamFunction<"bedrock-converse-stream", Simp
 			reasoning: options.reasoning,
 			thinkingBudgets: {
 				...(options.thinkingBudgets || {}),
-				[clampReasoning(options.reasoning)!]: adjusted.thinkingBudget,
+				[resolveReasoningEffort(model, options.reasoning)!]: adjusted.thinkingBudget,
 			},
 		} satisfies BedrockOptions);
 	}

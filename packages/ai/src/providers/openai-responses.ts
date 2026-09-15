@@ -216,7 +216,7 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 	if (model.reasoning) {
 		if (options?.reasoningEffort || options?.reasoningSummary) {
 			params.reasoning = {
-				effort: options?.reasoningEffort || "medium",
+				effort: (options?.reasoningEffort || "medium") as any,
 				summary: options?.reasoningSummary || "auto",
 			};
 			params.include = ["reasoning.encrypted_content"];
