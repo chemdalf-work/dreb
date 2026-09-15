@@ -6,6 +6,7 @@
 
 import { createEffect, createMemo, createSignal, For, type JSX, onCleanup, onMount, Show } from "solid-js";
 import type {
+	BackgroundAgentDto,
 	CommandDto,
 	ImageAttachmentDto,
 	ModelInfoDto,
@@ -1694,12 +1695,15 @@ export function SessionScreen(props: { store: AppStore; sessionKey: string }): J
 		closed() ? [] : Object.values(session()?.backgroundAgents ?? {}).filter((agent) => agent.status === "running");
 	const doneAgents = () =>
 		Object.values(session()?.backgroundAgents ?? {}).filter((agent) => closed() || agent.status !== "running");
-	// Newest spawned subagent first, oldest last. Array.prototype.sort is stable,
-	// so equal timestamps keep spawn (insertion) order.
+	// Stable hierarchy order: immutable start time, then ID. Activity updates never move cards.
 	const sortedAgents = () =>
 		Object.values(session()?.backgroundAgents ?? {}).sort(
-			(a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt),
+			(a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt) || a.agentId.localeCompare(b.agentId),
 		);
+	const formatAgentUsage = (agent: BackgroundAgentDto) => {
+		const usage = agent.usage ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+		return `in ${usage.input.toLocaleString()} · out ${usage.output.toLocaleString()} · cache ${usage.cacheRead.toLocaleString()}/${usage.cacheWrite.toLocaleString()} · $${usage.cost.toFixed(4)}`;
+	};
 	const tasks = () => session()?.tasks ?? [];
 	const tasksDone = () => tasks().filter((t) => t.status === "completed").length;
 	const ctx = () => stats()?.contextUsage ?? runtime()?.state.contextUsage;
@@ -2176,10 +2180,17 @@ export function SessionScreen(props: { store: AppStore; sessionKey: string }): J
 																				: "●"
 																			: agent.status === "completed"
 																				? "✓"
-																				: "✕"}
+																				: agent.status === "aborted"
+																					? "■"
+																					: "✕"}
 																	</span>
 																	<span class="task">
-																		{agent.agentType} — {agent.taskSummary}
+																		{agent.parentAgentId ? "↳ " : ""}
+																		{agent.agentType} — {agent.taskSummary} · {agent.status} ·{" "}
+																		{formatAgentUsage(agent)}
+																		<Show when={agent.provider || agent.model}>
+																			{` · ${[agent.provider, agent.model].filter(Boolean).join("/")}${agent.thinking ? ` @ ${agent.thinking}` : ""}`}
+																		</Show>
 																		<Show when={agent.arbitrations?.at(-1)}>
 																			{(record) =>
 																				record().status === "failure"

@@ -29,6 +29,15 @@ describe("rehydrateBackgroundAgentsFromDisk", () => {
 		subagentSessionsBase = join(tempDir, "subagent-sessions");
 		mkdirSync(subagentSessionsBase, { recursive: true });
 		parentSessionFile = join(tempDir, "2026-01-02T03-04-05-000Z_parent-session.jsonl");
+		writeJsonl(parentSessionFile, [
+			{
+				type: "session",
+				version: 3,
+				id: "parent-session-id",
+				timestamp: "2026-01-02T03:04:05.000Z",
+				cwd: tempDir,
+			},
+		]);
 	});
 
 	afterEach(() => {
@@ -60,13 +69,29 @@ describe("rehydrateBackgroundAgentsFromDisk", () => {
 				message: { role: "user", content: "Investigate the resumed dashboard subagent chip" },
 			},
 			{
+				type: "thinking_level_change",
+				id: "thinking-1",
+				parentId: "user-1",
+				timestamp: "2026-01-02T03:05:01.500Z",
+				thinkingLevel: "high",
+			},
+			{
 				type: "message",
 				id: "assistant-1",
-				parentId: "user-1",
+				parentId: "thinking-1",
 				timestamp: "2026-01-02T03:05:02.000Z",
 				message: {
 					role: "assistant",
+					provider: "anthropic",
+					model: "claude-sonnet",
 					content: [{ type: "text", text: "Done" }],
+					usage: {
+						input: 100,
+						output: 20,
+						cacheRead: 30,
+						cacheWrite: 4,
+						cost: { total: 0.125 },
+					},
 					stopReason: "stop",
 				},
 			},
@@ -82,9 +107,53 @@ describe("rehydrateBackgroundAgentsFromDisk", () => {
 			agentType: "Review",
 			taskSummary: "Investigate the resumed dashboard subagent chip",
 			status: "completed",
+			parentSessionId: "parent-session-id",
+			provider: "anthropic",
+			model: "claude-sonnet",
+			thinking: "high",
+			usage: { input: 100, output: 20, cacheRead: 30, cacheWrite: 4, cost: 0.125 },
 			sessionDir: childDir,
 			sessionFile: childSessionFile,
 			cwd: tempDir,
+		});
+	});
+
+	test("rehydrates nested descendants with stable parent identity", () => {
+		const childDir = join(subagentSessionsBase, "child-parent");
+		const grandchildDir = join(subagentSessionsBase, "child-grandchild");
+		mkdirSync(childDir, { recursive: true });
+		mkdirSync(grandchildDir, { recursive: true });
+		const childFile = join(childDir, "child.jsonl");
+		const grandchildFile = join(grandchildDir, "grandchild.jsonl");
+		writeJsonl(childFile, [
+			{
+				type: "session",
+				version: 4,
+				id: "child-session-id",
+				timestamp: "2026-01-02T03:05:00.000Z",
+				cwd: tempDir,
+				parentSession: parentSessionFile,
+				agentType: "Explore",
+			},
+		]);
+		writeJsonl(grandchildFile, [
+			{
+				type: "session",
+				version: 4,
+				id: "grandchild-session-id",
+				timestamp: "2026-01-02T03:06:00.000Z",
+				cwd: tempDir,
+				parentSession: childFile,
+				agentType: "test-reviewer",
+			},
+		]);
+
+		expect(rehydrateBackgroundAgentsFromDisk(parentSessionFile, subagentSessionsBase)).toBe(2);
+		const agents = getBackgroundAgents();
+		expect(agents.find((agent) => agent.agentId === "rehydrated-child-grandchild")).toMatchObject({
+			parentAgentId: "rehydrated-child-parent",
+			parentSessionId: "child-session-id",
+			agentType: "test-reviewer",
 		});
 	});
 

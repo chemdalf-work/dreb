@@ -1130,7 +1130,7 @@ Each session has the same fields as `list_sessions`.
 
 #### list_background_agents
 
-List background subagents tracked by this process's registry — running and recently completed (finished entries are pruned after ~5 minutes). `sessionDir` is known from launch; `sessionFile` appears once the child process exits. Live transcripts are delivered via `background_agent_event` events (see Events), not by reading these paths.
+List background subagents tracked by this process's registry — running and recently completed (finished entries are pruned after ~5 minutes). Entries use stable `startedAt` then `agentId` ordering and include parent identity, explicit `running`/`completed`/`failed`/`aborted` status, provider/model/thinking, and cumulative input/output/cache-read/cache-write tokens plus cost. `sessionDir` is known from launch; `sessionFile` appears once the child process exits. Live transcripts and telemetry updates are delivered via `background_agent_event` events (see Events); persisted child JSONL restores completed nested history after restart.
 
 ```json
 {"type": "list_background_agents"}
@@ -1150,6 +1150,11 @@ Response:
         "taskSummary": "Explore task 1/2",
         "startedAt": "2026-07-07T12:00:00.000Z",
         "status": "running",
+        "parentSessionId": "parent-session-uuid",
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-6",
+        "thinking": "high",
+        "usage": { "input": 1200, "output": 300, "cacheRead": 800, "cacheWrite": 50, "cost": 0.0123 },
         "sessionDir": "/home/user/.dreb/agent/subagent-sessions/a1b2c3d4e5f6",
         "cwd": "/home/user/project"
       }

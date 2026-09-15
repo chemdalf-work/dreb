@@ -496,6 +496,71 @@ function startedAtTime(agent: BackgroundAgentDto): number {
 	return Number.isFinite(time) ? time : 0;
 }
 
+function backgroundAgentFromSnapshot(
+	snapshot: Record<string, unknown> | undefined,
+	fallback: Pick<BackgroundAgentDto, "agentId" | "agentType" | "taskSummary"> & Partial<BackgroundAgentDto>,
+): BackgroundAgentDto {
+	const usage = (snapshot?.usage as BackgroundAgentDto["usage"] | undefined) ?? fallback.usage;
+	return {
+		agentId: fallback.agentId,
+		agentType: (snapshot?.agentType as string | undefined) ?? fallback.agentType,
+		taskSummary: (snapshot?.taskSummary as string | undefined) ?? fallback.taskSummary,
+		startedAt:
+			typeof snapshot?.startedAt === "number"
+				? new Date(snapshot.startedAt).toISOString()
+				: (fallback.startedAt ?? new Date().toISOString()),
+		completedAt:
+			typeof snapshot?.completedAt === "number"
+				? new Date(snapshot.completedAt).toISOString()
+				: fallback.completedAt,
+		status: (snapshot?.status as BackgroundAgentDto["status"] | undefined) ?? fallback.status ?? "running",
+		parentAgentId: (snapshot?.parentAgentId as string | undefined) ?? fallback.parentAgentId,
+		parentSessionId: (snapshot?.parentSessionId as string | undefined) ?? fallback.parentSessionId,
+		provider: (snapshot?.provider as string | undefined) ?? fallback.provider,
+		model: (snapshot?.model as string | undefined) ?? fallback.model,
+		thinking: (snapshot?.thinking as string | undefined) ?? fallback.thinking,
+		usage: usage ? { ...usage } : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+		sessionDir: (snapshot?.sessionDir as string | undefined) ?? fallback.sessionDir,
+		sessionFile: (snapshot?.sessionFile as string | undefined) ?? fallback.sessionFile,
+		cwd: (snapshot?.cwd as string | undefined) ?? fallback.cwd,
+		arbitrations: (snapshot?.arbitrations as SubagentArbitrationDto[] | undefined) ?? fallback.arbitrations,
+	};
+}
+
+function applyNestedBackgroundLifecycle(
+	state: SessionViewState,
+	parentAgentId: string,
+	event: Record<string, unknown> | undefined,
+): void {
+	if (!event) return;
+	const agentId = typeof event.agentId === "string" ? event.agentId : undefined;
+	const snapshot = event.agent as Record<string, unknown> | undefined;
+	if (event.type === "background_agent_start" && agentId) {
+		state.backgroundAgents[agentId] = backgroundAgentFromSnapshot(snapshot, {
+			agentId,
+			agentType: String(event.agentType ?? "agent"),
+			taskSummary: String(event.taskSummary ?? "nested agent"),
+			sessionDir: event.sessionDir as string | undefined,
+			parentAgentId,
+		});
+	} else if (event.type === "background_agent_end" && agentId) {
+		const existing = state.backgroundAgents[agentId];
+		if (existing) {
+			const updated = backgroundAgentFromSnapshot(snapshot, existing);
+			updated.status =
+				(event.status as BackgroundAgentDto["status"] | undefined) ?? (event.success ? "completed" : "failed");
+			updated.completedAt ??= new Date().toISOString();
+			state.backgroundAgents[agentId] = updated;
+		}
+	} else if (event.type === "background_agent_event" && agentId && snapshot) {
+		const existing = state.backgroundAgents[agentId];
+		if (existing) state.backgroundAgents[agentId] = backgroundAgentFromSnapshot(snapshot, existing);
+	}
+	if (event.type === "background_agent_event" && agentId && event.event && typeof event.event === "object") {
+		applyNestedBackgroundLifecycle(state, agentId, event.event as Record<string, unknown>);
+	}
+}
+
 export function capBackgroundAgents(state: SessionViewState): void {
 	const completed = Object.values(state.backgroundAgents)
 		.filter((agent) => agent.status !== "running")
@@ -890,14 +955,16 @@ export function applySessionEvent(state: SessionViewState, event: any): void {
 			break;
 		}
 		case "background_agent_start": {
-			state.backgroundAgents[String(event.agentId)] = {
-				agentId: String(event.agentId),
-				agentType: String(event.agentType),
-				taskSummary: String(event.taskSummary),
-				startedAt: new Date().toISOString(),
-				status: "running",
-				sessionDir: event.sessionDir as string | undefined,
-			};
+			const agentId = String(event.agentId);
+			state.backgroundAgents[agentId] = backgroundAgentFromSnapshot(
+				event.agent as Record<string, unknown> | undefined,
+				{
+					agentId,
+					agentType: String(event.agentType),
+					taskSummary: String(event.taskSummary),
+					sessionDir: event.sessionDir as string | undefined,
+				},
+			);
 			break;
 		}
 		case "subagent_arbitration": {
@@ -920,24 +987,38 @@ export function applySessionEvent(state: SessionViewState, event: any): void {
 			break;
 		}
 		case "background_agent_end": {
-			const agent = state.backgroundAgents[String(event.agentId)];
+			const agentId = String(event.agentId);
+			const agent = state.backgroundAgents[agentId];
 			if (agent) {
-				agent.status = event.success ? "completed" : "failed";
-				agent.sessionFile = (event.sessionFile as string | undefined) ?? agent.sessionFile;
+				const snapshot = event.agent as Record<string, unknown> | undefined;
+				const updated = backgroundAgentFromSnapshot(snapshot, agent);
+				updated.status =
+					(event.status as BackgroundAgentDto["status"] | undefined) ?? (event.success ? "completed" : "failed");
+				updated.completedAt ??= new Date().toISOString();
+				updated.sessionFile = (event.sessionFile as string | undefined) ?? updated.sessionFile;
+				state.backgroundAgents[agentId] = updated;
 			}
-			const sub = state.subagents[String(event.agentId)];
+			const sub = state.subagents[agentId];
 			if (sub) sub.streaming = false;
 			capBackgroundAgents(state);
 			break;
 		}
 		case "background_agent_event": {
 			const agentId = String(event.agentId);
+			const existing = state.backgroundAgents[agentId];
+			if (existing && event.agent) {
+				state.backgroundAgents[agentId] = backgroundAgentFromSnapshot(
+					event.agent as Record<string, unknown>,
+					existing,
+				);
+			}
 			let sub = state.subagents[agentId];
 			if (!sub) {
 				sub = { agentId, entries: [], streaming: true };
 				state.subagents[agentId] = sub;
 			}
 			const child = event.event as any;
+			applyNestedBackgroundLifecycle(state, agentId, child);
 			if (child?.type === "session") break; // header — no transcript effect
 			if (child?.type === "agent_start" && child.model) sub.model = child.model.id;
 			applyTranscriptEvent(sub, child);

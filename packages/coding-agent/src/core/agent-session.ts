@@ -116,9 +116,11 @@ import { buildSystemPrompt } from "./system-prompt.js";
 import { resolveThinkingDisplay } from "./thinking.js";
 import type { BashOperations } from "./tools/bash.js";
 import {
+	type BackgroundAgentInfo,
 	createAllToolDefinitions,
 	createSubagentConcurrencyGate,
 	discoverAgentTypes,
+	getBackgroundAgent,
 	getRunningBackgroundAgents,
 	type SessionTask,
 	type SubagentArbitrationEvent,
@@ -178,22 +180,33 @@ export type AgentSessionEvent =
 	  }
 	| { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
 	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
-	| { type: "background_agent_start"; agentId: string; agentType: string; taskSummary: string; sessionDir?: string }
+	| {
+			type: "background_agent_start";
+			agentId: string;
+			agentType: string;
+			taskSummary: string;
+			sessionDir?: string;
+			agent?: Readonly<BackgroundAgentInfo>;
+	  }
 	| {
 			type: "background_agent_end";
 			agentId: string;
 			agentType: string;
 			success: boolean;
+			cancelled: boolean;
+			status: BackgroundAgentInfo["status"];
 			model?: string;
 			thinking?: ThinkingLevel;
 			steps?: SubagentStepMetadata[];
 			sessionFile?: string;
+			agent?: Readonly<BackgroundAgentInfo>;
 	  }
 	| {
 			type: "background_agent_event";
 			agentId: string;
 			/** A single AgentSessionEvent (or session header) emitted by the background child process, relayed verbatim. */
 			event: Record<string, unknown>;
+			agent?: Readonly<BackgroundAgentInfo>;
 	  }
 	| { type: "parent_paused_for_background_agents"; runningAgentCount: number; turnsUsed: number; turnLimit: number }
 	| { type: "session_name_changed"; name: string }
@@ -1035,15 +1048,19 @@ export class AgentSession {
 		}
 		// Emit status event AFTER delivery — non-critical UI update that shouldn't block result delivery
 		try {
+			const agent = getBackgroundAgent(agentId);
 			this._emit({
 				type: "background_agent_end",
 				agentId,
 				agentType: result.agent,
-				success: result.exitCode === 0,
+				success: result.exitCode === 0 && !cancelled,
+				cancelled,
+				status: agent?.status ?? (cancelled ? "aborted" : result.exitCode === 0 ? "completed" : "failed"),
 				model: result.model,
 				thinking: result.thinking,
 				steps: result.steps,
 				sessionFile: result.sessionFile,
+				agent,
 			});
 		} catch (emitErr) {
 			log.warn(
@@ -3683,13 +3700,20 @@ export class AgentSession {
 							this._emit(event);
 						},
 						onBackgroundStart: (agentId, agentType, taskSummary, sessionDir) => {
-							this._emit({ type: "background_agent_start", agentId, agentType, taskSummary, sessionDir });
+							this._emit({
+								type: "background_agent_start",
+								agentId,
+								agentType,
+								taskSummary,
+								sessionDir,
+								agent: getBackgroundAgent(agentId),
+							});
 						},
 						onBackgroundComplete: (agentId, result, cancelled) => {
 							this._handleBackgroundComplete(agentId, result, cancelled);
 						},
 						onBackgroundEvent: (agentId, event) => {
-							this._emit({ type: "background_agent_event", agentId, event });
+							this._emit({ type: "background_agent_event", agentId, event, agent: getBackgroundAgent(agentId) });
 						},
 					},
 				});

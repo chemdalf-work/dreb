@@ -92,12 +92,16 @@ export {
 } from "./skill.js";
 export {
 	abortBackgroundAgents,
+	applyBackgroundAgentTelemetryEvent,
 	type BackgroundAgentInfo,
+	type BackgroundAgentStatus,
+	type BackgroundAgentUsage,
 	createSubagentConcurrencyGate,
 	createSubagentTool,
 	createSubagentToolDefinition,
 	discoverAgentTypes,
 	filterSubagentTools,
+	getBackgroundAgent,
 	getBackgroundAgents,
 	getRunningBackgroundAgents,
 	pruneBackgroundAgents,

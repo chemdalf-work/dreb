@@ -531,8 +531,16 @@ export interface RpcBackgroundAgentInfo {
 	taskSummary: string;
 	/** ISO timestamp of launch */
 	startedAt: string;
+	/** ISO timestamp of terminal completion, when known. */
+	completedAt?: string;
 	/** Lifecycle status */
-	status: "running" | "completed" | "failed";
+	status: "running" | "completed" | "failed" | "aborted";
+	parentAgentId?: string;
+	parentSessionId?: string;
+	provider?: string;
+	model?: string;
+	thinking?: ThinkingLevel;
+	usage: { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number };
 	/** Directory containing the agent's session JSONL file (known at spawn time) */
 	sessionDir?: string;
 	/** Path to the agent's session JSONL file (available after the child exits) */

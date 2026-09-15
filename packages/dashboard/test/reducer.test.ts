@@ -37,6 +37,7 @@ function backgroundAgent(agentId: string, startedAt: string, status: BackgroundA
 		taskSummary: `task ${agentId}`,
 		startedAt,
 		status,
+		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
 	};
 }
 
@@ -1375,8 +1376,27 @@ describe("applySessionEvent — subagent relay", () => {
 			agentType: "Explore",
 			taskSummary: "look",
 			sessionDir: "/dir",
+			agent: {
+				agentId: "bg1",
+				agentType: "Explore",
+				taskSummary: "look",
+				startedAt: 1_700_000_000_000,
+				status: "running",
+				provider: "anthropic",
+				model: "claude-sonnet",
+				thinking: "high",
+				usage: { input: 100, output: 20, cacheRead: 30, cacheWrite: 4, cost: 0.125 },
+				sessionDir: "/dir",
+			},
 		});
-		expect(state.backgroundAgents.bg1).toMatchObject({ status: "running", sessionDir: "/dir" });
+		expect(state.backgroundAgents.bg1).toMatchObject({
+			status: "running",
+			sessionDir: "/dir",
+			provider: "anthropic",
+			model: "claude-sonnet",
+			thinking: "high",
+			usage: { input: 100, output: 20, cacheRead: 30, cacheWrite: 4, cost: 0.125 },
+		});
 
 		applySessionEvent(state, {
 			type: "subagent_arbitration",
@@ -1425,7 +1445,39 @@ describe("applySessionEvent — subagent relay", () => {
 		expect(sub.streaming).toBe(true);
 		expect(sub.entries[0]).toMatchObject({ kind: "assistant", blocks: [{ kind: "text", text: "scanning" }] });
 
-		applySessionEvent(state, { type: "background_agent_end", agentId: "bg1", agentType: "Explore", success: true });
+		applySessionEvent(state, {
+			type: "background_agent_event",
+			agentId: "bg1",
+			event: {
+				type: "background_agent_start",
+				agentId: "nested-1",
+				agentType: "test-reviewer",
+				taskSummary: "nested review",
+				agent: {
+					agentId: "nested-1",
+					agentType: "test-reviewer",
+					taskSummary: "nested review",
+					startedAt: 1_700_000_000_100,
+					status: "running",
+					parentAgentId: "bg1",
+					usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+				},
+			},
+		});
+		expect(state.backgroundAgents["nested-1"]).toMatchObject({
+			parentAgentId: "bg1",
+			agentType: "test-reviewer",
+			status: "running",
+		});
+
+		applySessionEvent(state, {
+			type: "background_agent_end",
+			agentId: "bg1",
+			agentType: "Explore",
+			success: true,
+			cancelled: false,
+			status: "completed",
+		});
 		expect(state.backgroundAgents.bg1?.status).toBe("completed");
 		expect(state.subagents.bg1?.streaming).toBe(false);
 	});

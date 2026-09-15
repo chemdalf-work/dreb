@@ -87,7 +87,13 @@ import { restoreStderr, type StderrCallback, takeOverStderr } from "../../core/s
 import { TabTitleGenerator } from "../../core/tab-title.js";
 import { resolveThinkingDisplay, validateThinkingLevelForModel } from "../../core/thinking.js";
 import { resolveToCwd } from "../../core/tools/path-utils.js";
-import { abortBackgroundAgents, discoverAgentTypes, getRunningBackgroundAgents } from "../../core/tools/subagent.js";
+import {
+	abortBackgroundAgents,
+	discoverAgentTypes,
+	getBackgroundAgents,
+	getRunningBackgroundAgents,
+	rehydrateBackgroundAgentsFromDisk,
+} from "../../core/tools/subagent.js";
 import type { TruncationResult } from "../../core/tools/truncate.js";
 import { copyToClipboard } from "../../utils/clipboard.js";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.js";
@@ -100,6 +106,7 @@ import {
 	toSingleLinePreview,
 } from "../../utils/message-text.js";
 import { ensureTool } from "../../utils/tools-manager.js";
+import { formatBackgroundAgentRow } from "./background-agent-display.js";
 import { ArminComponent } from "./components/armin.js";
 import { AskWizardComponent } from "./components/ask-wizard.js";
 import { AssistantMessageComponent } from "./components/assistant-message.js";
@@ -370,6 +377,8 @@ export class InteractiveMode {
 		// Register themes from resource loader and initialize
 		setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
 		initTheme(this.settingsManager.getTheme(), true);
+		rehydrateBackgroundAgentsFromDisk(this.session.sessionFile);
+		this.updateBackgroundAgentStatus();
 	}
 
 	private getAutocompleteSourceTag(sourceInfo?: SourceInfo): string | undefined {
@@ -2424,6 +2433,11 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
+			if (text === "/agents") {
+				this.handleAgentsCommand();
+				this.editor.setText("");
+				return;
+			}
 
 			if (text === "/hotkeys") {
 				this.handleHotkeysCommand();
@@ -2930,10 +2944,11 @@ export class InteractiveMode {
 			}
 
 			case "background_agent_event": {
+				this.updateBackgroundAgentStatus();
 				if (this.backgroundEventUpdatesCost(event.event)) {
 					await this.refreshDailyCostAndWarn();
-					this.ui.requestRender();
 				}
+				this.ui.requestRender();
 				break;
 			}
 
@@ -2973,21 +2988,21 @@ export class InteractiveMode {
 		}
 	}
 
-	/** Update the footer status line with running background agent count. */
+	/** Update the footer with stable rows for running and recently completed descendants. */
 	private updateBackgroundAgentStatus(): void {
-		const running = getRunningBackgroundAgents();
-		if (running.length === 0) {
+		const agents = getBackgroundAgents();
+		const running = agents.filter((agent) => agent.status === "running");
+		if (agents.length === 0) {
 			this.footerDataProvider.setExtensionStatus("bg-agents", undefined);
 		} else {
-			const types = running.map((a) => a.agentType);
-			const label =
-				running.length === 1
-					? `1 background agent (${types[0]})`
-					: `${running.length} background agents (${types.join(", ")})`;
-			const interrupt = keyText("app.interrupt");
+			const width = Math.max(40, this.ui.terminal.columns - 4);
+			const recent = agents.slice(-3);
+			const interrupt = running.length > 0 ? ` · ${keyText("app.interrupt")} to cancel` : "";
+			const header = `${agents.length} descendants · ${running.length} running${interrupt}`;
+			const rows = recent.map((agent) => formatBackgroundAgentRow(agent, width));
 			this.footerDataProvider.setExtensionStatus(
 				"bg-agents",
-				theme.fg("accent", `⟳ ${label}`) + theme.fg("muted", ` (${interrupt} to cancel)`),
+				`${theme.fg("accent", header)}\n${rows.map((row) => theme.fg("muted", row)).join("\n")}`,
 			);
 		}
 		this.footer.invalidate();
@@ -4996,6 +5011,16 @@ export class InteractiveMode {
 			info += `${theme.fg("dim", "Total:")} ${stats.cost.toFixed(4)}`;
 		}
 
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(info, 1, 0, undefined, true));
+		this.ui.requestRender();
+	}
+
+	private handleAgentsCommand(): void {
+		const agents = getBackgroundAgents();
+		const width = Math.max(40, this.ui.terminal.columns - 4);
+		const lines = agents.map((agent) => formatBackgroundAgentRow(agent, width));
+		const info = `${theme.bold("Descendant Agents")}\n\n${lines.length > 0 ? lines.join("\n") : theme.fg("dim", "No descendant agents recorded for this process.")}`;
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(info, 1, 0, undefined, true));
 		this.ui.requestRender();

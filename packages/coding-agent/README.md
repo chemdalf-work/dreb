@@ -187,6 +187,7 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/new` | Start a new session |
 | `/name <name>` | Set session display name |
 | `/session` | Show session info (path, tokens, cost) |
+| `/agents` | Show stable, complete descendant-agent history with status, model/thinking, token split, and cost |
 | `/tree` | Jump to any point in the session and continue from there |
 | `/fork` | Branch a new session from any user or assistant message (assistant = continue from that answer, user = rewind and re-ask) |
 | `/compact [prompt]` | Manually compact context, optional custom instructions |
@@ -403,7 +404,7 @@ Task tracking is prompt-driven: the system prompt includes guidelines for when t
 
 ## Subagents
 
-The optional `subagent` tool runs focused, role-matched work in independent child agent processes. Each subagent runs in its own process with its own context window, and notifies the parent when complete. In the dashboard, a live child's transcript view can accept the user's own steering messages directly; repeated messages use that child's configured one-at-a-time or all-at-once steering queue. Completed and rehydrated transcripts remain read-only.
+The optional `subagent` tool runs focused, role-matched work in independent child agent processes. Each subagent runs in its own process with its own context window, and notifies the parent when complete. The TUI footer shows stable live/recent child rows, and `/agents` shows the complete current-session descendant history. These views and the RPC/dashboard DTOs expose hierarchy, explicit running/completed/failed/aborted state, provider/model/thinking, input/output/cache token totals, and cost. Persisted child JSONL files restore completed nested history after restart. In the dashboard, a live child's transcript view can accept the user's own steering messages directly; repeated messages use that child's configured one-at-a-time or all-at-once steering queue. Completed and rehydrated transcripts remain read-only.
 
 When `agent` is omitted, Pierre Dreb selects the default `Explore` agent. Explore retrieves concrete, bounded evidence: files, symbols, documentation, call sites, exact snippets, tests for a named behavior, and explicitly named data flows. The primary agent must synthesize that evidence and owns root-cause diagnosis, ambiguous-requirement interpretation, architecture/design decisions, implementation recommendations, planning, and final conclusions.
 

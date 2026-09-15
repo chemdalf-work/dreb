@@ -244,6 +244,24 @@ export function SubagentScreen(props: { store: AppStore; sessionKey: string; age
 					<BannerRegion banners={banners()} />
 					<main class="chat" ref={chatRef}>
 						<div class="chat-inner" ref={chatInnerRef}>
+							<Show when={agent()}>
+								{(current) => (
+									<div class="status-line">
+										<span class="muted">
+											{current().parentAgentId ? `child of ${current().parentAgentId} · ` : ""}
+											{current().provider && current().model
+												? `${current().provider}/${current().model}`
+												: "model pending"}
+											{current().thinking ? ` @ ${current().thinking}` : ""} · in{" "}
+											{(current().usage?.input ?? 0).toLocaleString()} · out{" "}
+											{(current().usage?.output ?? 0).toLocaleString()} · cache{" "}
+											{(current().usage?.cacheRead ?? 0).toLocaleString()}/
+											{(current().usage?.cacheWrite ?? 0).toLocaleString()} · $
+											{(current().usage?.cost ?? 0).toFixed(4)}
+										</span>
+									</div>
+								)}
+							</Show>
 							<Show when={(agent()?.arbitrations?.length ?? 0) > 0}>
 								<div class="status-line arbitration-history">
 									<For each={agent()?.arbitrations ?? []}>

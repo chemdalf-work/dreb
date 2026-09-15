@@ -1734,12 +1734,31 @@ function generateAgentId(): string {
 // Background agent registry — queryable by TUI / Telegram frontends
 // ---------------------------------------------------------------------------
 
+export type BackgroundAgentStatus = "running" | "completed" | "failed" | "aborted";
+
+export interface BackgroundAgentUsage {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	cost: number;
+}
+
 export interface BackgroundAgentInfo {
 	agentId: string;
 	agentType: string;
 	taskSummary: string;
 	startedAt: number;
-	status: "running" | "completed" | "failed";
+	completedAt?: number;
+	status: BackgroundAgentStatus;
+	/** Registry identity for a nested child; absent for direct children of the current session. */
+	parentAgentId?: string;
+	/** Stable parent conversation UUID for direct children. */
+	parentSessionId?: string;
+	provider?: string;
+	model?: string;
+	thinking?: ThinkingLevel;
+	usage: BackgroundAgentUsage;
 	/** Directory containing the agent's session JSONL file (known at spawn time). */
 	sessionDir?: string;
 	/** Path to the agent's session JSONL file (discovered when the child exits). */
@@ -1751,6 +1770,7 @@ export interface BackgroundAgentInfo {
 }
 
 const backgroundAgentRegistry = new Map<string, BackgroundAgentInfo>();
+const backgroundAgentUsageKeys = new Map<string, Set<string>>();
 const backgroundAbortControllers = new Map<string, AbortController>();
 const backgroundControlClients = new Map<string, RpcClient>();
 
@@ -1762,6 +1782,122 @@ const TAIL_READ_BYTES = 64 * 1024;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
+}
+
+function emptyBackgroundAgentUsage(): BackgroundAgentUsage {
+	return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+}
+
+function finiteNumber(value: unknown): number {
+	return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function applyCanonicalModel(info: BackgroundAgentInfo, model: unknown): void {
+	if (typeof model === "string") {
+		const separator = model.indexOf("/");
+		if (separator > 0) {
+			info.provider = model.slice(0, separator);
+			info.model = model.slice(separator + 1);
+		} else if (model) {
+			info.model = model;
+		}
+		return;
+	}
+	if (!isRecord(model)) return;
+	if (typeof model.provider === "string") info.provider = model.provider;
+	if (typeof model.id === "string") info.model = model.id;
+}
+
+function addAssistantUsage(agentId: string, message: Record<string, unknown>): void {
+	if (message.role !== "assistant" || !isRecord(message.usage)) return;
+	const info = backgroundAgentRegistry.get(agentId);
+	if (!info) return;
+
+	const usage = message.usage;
+	const key = JSON.stringify([
+		message.timestamp,
+		message.provider,
+		message.model,
+		usage.input,
+		usage.output,
+		usage.cacheRead,
+		usage.cacheWrite,
+		isRecord(usage.cost) ? usage.cost.total : undefined,
+	]);
+	const seen = backgroundAgentUsageKeys.get(agentId) ?? new Set<string>();
+	if (seen.has(key)) return;
+	seen.add(key);
+	backgroundAgentUsageKeys.set(agentId, seen);
+
+	info.usage.input += finiteNumber(usage.input);
+	info.usage.output += finiteNumber(usage.output);
+	info.usage.cacheRead += finiteNumber(usage.cacheRead);
+	info.usage.cacheWrite += finiteNumber(usage.cacheWrite);
+	info.usage.cost += isRecord(usage.cost) ? finiteNumber(usage.cost.total) : 0;
+	if (typeof message.provider === "string") info.provider = message.provider;
+	if (typeof message.model === "string") info.model = message.model;
+}
+
+export function applyBackgroundAgentTelemetryEvent(agentId: string, event: Record<string, unknown>): void {
+	const info = backgroundAgentRegistry.get(agentId);
+	if (info) {
+		if (event.type === "agent_start") {
+			applyCanonicalModel(info, event.model);
+			if (typeof event.thinkingLevel === "string") info.thinking = event.thinkingLevel as ThinkingLevel;
+		} else if (event.type === "message_end" && isRecord(event.message)) {
+			addAssistantUsage(agentId, event.message);
+		}
+	}
+
+	if (event.type === "background_agent_start" && typeof event.agentId === "string") {
+		const nested = isRecord(event.agent) ? event.agent : undefined;
+		const nestedId = event.agentId;
+		const nestedInfo: BackgroundAgentInfo = {
+			agentId: nestedId,
+			agentType:
+				typeof nested?.agentType === "string"
+					? nested.agentType
+					: typeof event.agentType === "string"
+						? event.agentType
+						: "agent",
+			taskSummary:
+				typeof nested?.taskSummary === "string"
+					? nested.taskSummary
+					: typeof event.taskSummary === "string"
+						? event.taskSummary
+						: "nested agent",
+			startedAt: typeof nested?.startedAt === "number" ? nested.startedAt : Date.now(),
+			status: "running",
+			parentAgentId: agentId,
+			parentSessionId: typeof nested?.parentSessionId === "string" ? nested.parentSessionId : undefined,
+			usage: emptyBackgroundAgentUsage(),
+			sessionDir:
+				typeof nested?.sessionDir === "string"
+					? nested.sessionDir
+					: typeof event.sessionDir === "string"
+						? event.sessionDir
+						: undefined,
+			cwd: typeof nested?.cwd === "string" ? nested.cwd : undefined,
+		};
+		applyCanonicalModel(nestedInfo, nested?.model);
+		if (typeof nested?.thinking === "string") nestedInfo.thinking = nested.thinking as ThinkingLevel;
+		backgroundAgentRegistry.set(nestedId, nestedInfo);
+	}
+
+	if (event.type === "background_agent_end" && typeof event.agentId === "string") {
+		const nested = backgroundAgentRegistry.get(event.agentId);
+		if (nested) {
+			nested.status = event.cancelled === true ? "aborted" : event.success === true ? "completed" : "failed";
+			nested.completedAt = Date.now();
+			if (typeof event.sessionFile === "string") nested.sessionFile = event.sessionFile;
+			applyCanonicalModel(nested, event.model);
+			if (typeof event.thinking === "string") nested.thinking = event.thinking as ThinkingLevel;
+		}
+	}
+
+	if (event.type === "background_agent_event" && typeof event.agentId === "string" && isRecord(event.event)) {
+		applyBackgroundAgentTelemetryEvent(event.agentId, event.event);
+	}
 }
 
 function isExpectedFilesystemError(err: unknown): boolean {
@@ -1917,7 +2053,7 @@ function findFirstUserMessageSummary(sessionFile: string): string | undefined {
 	return undefined;
 }
 
-function inferCompletedSessionStatus(sessionFile: string): "completed" | "failed" {
+function inferCompletedSessionStatus(sessionFile: string): Exclude<BackgroundAgentStatus, "running"> {
 	const tail = readFileTail(sessionFile, TAIL_READ_BYTES);
 	if (!tail) return "completed";
 
@@ -1929,7 +2065,8 @@ function inferCompletedSessionStatus(sessionFile: string): "completed" | "failed
 		if (entry.message.role !== "assistant") continue;
 
 		const stopReason = entry.message.stopReason;
-		return stopReason === "error" || stopReason === "aborted" ? "failed" : "completed";
+		if (stopReason === "aborted") return "aborted";
+		return stopReason === "error" ? "failed" : "completed";
 	}
 	return "completed";
 }
@@ -1981,43 +2118,96 @@ export function rehydrateBackgroundAgentsFromDisk(
 		throw err;
 	}
 
-	let registered = 0;
-	for (const entry of entries) {
-		if (!entry.isDirectory()) continue;
-
+	const pending = entries.flatMap((entry) => {
+		if (!entry.isDirectory()) return [];
 		const sessionDir = join(subagentSessionsBase, entry.name);
 		const sessionFiles = discoverSessionFiles(sessionDir, entry.name);
-		if (sessionFiles.length === 0) continue;
-
-		let sessionFile: string | undefined;
-		let header: Record<string, unknown> | undefined;
-		for (const candidateFile of sessionFiles) {
-			const candidateHeader = parseSessionHeader(candidateFile);
-			if (candidateHeader?.type !== "session" || typeof candidateHeader.parentSession !== "string") continue;
-			if (!parentSessionMatches(candidateHeader.parentSession, parentSessionFile)) continue;
-			sessionFile = candidateFile;
-			header = candidateHeader;
-			break;
+		for (const sessionFile of sessionFiles) {
+			const header = parseSessionHeader(sessionFile);
+			if (header?.type === "session" && typeof header.parentSession === "string") {
+				return [{ entryName: entry.name, sessionDir, sessionFiles, sessionFile, header }];
+			}
 		}
-		if (!sessionFile || !header) continue;
+		return [];
+	});
+	const knownParents: Array<{ sessionFile: string; agentId?: string }> = [{ sessionFile: parentSessionFile }];
+	for (const info of backgroundAgentRegistry.values()) {
+		if (info.sessionFile) knownParents.push({ sessionFile: info.sessionFile, agentId: info.agentId });
+	}
 
-		const agentId = `${REHYDRATED_AGENT_ID_PREFIX}${entry.name}`;
-		if (backgroundAgentRegistry.has(agentId) || hasRegisteredSession(sessionDir, sessionFile)) continue;
+	let registered = 0;
+	let madeProgress = true;
+	while (madeProgress && pending.length > 0) {
+		madeProgress = false;
+		for (let index = pending.length - 1; index >= 0; index--) {
+			const candidate = pending[index];
+			const recordedParent = candidate.header.parentSession as string;
+			const parent = knownParents.find((known) => parentSessionMatches(recordedParent, known.sessionFile));
+			if (!parent) continue;
+			pending.splice(index, 1);
+			madeProgress = true;
 
-		const statusFile = sessionFiles[sessionFiles.length - 1] ?? sessionFile;
-		const agentType = typeof header.agentType === "string" && header.agentType.trim() ? header.agentType : "agent";
-		const taskSummary = findFirstUserMessageSummary(sessionFile) ?? `${agentType} (${entry.name})`;
-		backgroundAgentRegistry.set(agentId, {
-			agentId,
-			agentType,
-			taskSummary,
-			startedAt: parseStartedAt(header, sessionFile),
-			status: inferCompletedSessionStatus(statusFile),
-			sessionDir,
-			sessionFile,
-			cwd: typeof header.cwd === "string" ? header.cwd : undefined,
-		});
-		registered++;
+			const agentId = `${REHYDRATED_AGENT_ID_PREFIX}${candidate.entryName}`;
+			if (
+				backgroundAgentRegistry.has(agentId) ||
+				hasRegisteredSession(candidate.sessionDir, candidate.sessionFile)
+			) {
+				continue;
+			}
+
+			const statusFile = candidate.sessionFiles[candidate.sessionFiles.length - 1] ?? candidate.sessionFile;
+			const agentType =
+				typeof candidate.header.agentType === "string" && candidate.header.agentType.trim()
+					? candidate.header.agentType
+					: "agent";
+			const taskSummary =
+				findFirstUserMessageSummary(candidate.sessionFile) ?? `${agentType} (${candidate.entryName})`;
+			const parentHeader = parseSessionHeader(recordedParent);
+			let completedAt: number | undefined;
+			try {
+				completedAt = statSync(statusFile).mtime.getTime();
+			} catch (err) {
+				if (!isExpectedFilesystemError(err)) throw err;
+			}
+			const info: BackgroundAgentInfo = {
+				agentId,
+				agentType,
+				taskSummary,
+				startedAt: parseStartedAt(candidate.header, candidate.sessionFile),
+				completedAt,
+				status: inferCompletedSessionStatus(statusFile),
+				parentAgentId: parent.agentId,
+				parentSessionId: typeof parentHeader?.id === "string" ? parentHeader.id : undefined,
+				usage: emptyBackgroundAgentUsage(),
+				sessionDir: candidate.sessionDir,
+				sessionFile: candidate.sessionFile,
+				cwd: typeof candidate.header.cwd === "string" ? candidate.header.cwd : undefined,
+			};
+			backgroundAgentRegistry.set(agentId, info);
+			for (const telemetryFile of candidate.sessionFiles) {
+				let content: string;
+				try {
+					content = readFileSync(telemetryFile, "utf8");
+				} catch (err) {
+					if (isExpectedFilesystemError(err)) continue;
+					throw err;
+				}
+				for (const line of content.split(/\r?\n/)) {
+					const persisted = parseJsonlLine(line);
+					if (persisted?.type === "message" && isRecord(persisted.message)) {
+						addAssistantUsage(agentId, persisted.message);
+					} else if (persisted?.type === "thinking_level_change" && typeof persisted.thinkingLevel === "string") {
+						info.thinking = persisted.thinkingLevel as ThinkingLevel;
+					} else if (persisted?.type === "model_change") {
+						applyCanonicalModel(info, { provider: persisted.provider, id: persisted.modelId });
+					}
+				}
+			}
+			for (const childSessionFile of candidate.sessionFiles) {
+				knownParents.push({ sessionFile: childSessionFile, agentId });
+			}
+			registered++;
+		}
 	}
 
 	return registered;
@@ -2026,18 +2216,28 @@ export function rehydrateBackgroundAgentsFromDisk(
 function cloneBackgroundAgentInfo(info: BackgroundAgentInfo): BackgroundAgentInfo {
 	return {
 		...info,
+		usage: { ...info.usage },
 		arbitrations: info.arbitrations?.map((record) => structuredClone(record)),
 	};
 }
 
-/** Get a snapshot of all tracked background agents (running and recently completed). Returns readonly clones. */
+function compareBackgroundAgents(a: BackgroundAgentInfo, b: BackgroundAgentInfo): number {
+	return a.startedAt - b.startedAt || a.agentId.localeCompare(b.agentId);
+}
+
+/** Get a snapshot of all tracked background agents in stable start/ID order. */
 export function getBackgroundAgents(): readonly Readonly<BackgroundAgentInfo>[] {
-	return [...backgroundAgentRegistry.values()].map(cloneBackgroundAgentInfo);
+	return [...backgroundAgentRegistry.values()].sort(compareBackgroundAgents).map(cloneBackgroundAgentInfo);
+}
+
+export function getBackgroundAgent(agentId: string): Readonly<BackgroundAgentInfo> | undefined {
+	const info = backgroundAgentRegistry.get(agentId);
+	return info ? cloneBackgroundAgentInfo(info) : undefined;
 }
 
 /** Get only currently running background agents. Returns readonly clones. */
 export function getRunningBackgroundAgents(): readonly Readonly<BackgroundAgentInfo>[] {
-	return [...backgroundAgentRegistry.values()].filter((a) => a.status === "running").map(cloneBackgroundAgentInfo);
+	return getBackgroundAgents().filter((agent) => agent.status === "running");
 }
 
 function getBackgroundControlClient(agentId: string): RpcClient {
@@ -2069,7 +2269,8 @@ export function abortBackgroundAgents(): void {
 		controller.abort();
 		const entry = backgroundAgentRegistry.get(id);
 		if (entry && entry.status === "running") {
-			entry.status = "failed";
+			entry.status = "aborted";
+			entry.completedAt = Date.now();
 		}
 	}
 	backgroundAbortControllers.clear();
@@ -2080,8 +2281,9 @@ export function abortBackgroundAgents(): void {
 export function pruneBackgroundAgents(maxAgeMs = 5 * 60 * 1000): void {
 	const now = Date.now();
 	for (const [id, info] of backgroundAgentRegistry) {
-		if (info.status !== "running" && now - info.startedAt > maxAgeMs) {
+		if (info.status !== "running" && now - (info.completedAt ?? info.startedAt) > maxAgeMs) {
 			backgroundAgentRegistry.delete(id);
+			backgroundAgentUsageKeys.delete(id);
 			backgroundAbortControllers.delete(id);
 			backgroundControlClients.delete(id);
 		}
@@ -2477,6 +2679,8 @@ export function createSubagentToolDefinition(
 						taskSummary,
 						startedAt: Date.now(),
 						status: "running",
+						parentSessionId: getParentSessionId(),
+						usage: emptyBackgroundAgentUsage(),
 						sessionDir,
 						cwd: agentCwd,
 					});
@@ -2485,24 +2689,28 @@ export function createSubagentToolDefinition(
 
 					// Relay child JSONL events tagged with this agent's ID. Guarded so a
 					// throwing relay listener can never kill the stdout reader.
-					const onChildEvent = onBackgroundEvent
-						? (event: Record<string, unknown>) => {
-								try {
-									onBackgroundEvent(agentId, event);
-								} catch (err) {
-									log.warn(
-										`[subagent] onBackgroundEvent threw for agent ${agentId}: ${err instanceof Error ? err.message : String(err)}`,
-									);
-								}
-							}
-						: undefined;
+					const onChildEvent = (event: Record<string, unknown>) => {
+						applyBackgroundAgentTelemetryEvent(agentId, event);
+						if (!onBackgroundEvent) return;
+						try {
+							onBackgroundEvent(agentId, event);
+						} catch (err) {
+							log.warn(
+								`[subagent] onBackgroundEvent threw for agent ${agentId}: ${err instanceof Error ? err.message : String(err)}`,
+							);
+						}
+					};
 
 					const onArbitrationRecord = (record: DispatchArbitrationRecord) => {
 						const entry = backgroundAgentRegistry.get(agentId);
 						if (entry) {
 							entry.arbitrations ??= [];
 							entry.arbitrations.push(record);
-							if (record.status === "success" && record.final) entry.agentType = record.final.agent;
+							if (record.status === "success" && record.final) {
+								entry.agentType = record.final.agent;
+								applyCanonicalModel(entry, record.final.model);
+								entry.thinking = record.final.thinking;
+							}
 						}
 						onArbitration?.({ type: "subagent_arbitration", agentId, ...record });
 					};
@@ -2528,13 +2736,21 @@ export function createSubagentToolDefinition(
 						try {
 							const result = await runFn(bgSignal, onChildEvent, onArbitrationRecord, onControlAvailable);
 							const entry = backgroundAgentRegistry.get(agentId);
-							if (entry && !bgSignal.aborted) entry.status = result.exitCode === 0 ? "completed" : "failed";
-							if (entry && result.sessionFile) entry.sessionFile = result.sessionFile;
+							if (entry) {
+								entry.status = bgSignal.aborted ? "aborted" : result.exitCode === 0 ? "completed" : "failed";
+								entry.completedAt = Date.now();
+								if (result.sessionFile) entry.sessionFile = result.sessionFile;
+								applyCanonicalModel(entry, result.model);
+								if (result.thinking) entry.thinking = result.thinking;
+							}
 							backgroundAbortControllers.delete(agentId);
 							safeNotify(result);
 						} catch (err) {
 							const entry = backgroundAgentRegistry.get(agentId);
-							if (entry && !bgSignal.aborted) entry.status = "failed";
+							if (entry) {
+								entry.status = bgSignal.aborted ? "aborted" : "failed";
+								entry.completedAt = Date.now();
+							}
 							backgroundAbortControllers.delete(agentId);
 							safeNotify({
 								agent: agentName,
@@ -2554,7 +2770,10 @@ export function createSubagentToolDefinition(
 							`[subagent] Unhandled background error (${agentId}): ${err instanceof Error ? err.message : String(err)}`,
 						);
 						const entry = backgroundAgentRegistry.get(agentId);
-						if (entry && entry.status === "running") entry.status = "failed";
+						if (entry && entry.status === "running") {
+							entry.status = bgSignal.aborted ? "aborted" : "failed";
+							entry.completedAt = Date.now();
+						}
 						backgroundAbortControllers.delete(agentId);
 						try {
 							onBackgroundComplete(

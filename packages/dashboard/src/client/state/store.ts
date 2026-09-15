@@ -1281,7 +1281,13 @@ export function createAppStore() {
 				session.closed = undefined;
 				session.entries = messagesToEntries(messages);
 				session.backgroundAgents = Object.fromEntries(
-					snapshot.backgroundAgents.map((agent) => [agent.agentId, agent]),
+					snapshot.backgroundAgents.map((agent) => [
+						agent.agentId,
+						{
+							...agent,
+							usage: agent.usage ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+						},
+					]),
 				);
 				capBackgroundAgents(session);
 				session.streaming = snapshot.state.isStreaming;

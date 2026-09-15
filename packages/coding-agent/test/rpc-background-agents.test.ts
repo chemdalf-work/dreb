@@ -2,6 +2,7 @@ import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionContext } from "../src/core/extensions/types.js";
 import {
+	applyBackgroundAgentTelemetryEvent,
 	type BackgroundAgentInfo,
 	type ChildLineSinks,
 	createSubagentToolDefinition,
@@ -167,6 +168,110 @@ describe("background agent registry — session dir exposure", () => {
 		expect(mine!.cwd).toBe("/tmp");
 	});
 
+	it("tracks model, thinking, and cumulative usage without double-counting repeated message events", async () => {
+		const onBackgroundStart = vi.fn();
+		const tool = createSubagentToolDefinition(process.cwd(), {
+			onBackgroundStart,
+			onBackgroundComplete: vi.fn(),
+		});
+		await tool.execute(
+			"call-reg-telemetry",
+			{ background: true, tasks: [{ task: "telemetry probe", cwd: "/tmp" }] },
+			undefined,
+			undefined,
+			dummyCtx,
+		);
+		const agentId = onBackgroundStart.mock.calls[0][0] as string;
+		applyBackgroundAgentTelemetryEvent(agentId, {
+			type: "agent_start",
+			model: { provider: "anthropic", id: "claude-sonnet" },
+			thinkingLevel: "high",
+		});
+		const messageEvent = {
+			type: "message_end",
+			message: {
+				role: "assistant",
+				timestamp: 123,
+				provider: "anthropic",
+				model: "claude-sonnet",
+				usage: {
+					input: 100,
+					output: 20,
+					cacheRead: 30,
+					cacheWrite: 4,
+					cost: { total: 0.125 },
+				},
+			},
+		};
+		applyBackgroundAgentTelemetryEvent(agentId, messageEvent);
+		applyBackgroundAgentTelemetryEvent(agentId, messageEvent);
+
+		expect(getBackgroundAgents().find((agent) => agent.agentId === agentId)).toMatchObject({
+			provider: "anthropic",
+			model: "claude-sonnet",
+			thinking: "high",
+			usage: { input: 100, output: 20, cacheRead: 30, cacheWrite: 4, cost: 0.125 },
+		});
+	});
+
+	it("tracks nested descendant hierarchy and aborted status", async () => {
+		const onBackgroundStart = vi.fn();
+		const tool = createSubagentToolDefinition(process.cwd(), {
+			onBackgroundStart,
+			onBackgroundComplete: vi.fn(),
+		});
+		await tool.execute(
+			"call-reg-nested",
+			{ background: true, tasks: [{ task: "nested telemetry probe", cwd: "/tmp" }] },
+			undefined,
+			undefined,
+			dummyCtx,
+		);
+		const parentAgentId = onBackgroundStart.mock.calls[0][0] as string;
+		const nestedAgentId = `${parentAgentId}-nested`;
+		applyBackgroundAgentTelemetryEvent(parentAgentId, {
+			type: "background_agent_start",
+			agentId: nestedAgentId,
+			agentType: "test-reviewer",
+			taskSummary: "review nested work",
+		});
+		applyBackgroundAgentTelemetryEvent(parentAgentId, {
+			type: "background_agent_event",
+			agentId: nestedAgentId,
+			event: {
+				type: "message_end",
+				message: {
+					role: "assistant",
+					timestamp: 456,
+					provider: "openai",
+					model: "gpt-test",
+					usage: {
+						input: 5,
+						output: 6,
+						cacheRead: 7,
+						cacheWrite: 8,
+						cost: { total: 0.05 },
+					},
+				},
+			},
+		});
+		applyBackgroundAgentTelemetryEvent(parentAgentId, {
+			type: "background_agent_end",
+			agentId: nestedAgentId,
+			agentType: "test-reviewer",
+			success: false,
+			cancelled: true,
+		});
+
+		expect(getBackgroundAgents().find((agent) => agent.agentId === nestedAgentId)).toMatchObject({
+			parentAgentId,
+			status: "aborted",
+			provider: "openai",
+			model: "gpt-test",
+			usage: { input: 5, output: 6, cacheRead: 7, cacheWrite: 8, cost: 0.05 },
+		});
+	});
+
 	it("passes sessionDir to onBackgroundStart", async () => {
 		const onBackgroundStart = vi.fn();
 		const tool = createSubagentToolDefinition(process.cwd(), {
@@ -196,6 +301,10 @@ describe("toRpcBackgroundAgentInfo", () => {
 			taskSummary: "map the codebase",
 			startedAt: new Date("2026-07-07T12:00:00.000Z").getTime(),
 			status: "running",
+			provider: "provider",
+			model: "worker",
+			thinking: "medium",
+			usage: { input: 10, output: 20, cacheRead: 3, cacheWrite: 4, cost: 0.25 },
 			sessionDir: "/home/u/.dreb/agent/subagent-sessions/a1b2c3",
 			cwd: "/home/u/project",
 			arbitrations: [
@@ -213,8 +322,11 @@ describe("toRpcBackgroundAgentInfo", () => {
 			taskSummary: "map the codebase",
 			startedAt: "2026-07-07T12:00:00.000Z",
 			status: "running",
+			provider: "provider",
+			model: "worker",
+			thinking: "medium",
+			usage: { input: 10, output: 20, cacheRead: 3, cacheWrite: 4, cost: 0.25 },
 			sessionDir: "/home/u/.dreb/agent/subagent-sessions/a1b2c3",
-			sessionFile: undefined,
 			cwd: "/home/u/project",
 			arbitrations: [
 				{
@@ -238,6 +350,7 @@ describe("RpcClient.listBackgroundAgents", () => {
 				taskSummary: "t",
 				startedAt: "2026-07-07T12:00:00.000Z",
 				status: "completed",
+				usage: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, cost: 0.01 },
 				sessionFile: "/tmp/s.jsonl",
 			},
 		];

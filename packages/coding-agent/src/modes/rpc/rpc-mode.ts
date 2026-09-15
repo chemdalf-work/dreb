@@ -355,11 +355,18 @@ export function toRpcBackgroundAgentInfo(a: Readonly<BackgroundAgentInfo>): RpcB
 		agentType: a.agentType,
 		taskSummary: a.taskSummary,
 		startedAt: new Date(a.startedAt).toISOString(),
+		...(a.completedAt === undefined ? {} : { completedAt: new Date(a.completedAt).toISOString() }),
 		status: a.status,
-		sessionDir: a.sessionDir,
-		sessionFile: a.sessionFile,
-		cwd: a.cwd,
-		arbitrations: a.arbitrations?.map((record) => structuredClone(record)),
+		...(a.parentAgentId ? { parentAgentId: a.parentAgentId } : {}),
+		...(a.parentSessionId ? { parentSessionId: a.parentSessionId } : {}),
+		...(a.provider ? { provider: a.provider } : {}),
+		...(a.model ? { model: a.model } : {}),
+		...(a.thinking ? { thinking: a.thinking } : {}),
+		usage: a.usage ? { ...a.usage } : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+		...(a.sessionDir ? { sessionDir: a.sessionDir } : {}),
+		...(a.sessionFile ? { sessionFile: a.sessionFile } : {}),
+		...(a.cwd ? { cwd: a.cwd } : {}),
+		...(a.arbitrations ? { arbitrations: a.arbitrations.map((record) => structuredClone(record)) } : {}),
 	};
 }
 

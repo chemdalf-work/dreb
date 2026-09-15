@@ -51,7 +51,14 @@ export interface BackgroundAgentDto {
 	agentType: string;
 	taskSummary: string;
 	startedAt: string;
-	status: "running" | "completed" | "failed";
+	completedAt?: string;
+	status: "running" | "completed" | "failed" | "aborted";
+	parentAgentId?: string;
+	parentSessionId?: string;
+	provider?: string;
+	model?: string;
+	thinking?: string;
+	usage: { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number };
 	sessionDir?: string;
 	sessionFile?: string;
 	cwd?: string;
