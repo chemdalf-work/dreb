@@ -1004,11 +1004,16 @@ export class LongHorizonSupervisor {
 						"round",
 						this.active!,
 						nextPrompt,
-						(text, result) =>
-							parseTerraReport(text, [
+						(text, result) => {
+							const report = parseTerraReport(text, [
 								...result.toolEvidence,
 								...result.commandEvidence.filter(isCommandEvidence),
-							]),
+							]);
+							if (!plan.workUnits.some((workUnit) => workUnit.id === report.workUnitId)) {
+								throw new Error(`report work unit is not in the validated plan: ${report.workUnitId}`);
+							}
+							return report;
+						},
 						true,
 					);
 				} catch (error) {

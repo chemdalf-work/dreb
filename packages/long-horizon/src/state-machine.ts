@@ -150,15 +150,15 @@ export function applyJournalRecord(
 			if (event.verificationSucceeded || adoptedAdvisedStrategy) next.failureStreak = undefined;
 			if (event.failureSignature) {
 				const current = next.failureStreak;
-				const same =
-					current?.workUnitId === event.report.workUnitId && current.signature === event.failureSignature;
+				const sameFailure = current?.signature === event.failureSignature;
+				const sameWorkUnit = current?.workUnitId === event.report.workUnitId;
 				next.failureStreak = {
 					workUnitId: event.report.workUnitId,
 					strategyId: event.report.strategyId,
-					advisedStrategyId: same ? current.advisedStrategyId : undefined,
+					advisedStrategyId: sameFailure && sameWorkUnit ? current.advisedStrategyId : undefined,
 					signature: event.failureSignature,
-					count: same ? current.count + 1 : 1,
-					escalated: same ? current.escalated : false,
+					count: sameFailure ? current.count + 1 : 1,
+					escalated: sameFailure ? current.escalated : false,
 				};
 			}
 			break;
@@ -189,17 +189,15 @@ export function applyJournalRecord(
 				previous.failureStreak?.workUnitId === event.workUnitId &&
 				previous.failureStreak.advisedStrategyId === event.strategyId &&
 				previous.failureStreak.strategyId !== event.strategyId;
-			const same =
-				!adoptedAdvisedStrategy &&
-				previous.failureStreak?.workUnitId === event.workUnitId &&
-				previous.failureStreak.signature === event.signature;
+			const sameFailure = !adoptedAdvisedStrategy && previous.failureStreak?.signature === event.signature;
+			const sameWorkUnit = previous.failureStreak?.workUnitId === event.workUnitId;
 			next.failureStreak = {
 				workUnitId: event.workUnitId,
 				strategyId: event.strategyId,
-				advisedStrategyId: same ? previous.failureStreak!.advisedStrategyId : undefined,
+				advisedStrategyId: sameFailure && sameWorkUnit ? previous.failureStreak!.advisedStrategyId : undefined,
 				signature: event.signature,
-				count: same ? previous.failureStreak!.count + 1 : 1,
-				escalated: same ? previous.failureStreak!.escalated : false,
+				count: sameFailure ? previous.failureStreak!.count + 1 : 1,
+				escalated: sameFailure ? previous.failureStreak!.escalated : false,
 			};
 			break;
 		}

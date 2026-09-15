@@ -143,6 +143,57 @@ describe("failure escalation", () => {
 		expect(sessions.created.filter((session) => session.role === "advisor")).toHaveLength(1);
 	});
 
+	it("does not reset equivalent failures when Terra relabels the work unit", async () => {
+		const base = testConfig();
+		const config = { ...base, limits: { ...base.limits, maxEscalations: 1 } };
+		const workUnitIds = ["unit-a", "unit-b", "unit-c", "unit-d"];
+		const plan = PLAN.replace(
+			'[{"id":"unit","title":"work","acceptance":["tests"]}]',
+			JSON.stringify(workUnitIds.map((id) => ({ id, title: id, acceptance: ["tests"] }))),
+		);
+		const failureEvidence = commandEvidence("npm test", "workspace", 1);
+		const failed = workUnitIds.map((workUnitId) =>
+			promptResult(
+				report("verification-failed", failure)
+					.replace('"workUnitId":"unit"', `"workUnitId":"${workUnitId}"`)
+					.replace('"evidenceIds":[]', `"evidenceIds":["${failureEvidence.id}"]`),
+				{ commandEvidence: [failureEvidence] },
+			),
+		);
+		const changedAdvice = advice
+			.replace('"workUnitId":"unit"', '"workUnitId":"unit-d"')
+			.replace('"strategyId":"strategy-b"', '"strategyId":"strategy-e"');
+		const complete = promptResult(report("complete").replace('"workUnitId":"unit"', '"workUnitId":"unit-d"'));
+		const sessions = new FakeSessionHost({
+			planner: [promptResult(plan)],
+			executor: [...failed, complete],
+			advisor: [promptResult(changedAdvice)],
+		});
+		echoAdvisorSignature(sessions);
+		const commandRunner = async (command: string, cwd: string) =>
+			commandEvidence(command, await getWorkspaceIdentity(cwd));
+
+		const status = await LongHorizonSupervisor.create(config, { sessionHost: sessions, commandRunner }).run();
+
+		expect(status.phase).toBe("completed");
+		expect(status.escalations).toBe(1);
+		expect(sessions.created.filter((session) => session.role === "advisor")).toHaveLength(1);
+	});
+
+	it("blocks a Terra report whose work unit is absent from the persisted plan", async () => {
+		const config = testConfig();
+		const sessions = new FakeSessionHost({
+			planner: [promptResult(PLAN)],
+			executor: [promptResult(report("progress").replace('"workUnitId":"unit"', '"workUnitId":"invented"'))],
+		});
+
+		const status = await LongHorizonSupervisor.create(config, { sessionHost: sessions }).run();
+
+		expect(status.phase).toBe("blocked");
+		expect(status.blockedReason).toMatch(/work unit is not in the validated plan/);
+		expect(status.rounds).toBe(0);
+	});
+
 	it("resets a streak only when Terra adopts the durable advisor strategy", async () => {
 		const base = testConfig();
 		const config = { ...base, limits: { ...base.limits, maxEscalations: 1 } };

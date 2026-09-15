@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, linkSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
 import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
 import { describe, expect, it, vi } from "vitest";
@@ -296,9 +298,21 @@ describe("tool policy", () => {
 		expect(() => assertCommandAuthorized(command, { ...policy, allowCredentials: true })).not.toThrow();
 	});
 
-	it("denies Git archives independently of destructive-Git authorization", () => {
-		const command = "git archive --format=tar HEAD";
-		const policy = { ...testConfig().policy, allowedCommands: [command], allowDestructiveGit: true };
+	it.each([
+		"git archive --format=tar HEAD",
+		"git bundle create export.bundle --all",
+		"git fast-export --all",
+		"git format-patch -1 HEAD --stdout",
+		"git pack-objects --stdout --all",
+		"git upload-archive .",
+		"git upload-pack .",
+	] as const)("denies Git object serializers independently of other authorization gates: %s", (command) => {
+		const policy = {
+			...testConfig().policy,
+			allowedCommands: [command],
+			allowDestructiveGit: true,
+			allowRemoteState: true,
+		};
 		expect(() => assertCommandAuthorized(command, policy)).toThrow(/credential access denied/);
 		expect(() => assertCommandAuthorized(command, { ...policy, allowCredentials: true })).not.toThrow();
 	});
@@ -412,7 +426,7 @@ describe("tool policy", () => {
 		});
 		expect(allowed.exitCode).toBe(0);
 		expect(allowed.stdout).toBe(canary);
-		expect(cleanup).toHaveBeenCalledTimes(1);
+		expect(cleanup).toHaveBeenCalledTimes(2);
 		cleanup.mockRestore();
 	});
 
@@ -433,6 +447,97 @@ describe("tool policy", () => {
 
 		expect(result.exitCode).not.toBe(0);
 		expect(`${result.stdout}${result.stderr}`).not.toContain(canary);
+	});
+
+	it("sandboxes credential-disabled scripts from committed credential blobs", async () => {
+		const config = testConfig();
+		const canary = "committed-object-credential-canary";
+		writeFileSync(join(config.cwd, ".env.production"), canary);
+		execFileSync("git", ["add", ".env.production"], { cwd: config.cwd });
+		execFileSync(
+			"git",
+			["-c", "user.name=Dreb Test", "-c", "user.email=dreb@example.invalid", "commit", "-qm", "track credential"],
+			{ cwd: config.cwd },
+		);
+		writeFileSync(
+			join(config.cwd, "read-git-object.cjs"),
+			'process.stdout.write(require("node:child_process").execFileSync("git", ["show", "HEAD:.env.production"], { encoding: "utf8" }))\n',
+		);
+		const command = "node read-git-object.cjs";
+		const policy = { ...config.policy, allowedCommands: [command], allowRemoteState: true };
+
+		const denied = await runAuthorizedCommand(command, config.cwd, policy);
+		expect(denied.exitCode).not.toBe(0);
+		expect(`${denied.stdout}${denied.stderr}`).not.toContain(canary);
+
+		const allowed = await runAuthorizedCommand(command, config.cwd, { ...policy, allowCredentials: true });
+		expect(allowed.exitCode).toBe(0);
+		expect(allowed.stdout).toBe(canary);
+	});
+
+	it("prevents direct Git from dispatching helpers that read committed credential blobs", async () => {
+		const config = testConfig();
+		const canary = "git-helper-object-credential-canary";
+		writeFileSync(join(config.cwd, ".env.production"), canary);
+		execFileSync("git", ["add", ".env.production"], { cwd: config.cwd });
+		execFileSync(
+			"git",
+			["-c", "user.name=Dreb Test", "-c", "user.email=dreb@example.invalid", "commit", "-qm", "track credential"],
+			{ cwd: config.cwd },
+		);
+		writeFileSync(join(config.cwd, "file.txt"), "changed\n");
+		writeFileSync(
+			join(config.cwd, "git-helper.cjs"),
+			'process.stdout.write(require("node:child_process").execFileSync("git", ["show", "HEAD:.env.production"], { encoding: "utf8" }))\n',
+		);
+		const command = `git -c "diff.external=node git-helper.cjs" diff -- file.txt`;
+		const policy = { ...config.policy, allowedCommands: [command] };
+
+		const denied = await runAuthorizedCommand(command, config.cwd, policy);
+		expect(denied.exitCode).not.toBe(0);
+		expect(`${denied.stdout}${denied.stderr}`).not.toContain(canary);
+
+		const allowed = await runAuthorizedCommand(command, config.cwd, {
+			...policy,
+			allowCredentials: true,
+			allowRemoteState: true,
+		});
+		expect(allowed.exitCode).toBe(0);
+		expect(allowed.stdout).toContain(canary);
+	});
+
+	it("prevents mutable exact-allowed scripts from using the network without remote-state authorization", async () => {
+		const config = testConfig();
+		let requests = 0;
+		const server = createServer((request, response) => {
+			requests++;
+			request.resume();
+			response.end("ok");
+		});
+		await new Promise<void>((resolve, reject) => {
+			server.once("error", reject);
+			server.listen(0, "127.0.0.1", resolve);
+		});
+		const address = server.address() as AddressInfo;
+		writeFileSync(
+			join(config.cwd, "post.cjs"),
+			'const http = require("node:http"); const request = http.request(process.argv[2], { method: "POST" }, (response) => { response.resume(); response.on("end", () => process.stdout.write("ok")); }); request.on("error", (error) => { console.error(error.message); process.exitCode = 1; }); request.end("payload");\n',
+		);
+		const command = `node post.cjs http://127.0.0.1:${address.port}/mutate`;
+		const policy = { ...config.policy, allowedCommands: [command], allowCredentials: true };
+
+		try {
+			const denied = await runAuthorizedCommand(command, config.cwd, policy);
+			expect(denied.exitCode).not.toBe(0);
+			expect(requests).toBe(0);
+
+			const allowed = await runAuthorizedCommand(command, config.cwd, { ...policy, allowRemoteState: true });
+			expect(allowed.exitCode).toBe(0);
+			expect(allowed.stdout).toBe("ok");
+			expect(requests).toBe(1);
+		} finally {
+			await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+		}
 	});
 
 	it("does not classify ordinary secretary filenames as credentials", () => {
@@ -533,6 +638,9 @@ describe("tool policy", () => {
 		"git lfs push origin main",
 		"git-lfs push origin main",
 		"wget --post-data=x https://api.example.invalid/resource",
+		"wget --config=request.cfg",
+		"curl --config request.cfg",
+		"curl -K request.cfg",
 		"rclone copy ./artifact remote:bucket",
 		`node -e 'fetch("https://api.example.invalid/resource", { method: "POST" })'`,
 		`nodejs -e 'fetch("https://api.example.invalid/resource", { method: "POST" })'`,

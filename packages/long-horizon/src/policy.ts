@@ -212,9 +212,22 @@ const GIT_LOCAL_OR_REMOTE_READ_SUBCOMMANDS = new Set([
 	"worktree",
 ]);
 
+/** Git forms that serialize repository objects without a safely scopeable pathspec. */
+const GIT_UNSCOPED_CONTENT_EMITTING_SUBCOMMANDS = new Set([
+	"archive",
+	"bundle",
+	"daemon",
+	"fast-export",
+	"format-patch",
+	"http-backend",
+	"pack-objects",
+	"upload-archive",
+	"upload-pack",
+]);
+
 /** Git forms that may render blob or patch content rather than only metadata. */
 const GIT_CONTENT_EMITTING_SUBCOMMANDS = new Set([
-	"archive",
+	...GIT_UNSCOPED_CONTENT_EMITTING_SUBCOMMANDS,
 	"cat-file",
 	"diff",
 	"diff-files",
@@ -287,7 +300,7 @@ function gitMayEmitCredentialContent(argv: readonly string[]): boolean {
 	const subcommand = gitSubcommand(argv);
 	if (!subcommand || !GIT_CONTENT_EMITTING_SUBCOMMANDS.has(subcommand.name)) return false;
 	const args = argv.slice(subcommand.index + 1);
-	if (subcommand.name === "archive") return true;
+	if (GIT_UNSCOPED_CONTENT_EMITTING_SUBCOMMANDS.has(subcommand.name)) return true;
 	const requestsPatch = args.some((argument) => {
 		const option = argument.toLowerCase();
 		return (
@@ -582,6 +595,7 @@ function wgetMutatesRemoteState(argv: readonly string[]): boolean {
 	if (wgetIndex < 0) return false;
 	return argv.slice(wgetIndex + 1).some((token, index, tail) => {
 		const lower = token.toLowerCase();
+		if (lower === "--config" || lower.startsWith("--config=")) return true;
 		if (/^--post-(?:data|file)(?:=|$)/.test(lower)) return true;
 		if (/^--method=(?:post|put|patch|delete)$/.test(lower)) return true;
 		return lower === "--method" && MUTATING_HTTP_METHODS.has(tail[index + 1]?.toLowerCase());
@@ -637,19 +651,12 @@ function executesOpaqueInlineCode(argv: readonly string[]): boolean {
 	return false;
 }
 
-function mutatesRemoteState(argv: readonly string[]): boolean {
-	if (isRelease(argv) || isDeployment(argv)) return true;
-	if (argv.some((token) => executableName(token) === "git") && gitMutatesRemoteState(argv)) return true;
-	if (argv.some((token) => executableName(token) === "git-lfs") && standaloneGitLfsMutatesRemoteState(argv))
-		return true;
-	if (argv.some((token) => executableName(token) === "gh") && ghMutatesRemoteState(argv)) return true;
-	if (executesOpaqueInlineCode(argv)) return true;
-	if (argv.some((token) => ["rclone", "rsync", "scp", "sftp", "ssh"].includes(executableName(token)))) return true;
-	if (wgetMutatesRemoteState(argv)) return true;
+function curlMutatesRemoteState(argv: readonly string[]): boolean {
 	const curlIndex = argv.findIndex((token) => executableName(token) === "curl");
 	if (curlIndex < 0) return false;
 	return argv.slice(curlIndex + 1).some((token, index, tail) => {
 		const lower = token.toLowerCase();
+		if (token === "-K" || lower === "--config" || lower.startsWith("--config=")) return true;
 		if (MUTATING_HTTP_METHODS.has(lower)) return true;
 		if (/^-x(?:post|put|patch|delete)$/i.test(token) || /^--request=(?:post|put|patch|delete)$/i.test(token))
 			return true;
@@ -660,6 +667,46 @@ function mutatesRemoteState(argv: readonly string[]): boolean {
 			token,
 		);
 	});
+}
+
+function mutatesRemoteState(argv: readonly string[]): boolean {
+	if (isRelease(argv) || isDeployment(argv)) return true;
+	if (argv.some((token) => executableName(token) === "git") && gitMutatesRemoteState(argv)) return true;
+	if (argv.some((token) => executableName(token) === "git-lfs") && standaloneGitLfsMutatesRemoteState(argv))
+		return true;
+	if (argv.some((token) => executableName(token) === "gh") && ghMutatesRemoteState(argv)) return true;
+	if (executesOpaqueInlineCode(argv)) return true;
+	if (argv.some((token) => ["rclone", "rsync", "scp", "sftp", "ssh"].includes(executableName(token)))) return true;
+	if (wgetMutatesRemoteState(argv) || curlMutatesRemoteState(argv)) return true;
+	return false;
+}
+
+const GIT_NETWORK_READ_SUBCOMMANDS = new Set(["clone", "fetch", "ls-remote", "pull"]);
+
+/** Network access is safe without remote-state permission only for recognized direct read clients. */
+function isRecognizedRemoteReadCommand(argv: readonly string[]): boolean {
+	const executable = executableName(argv[0] ?? "");
+	if (executable === "git") {
+		const subcommand = gitSubcommand(argv);
+		if (!subcommand) return false;
+		if (subcommand.name === "lfs") {
+			const action = findPositional(argv, subcommand.index + 1, new Set(), []);
+			return action !== undefined && ["fetch", "pull"].includes(action.name);
+		}
+		return GIT_NETWORK_READ_SUBCOMMANDS.has(subcommand.name);
+	}
+	if (executable === "git-lfs") {
+		const action = findSubcommand(argv, "git-lfs", new Set(), []);
+		return action !== undefined && ["fetch", "pull"].includes(action.name);
+	}
+	if (executable === "gh") return !ghMutatesRemoteState(argv);
+	if (executable === "wget") {
+		return argv.slice(1).some((token) => token.toLowerCase() === "--no-config") && !wgetMutatesRemoteState(argv);
+	}
+	if (executable === "curl") {
+		return ["-q", "--disable"].includes(argv[1]?.toLowerCase() ?? "") && !curlMutatesRemoteState(argv);
+	}
+	return false;
 }
 
 /** Parse a command into executable/argv without invoking a shell. */
@@ -1047,33 +1094,49 @@ async function sandboxedCommand(
 	policy: AuthorizationPolicy,
 	signal?: AbortSignal,
 ): Promise<{ executable: string; args: string[]; environment: NodeJS.ProcessEnv; cleanup?: () => void }> {
-	if (policy.allowCredentials) {
+	const isolateCredentials = !policy.allowCredentials;
+	const isolateNetwork = !policy.allowRemoteState && !isRecognizedRemoteReadCommand(argv);
+	if (!isolateCredentials && !isolateNetwork) {
 		return { executable: argv[0], args: argv.slice(1), environment: commandEnvironment(policy) };
 	}
 	if (!SandboxManager.isSupportedPlatform()) {
-		throw new Error(`credential-disabled command sandbox is unsupported on ${process.platform}`);
+		throw new Error(`required command sandbox is unsupported on ${process.platform}`);
 	}
 	const dependencies = await SandboxManager.checkDependenciesAsync();
 	if (dependencies.errors.length > 0) {
-		throw new Error(`credential-disabled command sandbox is unavailable: ${dependencies.errors.join("; ")}`);
+		throw new Error(`required command sandbox is unavailable: ${dependencies.errors.join("; ")}`);
 	}
 
 	const workspace = realpathSync(resolve(cwd));
-	const broadDenyRoots = [homedir(), tmpdir(), dirname(workspace), "/Users", "/home", "/root"]
-		.map(canonicalExistingPath)
-		.filter((path): path is string => path !== undefined && path !== workspace);
-	const workspaceCredentials = (await credentialWorkspacePaths(workspace)).map((path) => resolve(workspace, path));
-	const filesystem: SandboxRuntimeConfig["filesystem"] = {
-		denyRead: [...new Set([...broadDenyRoots, ...workspaceCredentials])],
-		allowRead: [workspace],
-		allowWrite: [workspace],
-		denyWrite: workspaceCredentials,
+	let filesystem: SandboxRuntimeConfig["filesystem"];
+	if (isolateCredentials) {
+		const broadDenyRoots = [homedir(), tmpdir(), dirname(workspace), "/Users", "/home", "/root"]
+			.map(canonicalExistingPath)
+			.filter((path): path is string => path !== undefined && path !== workspace);
+		const workspaceCredentials = (await credentialWorkspacePaths(workspace)).map((path) => resolve(workspace, path));
+		const gitControlReadDenials = (
+			executableName(argv[0] ?? "") === "git" ? gitCredentialControlPaths(workspace) : gitControlPaths(workspace)
+		)
+			.map(canonicalExistingPath)
+			.filter((path): path is string => path !== undefined);
+		filesystem = {
+			denyRead: [...new Set([...broadDenyRoots, ...workspaceCredentials, ...gitControlReadDenials])],
+			allowRead: [workspace],
+			allowWrite: [workspace],
+			denyWrite: workspaceCredentials,
+		};
+	} else {
+		filesystem = { disabled: true, denyRead: [], allowWrite: [], denyWrite: [] };
+	}
+	const sandboxConfig = {
+		filesystem,
+		...(isolateNetwork ? { network: { allowedDomains: [], deniedDomains: [] } } : {}),
 	};
 	const commandText = argv.map(shellQuoteArg).join(" ");
 	const wrapped = await SandboxManager.wrapWithSandboxArgv(
 		commandText,
 		process.platform === "win32" ? undefined : "/bin/sh",
-		{ filesystem },
+		sandboxConfig,
 		signal,
 		workspace,
 		{ commandId: randomUUID(), commandText: argv.join(" ") },
@@ -1275,6 +1338,14 @@ function gitControlPaths(cwd: string): string[] {
 		paths.push(resolve(gitDir, commonDir));
 	}
 	return paths;
+}
+
+/** Git itself may read structural metadata, but never credential-bearing config or object storage. */
+function gitCredentialControlPaths(cwd: string): string[] {
+	return gitControlPaths(cwd).flatMap((path) => {
+		if (!existsSync(path) || !lstatSync(path).isDirectory()) return [];
+		return [join(path, "config"), join(path, "config.worktree"), join(path, "objects")];
+	});
 }
 
 function assertMutableWorkspacePath(cwd: string, requestedPath: string, protectedPaths: readonly string[]): void {
