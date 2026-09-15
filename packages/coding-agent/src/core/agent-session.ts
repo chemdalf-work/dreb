@@ -28,6 +28,7 @@ import type {
 } from "@dreb/agent-core";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@dreb/ai";
 import { isContextOverflow, modelsAreEqual, resetApiProviders, supportsMax, supportsXhigh } from "@dreb/ai";
+import { getBuildProvenance } from "../build-provenance.js";
 import { getDocsPath } from "../config.js";
 import { theme } from "../modes/interactive/theme/theme.js";
 import { sleep } from "../utils/sleep.js";
@@ -4752,6 +4753,7 @@ export class AgentSession {
 			id: this.sessionManager.getSessionId(),
 			timestamp: new Date().toISOString(),
 			cwd: this.sessionManager.getCwd(),
+			provenance: getBuildProvenance(),
 		};
 
 		const branchEntries = this.sessionManager.getBranch();

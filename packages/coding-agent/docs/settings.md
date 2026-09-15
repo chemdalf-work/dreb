@@ -1,6 +1,6 @@
 # Settings
 
-dreb uses JSON settings files with project settings overriding global settings, except where a setting is explicitly global-only (notably nested-context trust).
+Pierre Dreb uses JSON settings files with project settings overriding global settings, except where a setting is explicitly global-only (notably nested-context trust).
 
 | Location | Scope |
 |----------|-------|
@@ -75,7 +75,7 @@ thinking summaries:
 - `"omitted"` — hide thinking text for faster time-to-first-token; only an encrypted
   signature is returned.
 
-Anthropic's API defaults Opus 4.7+ to `"omitted"`, so dreb sends `"summarized"` by default
+Anthropic's API defaults Opus 4.7+ to `"omitted"`, so Pierre Dreb sends `"summarized"` by default
 on adaptive models to keep thinking visible. Set `"omitted"` here to opt into the
 lower-latency behavior. The setting is honored identically by the main session and by any
 subagent that uses the same model. Non-adaptive models ignore it. It is configurable in the
@@ -83,7 +83,7 @@ TUI via `/settings` → **Show thinking summaries** (shown only when the current
 adaptive thinking).
 
 System-prompt settings require an exact canonical `provider/model` key. Use `systemPrompt`
-to replace dreb's built-in prompt, or `appendSystemPrompt` to preserve the selected base
+to replace Pierre Dreb's built-in prompt, or `appendSystemPrompt` to preserve the selected base
 prompt and append model-specific instructions:
 
 ```json
@@ -113,7 +113,7 @@ Prompt behavior:
 - Bare model-ID keys never apply prompt instructions; this prevents instructions from
   leaking to another provider exposing the same ID.
 - Configure exactly one of `systemPrompt` and `appendSystemPrompt` for a canonical model.
-  Defining both, or using an empty/non-string value, fails loudly when dreb builds that
+  Defining both, or using an empty/non-string value, fails loudly when Pierre Dreb builds that
   model's prompt.
 - An explicit session replacement from `--system-prompt`, `SYSTEM.md`, or an SDK resource
   loader takes precedence over `systemPrompt`. `appendSystemPrompt` still appends after
@@ -151,9 +151,9 @@ Prompt behavior:
 | `tabTitle.triggerAfter` | number | `9` | Number of tool calls before generating title |
 | `tabTitle.maxTitleLength` | number | `60` | Soft target length hint for generated titles (clamped to a hard cap of 300) |
 
-After the configured number of tool calls, dreb fires a single background LLM call to summarize the session's task into a terminal tab title, then sets it via OSC 0. The title is based primarily on your actual request and current-session actions, with branch/repo/cwd metadata used only for disambiguation. `maxTitleLength` is a soft target communicated to the model (default 60); titles may run a little longer for clarity and are hard-capped at 300 characters. The TUI truncates long titles visually while the dashboard shows the full name. Only fires once per session, and never overwrites an already-named (e.g. resumed) session. If the LLM call fails, the default title remains and the failure is surfaced (shown in interactive mode, logged to stderr in RPC mode).
+After the configured number of tool calls, Pierre Dreb fires a single background LLM call to summarize the session's task into a terminal tab title, then sets it via OSC 0. The title is based primarily on your actual request and current-session actions, with branch/repo/cwd metadata used only for disambiguation. `maxTitleLength` is a soft target communicated to the model (default 60); titles may run a little longer for clarity and are hard-capped at 300 characters. The TUI truncates long titles visually while the dashboard shows the full name. Only fires once per session, and never overwrites an already-named (e.g. resumed) session. If the LLM call fails, the default title remains and the failure is surfaced (shown in interactive mode, logged to stderr in RPC mode).
 
-`tabTitle.model` pins the primary call to one available exact model. Model IDs may contain `/`, so the first path segment is the provider and the complete remainder is the model ID. When this setting is absent, resolution is unchanged: the Explore `agentModels` override, then Explore agent frontmatter, then the parent session model. If the selected model call fails and differs from the parent session model, dreb retries once with the parent. Dashboard Settings exposes `enabled` and the exact model picker, including clearing a pinned model back to the automatic route; `triggerAfter` and `maxTitleLength` remain configurable in JSON.
+`tabTitle.model` pins the primary call to one available exact model. Model IDs may contain `/`, so the first path segment is the provider and the complete remainder is the model ID. When this setting is absent, resolution is unchanged: the Explore `agentModels` override, then Explore agent frontmatter, then the parent session model. If the selected model call fails and differs from the parent session model, Pierre Dreb retries once with the parent. Dashboard Settings exposes `enabled` and the exact model picker, including clearing a pinned model back to the automatic route; `triggerAfter` and `maxTitleLength` remain configurable in JSON.
 
 ```json
 {
@@ -168,7 +168,7 @@ After the configured number of tool calls, dreb fires a single background LLM ca
 
 ### Context
 
-At startup, dreb always performs an **initial upward scan** from the launch cwd for `AGENTS.md`/`CLAUDE.md`. This is separate from lazy nested/out-of-cwd loading and is not enabled, disabled, or scoped by either context setting below. It is not a claim that the initial scan has a fixed boundary: it follows the startup upward-walk behavior for that cwd.
+At startup, Pierre Dreb always performs an **initial upward scan** from the launch cwd for `AGENTS.md`/`CLAUDE.md`. This is separate from lazy nested/out-of-cwd loading and is not enabled, disabled, or scoped by either context setting below. It is not a claim that the initial scan has a fixed boundary: it follows the startup upward-walk behavior for that cwd.
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
@@ -272,7 +272,7 @@ When a provider requests a retry delay longer than `maxDelayMs` (e.g., Google's 
 
 `maxConcurrentSubagents` is captured when a parent session starts. Positive values bound that session's running children while additional work waits for a slot. A value of `0` starts the parent without the `subagent` tool and adds explicit system-prompt guidance to perform normally delegated work itself. Changing the persistent value does not retrofit an already-running parent session. The separate `tasks` input limit remains eight items per parallel call.
 
-When you launch background subagents, the parent agent keeps working and returns control to you while subagents run. The guardrail pauses the parent after `parentTurnLimit` turns so it doesn't spin ahead of results — when this happens, dreb surfaces a friendly, non-error notification in the TUI and Telegram explaining that background agents are still working and the parent paused intentionally (it resumes when they report back, or you can send a message to steer it).
+When you launch background subagents, the parent agent keeps working and returns control to you while subagents run. The guardrail pauses the parent after `parentTurnLimit` turns so it doesn't spin ahead of results — when this happens, Pierre Dreb surfaces a friendly, non-error notification in the TUI and Telegram explaining that background agents are still working and the parent paused intentionally (it resumes when they report back, or you can send a message to steer it).
 
 Set `parentTurnGuardrail` to `false` to let the parent keep running with no turn limit while subagents work — an advanced opt-out with no upper bound on parent turns. Raise `parentTurnLimit` to relax the guardrail without fully disabling it.
 
@@ -359,7 +359,7 @@ Only host-validated decision metadata is persisted/emitted. Raw arbiter prompts,
 | `sensitiveFilePaths` | string[] | `[]` | Additional glob patterns for sensitive file paths blocked by the read/bash guard (appended to built-in defaults) |
 | `secretOutputPatterns` | `{ name, pattern }[]` | `[]` | Additional regex patterns for secret scrubbing in tool output (appended to built-in defaults) |
 
-dreb includes two built-in layers of protection against accidental credential exposure through the tool pipeline:
+Pierre Dreb includes two built-in layers of protection against accidental credential exposure through the tool pipeline:
 
 **Output scrubbing** — Tool output is scanned for known secret patterns before it enters the LLM conversation. Detected secrets are replaced with `<REDACTED:pattern_name>` markers. Built-in patterns cover AWS access keys, GitHub tokens (classic and fine-grained PATs), GitLab tokens, OpenAI keys, Anthropic keys, Slack tokens, Stripe keys, URL credentials, PEM private key blocks, and OpenSSH private key blocks. Add custom patterns via `secretOutputPatterns`:
 

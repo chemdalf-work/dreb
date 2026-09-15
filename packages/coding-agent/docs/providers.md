@@ -1,6 +1,6 @@
 # Providers
 
-dreb supports subscription-based providers via OAuth and API key providers via environment variables or auth file. For each provider, dreb knows all available models. The list is updated with every dreb release.
+Pierre Dreb supports subscription-based providers via OAuth and API key providers via environment variables or auth file. For each provider, Pierre Dreb knows all available models. The list is updated with every Pierre Dreb release.
 
 ## Table of Contents
 
@@ -15,7 +15,7 @@ dreb supports subscription-based providers via OAuth and API key providers via e
 
 ## Node Version and Streaming
 
-**Use Node.js 22 LTS.** dreb's providers rely on stable SSE streaming, and Node 22 LTS is the supported runtime. Node 24 and Node 26 are known to break streaming: Node 26 changed ReadableStream buffering to "read one buffer at a time instead of reading ahead", which breaks the SSE stream parsers in the Anthropic SDK (v0.73.0) and OpenAI SDK (v6.26.0) that dreb uses.
+**Use Node.js 22 LTS.** Pierre Dreb's providers rely on stable SSE streaming, and Node 22 LTS is the supported runtime. Node 24 and Node 26 are known to break streaming: Node 26 changed ReadableStream buffering to "read one buffer at a time instead of reading ahead", which breaks the SSE stream parsers in the Anthropic SDK (v0.73.0) and OpenAI SDK (v6.26.0) that Pierre Dreb uses.
 
 If every provider fails with **"request ended without sending any chunks"**, check your Node version and switch to Node.js 22 LTS.
 
@@ -37,7 +37,7 @@ Use `/logout` to clear credentials. Tokens are stored in `~/.dreb/agent/auth.jso
 - If you get "model not supported", enable it in VS Code: Copilot Chat → model selector → select model → "Enable"
 - GPT-6 models, including `github-copilot/gpt-6-astra`, use the Responses API. Astra supports `xhigh` and native `max` thinking; access depends on the subscription and enabled models.
 - For adaptive Claude models such as Opus 4.8, readable thinking requires `thinkingDisplay: "summarized"` in SDK calls; enabling thinking alone can return only opaque signatures. See [thinking display](../../ai/README.md#controlling-thinking-display-anthropic-adaptive-models).
-- A registry context window can be lower than the endpoint's hard limit. Accepting a larger request does not change dreb's configured window. Usage-based overflow detection includes uncached input, cache reads, and cache writes.
+- A registry context window can be lower than the endpoint's hard limit. Accepting a larger request does not change Pierre Dreb's configured window. Usage-based overflow detection includes uncached input, cache reads, and cache writes.
 
 ### Google Providers
 
@@ -57,10 +57,10 @@ Use `/logout` to clear credentials. Tokens are stored in `~/.dreb/agent/auth.jso
 
 - `/login` uses the Kimi Code OAuth subscription endpoint at `https://api.kimi.com/coding/v1`.
 - `KIMI_API_KEY` uses Kimi For Coding's Anthropic-compatible API at `https://api.kimi.com/coding`.
-- Built-in OAuth models are `kimi-for-coding` (default, 262k context), `k3` (1M context), and `kimi-for-coding-highspeed` (262k context). Model availability is plan-dependent: the `k3` 1M-context ID and the `kimi-for-coding-highspeed` ID are only exposed when the subscription includes them, and `kimi-for-coding-highspeed` runs at roughly 6× speed for 3× quota usage. On login/refresh, dreb asks the Kimi API which models the subscription is entitled to and updates context, reasoning, image, tool-use, protocol, and thinking-effort metadata. Compatible newly discovered IDs are templated conservatively; if discovery fails, the static list remains available.
-- The OAuth `k3` model is context-tiered: the Kimi endpoint serves it as `k3-256k` (256k context, cheaper) and `k3` (1M context, stated to consume 2× the quota), and upgrading does not invalidate the prompt cache. The cheaper variant is exclusive to the Kimi for Coding OAuth endpoint — the pay-per-token Moonshot AI Platform does not expose it. dreb starts every session on the `k3-256k` wire ID and automatically upgrades to `k3` once the session context passes the 256k cutoff (256k minus the default compaction reserve) instead of compacting. A user-lowered compaction threshold compacts before the cutoff and thus effectively disables the upgrade. Customizing `k3`'s context window via `models.json` disables automatic tiering entirely, and compacted or fresh sessions return to the cheaper tier.
+- Built-in OAuth models are `kimi-for-coding` (default, 262k context), `k3` (1M context), and `kimi-for-coding-highspeed` (262k context). Model availability is plan-dependent: the `k3` 1M-context ID and the `kimi-for-coding-highspeed` ID are only exposed when the subscription includes them, and `kimi-for-coding-highspeed` runs at roughly 6× speed for 3× quota usage. On login/refresh, Pierre Dreb asks the Kimi API which models the subscription is entitled to and updates context, reasoning, image, tool-use, protocol, and thinking-effort metadata. Compatible newly discovered IDs are templated conservatively; if discovery fails, the static list remains available.
+- The OAuth `k3` model is context-tiered: the Kimi endpoint serves it as `k3-256k` (256k context, cheaper) and `k3` (1M context, stated to consume 2× the quota), and upgrading does not invalidate the prompt cache. The cheaper variant is exclusive to the Kimi for Coding OAuth endpoint — the pay-per-token Moonshot AI Platform does not expose it. Pierre Dreb starts every session on the `k3-256k` wire ID and automatically upgrades to `k3` once the session context passes the 256k cutoff (256k minus the default compaction reserve) instead of compacting. A user-lowered compaction threshold compacts before the cutoff and thus effectively disables the upgrade. Customizing `k3`'s context window via `models.json` disables automatic tiering entirely, and compacted or fresh sessions return to the cheaper tier.
 - OAuth requests use the current Kimi Code device identity contract and share its stable `~/.kimi-code/device_id`. Extra low-precedence headers can be supplied with newline-separated `KIMI_CODE_CUSTOM_HEADERS` values.
-- The OAuth coding endpoint accepts OpenAI-style multimodal content arrays with base64 `image_url` data URLs. dreb keeps a conservative 32k output-token cap because the managed model catalog does not currently advertise a per-model output limit.
+- The OAuth coding endpoint accepts OpenAI-style multimodal content arrays with base64 `image_url` data URLs. Pierre Dreb keeps a conservative 32k output-token cap because the managed model catalog does not currently advertise a per-model output limit.
 - Moonshot Open Platform uses a different base URL (`https://api.moonshot.ai/v1`); don't assume both routes expose identical behavior.
 
 ## API Keys
@@ -71,7 +71,7 @@ Set via environment variable:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-dreb
+pierre-dreb
 ```
 
 | Provider | Environment Variable | `auth.json` key |
@@ -94,7 +94,7 @@ dreb
 | MiniMax | `MINIMAX_API_KEY` | `minimax` |
 | MiniMax (China) | `MINIMAX_CN_API_KEY` | `minimax-cn` |
 
-Reference for environment variables and `auth.json` keys: [`const envMap`](https://github.com/aebrer/dreb/blob/master/packages/ai/src/env-api-keys.ts) in [`packages/ai/src/env-api-keys.ts`](https://github.com/aebrer/dreb/blob/master/packages/ai/src/env-api-keys.ts).
+Reference for environment variables and `auth.json` keys: [`const envMap`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/ai/src/env-api-keys.ts) in [`packages/ai/src/env-api-keys.ts`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/ai/src/env-api-keys.ts).
 
 #### Auth File
 
@@ -167,14 +167,14 @@ export AWS_REGION=us-west-2
 Also supports ECS task roles (`AWS_CONTAINER_CREDENTIALS_*`) and IRSA (`AWS_WEB_IDENTITY_TOKEN_FILE`).
 
 ```bash
-dreb --provider amazon-bedrock --model us.anthropic.claude-sonnet-4-20250514-v1:0
+pierre-dreb --provider amazon-bedrock --model us.anthropic.claude-sonnet-4-20250514-v1:0
 ```
 
 Prompt caching is enabled automatically for Claude models whose ID contains a recognizable model name (base models and system-defined inference profiles). For application inference profiles (whose ARNs don't contain the model name), set `AWS_BEDROCK_FORCE_CACHE=1` to enable cache points:
 
 ```bash
 export AWS_BEDROCK_FORCE_CACHE=1
-dreb --provider amazon-bedrock --model arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123
+pierre-dreb --provider amazon-bedrock --model arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123
 ```
 
 If you are connecting to a Bedrock API proxy, the following environment variables can be used:
@@ -221,10 +221,10 @@ When resolving credentials for a provider:
 
 The Codex catalog no longer lists the probe-verified unsupported routes `gpt-5.1`, `gpt-5.1-codex-max`, `gpt-5.1-codex-mini`, `gpt-5.3-codex`, `gpt-5.4`, and `gpt-5.3-codex-spark`. This does not remove similarly named models from other providers.
 
-If a saved default no longer exists, startup warns and prefers that provider's known default when available. For example, a missing saved `openai-codex/gpt-5.4` selects `openai-codex/gpt-5.6-luna` even when OpenAI API credentials are also present. If the saved provider's default is unavailable, dreb can select another available model, with the warning naming the replacement. Use `/model` to save a new default.
+If a saved default no longer exists, startup warns and prefers that provider's known default when available. For example, a missing saved `openai-codex/gpt-5.4` selects `openai-codex/gpt-5.6-luna` even when OpenAI API credentials are also present. If the saved provider's default is unavailable, Pierre Dreb can select another available model, with the warning naming the replacement. Use `/model` to save a new default.
 
-For explicit CLI selection (`--model provider/id` or `--provider provider --model id`), if an ID exists exactly on another provider but only fuzzy-matches a different ID on the requested provider, dreb warns and uses the requested ID as a custom model rather than silently substituting the fuzzy match. Thus `--model openai-codex/gpt-5.4` does **not** select `gpt-5.4-mini`; the unsupported ID is sent to Codex and can fail at the server. This is not an automatic migration or a general ban on fuzzy model patterns. Choose a supported model explicitly, for example:
+For explicit CLI selection (`--model provider/id` or `--provider provider --model id`), if an ID exists exactly on another provider but only fuzzy-matches a different ID on the requested provider, Pierre Dreb warns and uses the requested ID as a custom model rather than silently substituting the fuzzy match. Thus `--model openai-codex/gpt-5.4` does **not** select `gpt-5.4-mini`; the unsupported ID is sent to Codex and can fail at the server. This is not an automatic migration or a general ban on fuzzy model patterns. Choose a supported model explicitly, for example:
 
 ```bash
-dreb --model openai-codex/gpt-6-astra --thinking xhigh
+pierre-dreb --model openai-codex/gpt-6-astra --thinking xhigh
 ```

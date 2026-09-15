@@ -570,7 +570,7 @@ describe("skills", () => {
 			expect(body).toContain("A non-empty effective `enabledModels` array is the complete authoritative scope");
 			expect(body).toContain("does **not** receive the current session's runtime `--models` value");
 			expect(body).toContain("they must pass the same comma-separated patterns as skill arguments");
-			expect(body).toContain("Run `dreb --list-models`");
+			expect(body).toContain("Run `pierre-dreb --list-models`");
 			expect(body).toContain("it never means an undiscovered runtime/session scope");
 			expect(body).not.toContain("user's actual scoped provider/model combinations");
 		});

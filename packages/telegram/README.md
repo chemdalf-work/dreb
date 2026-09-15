@@ -1,6 +1,6 @@
 # @dreb/telegram
 
-Telegram bot frontend for the dreb coding agent. Communicates with dreb via its native RPC protocol (stdin/stdout JSONL).
+Telegram bot frontend for the Pierre Dreb coding agent. Communicates with Pierre Dreb via its native RPC protocol (stdin/stdout JSONL).
 
 ## Setup
 
@@ -19,7 +19,7 @@ Message [@userinfobot](https://t.me/userinfobot) to get your numeric user ID.
 | `TELEGRAM_BOT_TOKEN` | ✅ | Bot API token from BotFather |
 | `ALLOWED_USER_IDS` | ✅ | Comma-separated authorized user IDs |
 | `DREB_WORKING_DIR` | | Working directory for sessions (default: `$HOME`) |
-| `DREB_PATH` | | Path to dreb binary (default: `dreb`) |
+| `DREB_PATH` | | Path to Pierre Dreb binary (default: `pierre-dreb`) |
 | `DREB_TELEGRAM_SERVICE` | | Systemd service name (default: `dreb-telegram`) |
 | `DREB_PROVIDER` | | LLM provider (e.g., `anthropic`) |
 | `DREB_MODEL` | | Model ID (e.g., `claude-sonnet-4`) |
@@ -78,7 +78,7 @@ systemctl --user enable --now dreb-telegram
 - `/start` — Help & command list
 - `/new` — Start fresh session (preserves current working directory)
 - `/new <path>` — Start fresh session in the specified directory
-- `/new <segment> ...` — Mobile shorthand for home-relative paths, e.g. `/new projects dreb` resolves to `~/projects/dreb`; quoted spans work for segments containing spaces, e.g. `/new "My Projects" dreb`
+- `/new <segment> ...` — Mobile shorthand for home-relative paths, e.g. `/new projects Pierre Dreb` resolves to `~/projects/dreb`; quoted spans work for segments containing spaces, e.g. `/new "My Projects" Pierre Dreb`
 - `/sessions` — List recent sessions
 - `/resume <id>` — Resume by session ID prefix
 - `/recent [N]` — Resend last N assistant messages

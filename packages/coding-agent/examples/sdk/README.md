@@ -1,6 +1,6 @@
 # SDK Examples
 
-Programmatic usage of dreb coding-agent via `createAgentSession()`.
+Programmatic usage of Pierre Dreb coding-agent via `createAgentSession()`.
 
 ## Examples
 

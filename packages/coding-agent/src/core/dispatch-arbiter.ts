@@ -1,6 +1,7 @@
 import type { ThinkingLevel } from "@dreb/agent-core";
 import type { Api, AssistantMessage, Context, Model } from "@dreb/ai";
 import { completeSimple } from "@dreb/ai";
+import { CLI_NAME } from "../config.js";
 import type { CodingRiskAssessment } from "./coding-risk.js";
 import { extractUserText, labelMessageEnd, labelToolEnd, RollingContextBuffer } from "./context-buffer.js";
 import type { ModelRegistry } from "./model-registry.js";
@@ -310,7 +311,7 @@ export class DispatchArbiter {
 		if (candidates.length === 0) {
 			return this.failure(
 				"missing_scope",
-				"Dispatch arbitration requires a non-empty explicit live model scope. Start dreb with --models or configure enabledModels.",
+				`Dispatch arbitration requires a non-empty explicit live model scope. Start ${CLI_NAME} with --models or configure enabledModels.`,
 			);
 		}
 		const candidateIds = candidates.map(({ model }) => canonicalModelId(model));

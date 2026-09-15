@@ -1,19 +1,19 @@
 # Compaction & Branch Summarization
 
-LLMs have limited context windows. When conversations grow too long, dreb uses compaction to summarize older content while preserving recent work. This page covers both auto-compaction and branch summarization.
+LLMs have limited context windows. When conversations grow too long, Pierre Dreb uses compaction to summarize older content while preserving recent work. This page covers both auto-compaction and branch summarization.
 
-**Source files** ([dreb](https://github.com/aebrer/dreb)):
-- [`packages/coding-agent/src/core/compaction/compaction.ts`](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/compaction/compaction.ts) - Auto-compaction logic
-- [`packages/coding-agent/src/core/compaction/branch-summarization.ts`](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/compaction/branch-summarization.ts) - Branch summarization
-- [`packages/coding-agent/src/core/compaction/utils.ts`](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/compaction/utils.ts) - Shared utilities (file tracking, serialization)
-- [`packages/coding-agent/src/core/session-manager.ts`](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/session-manager.ts) - Entry types (`CompactionEntry`, `BranchSummaryEntry`)
-- [`packages/coding-agent/src/core/extensions/types.ts`](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/extensions/types.ts) - Extension event types
+**Source files** ([Pierre Dreb](https://github.com/chemdalf-work/pierre-dreb)):
+- [`packages/coding-agent/src/core/compaction/compaction.ts`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/compaction/compaction.ts) - Auto-compaction logic
+- [`packages/coding-agent/src/core/compaction/branch-summarization.ts`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/compaction/branch-summarization.ts) - Branch summarization
+- [`packages/coding-agent/src/core/compaction/utils.ts`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/compaction/utils.ts) - Shared utilities (file tracking, serialization)
+- [`packages/coding-agent/src/core/session-manager.ts`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/session-manager.ts) - Entry types (`CompactionEntry`, `BranchSummaryEntry`)
+- [`packages/coding-agent/src/core/extensions/types.ts`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/extensions/types.ts) - Extension event types
 
 For TypeScript definitions in your project, inspect `node_modules/@dreb/coding-agent/dist/`.
 
 ## Overview
 
-dreb has two summarization mechanisms:
+Pierre Dreb has two summarization mechanisms:
 
 | Mechanism | Trigger | Purpose |
 |-----------|---------|---------|
@@ -34,9 +34,9 @@ contextTokens > contextWindow - reserveTokens
 
 By default, `reserveTokens` is 16384 tokens (configurable in `~/.dreb/agent/settings.json` or `<project-dir>/.dreb/settings.json`). This leaves room for the LLM's response.
 
-The threshold is checked after a run ends, before a new prompt, and inside a running agent loop before each LLM request. Mid-turn checks run only when context is settled on a user or tool-result message, after all tool calls from the preceding assistant message have matching results. If the threshold is crossed, dreb compacts and replaces the running loop's context before that loop makes its next request; it does not start a second agent run.
+The threshold is checked after a run ends, before a new prompt, and inside a running agent loop before each LLM request. Mid-turn checks run only when context is settled on a user or tool-result message, after all tool calls from the preceding assistant message have matching results. If the threshold is crossed, Pierre Dreb compacts and replaces the running loop's context before that loop makes its next request; it does not start a second agent run.
 
-If response-length retries are exhausted, dreb distinguishes a genuine output-budget failure from a full-context truncation using recorded usage. Usage at or beyond `contextWindow` enters overflow compact-and-retry recovery; usage below it remains a loud output-budget error.
+If response-length retries are exhausted, Pierre Dreb distinguishes a genuine output-budget failure from a full-context truncation using recorded usage. Usage at or beyond `contextWindow` enters overflow compact-and-retry recovery; usage below it remains a loud output-budget error.
 
 You can also trigger manually with `/compact [instructions]`, where optional instructions focus the summary.
 
@@ -54,7 +54,7 @@ Enable **Continue after auto-compaction** in terminal `/settings` or dashboard S
 }
 ```
 
-The setting never invents work: when the last message is a normally completed assistant answer and no input is queued, dreb leaves the run finished instead of calling `continue()`. It can still keep pending work running and incurring model cost indefinitely, so it is off by default. Failed or cancelled automatic compactions do not continue, and manual `/compact` never continues because of this setting.
+The setting never invents work: when the last message is a normally completed assistant answer and no input is queued, Pierre Dreb leaves the run finished instead of calling `continue()`. It can still keep pending work running and incurring model cost indefinitely, so it is off by default. Failed or cancelled automatic compactions do not continue, and manual `/compact` never continues because of this setting.
 
 ### How It Works
 
@@ -120,7 +120,7 @@ Split turn (one huge turn exceeds budget):
   turnPrefixMessages = [usr, ass, tool, ass, tool, tool]
 ```
 
-For split turns, dreb generates two summaries and merges them:
+For split turns, Pierre Dreb generates two summaries and merges them:
 1. **History summary**: Previous context (if any)
 2. **Turn prefix summary**: The early part of the split turn
 
@@ -136,7 +136,7 @@ Never cut at tool results (they must stay with their tool call).
 
 ### CompactionEntry Structure
 
-Defined in [`session-manager.ts`](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/session-manager.ts):
+Defined in [`session-manager.ts`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/session-manager.ts):
 
 ```typescript
 interface CompactionEntry<T = unknown> {
@@ -160,13 +160,13 @@ interface CompactionDetails {
 
 Extensions can store any JSON-serializable data in `details`. The default compaction tracks file operations, but custom extension implementations can use their own structure.
 
-See [`prepareCompaction()`](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/compaction/compaction.ts) and [`compact()`](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/compaction/compaction.ts) for the implementation.
+See [`prepareCompaction()`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/compaction/compaction.ts) and [`compact()`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/compaction/compaction.ts) for the implementation.
 
 ## Branch Summarization
 
 ### When It Triggers
 
-When you use `/tree` to navigate to a different branch, dreb offers to summarize the work you're leaving. This injects context from the left branch into the new branch.
+When you use `/tree` to navigate to a different branch, Pierre Dreb offers to summarize the work you're leaving. This injects context from the left branch into the new branch.
 
 ### How It Works
 
@@ -195,7 +195,7 @@ After navigation with summary:
 
 ### Cumulative File Tracking
 
-Both compaction and branch summarization track files cumulatively. When generating a summary, dreb extracts file operations from:
+Both compaction and branch summarization track files cumulatively. When generating a summary, Pierre Dreb extracts file operations from:
 - Tool calls in the messages being summarized
 - Previous compaction or branch summary `details` (if any)
 
@@ -203,7 +203,7 @@ This means file tracking accumulates across multiple compactions or nested branc
 
 ### BranchSummaryEntry Structure
 
-Defined in [`session-manager.ts`](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/session-manager.ts):
+Defined in [`session-manager.ts`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/session-manager.ts):
 
 ```typescript
 interface BranchSummaryEntry<T = unknown> {
@@ -226,7 +226,7 @@ interface BranchSummaryDetails {
 
 Same as compaction, extensions can store custom data in `details`.
 
-See [`collectEntriesForBranchSummary()`](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/compaction/branch-summarization.ts), [`prepareBranchEntries()`](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/compaction/branch-summarization.ts), and [`generateBranchSummary()`](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/compaction/branch-summarization.ts) for the implementation.
+See [`collectEntriesForBranchSummary()`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/compaction/branch-summarization.ts), [`prepareBranchEntries()`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/compaction/branch-summarization.ts), and [`generateBranchSummary()`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/compaction/branch-summarization.ts) for the implementation.
 
 ## Summary Format
 
@@ -270,7 +270,7 @@ path/to/changed.ts
 
 ### Message Serialization
 
-Before summarization, messages are serialized to text via [`serializeConversation()`](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/compaction/utils.ts):
+Before summarization, messages are serialized to text via [`serializeConversation()`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/compaction/utils.ts):
 
 ```
 [User]: What they said
@@ -286,7 +286,7 @@ Tool results are truncated to 2000 characters during serialization. Content beyo
 
 ## Custom Summarization via Extensions
 
-Extensions can intercept and customize both compaction and branch summarization. See [`extensions/types.ts`](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/extensions/types.ts) for event type definitions.
+Extensions can intercept and customize both compaction and branch summarization. See [`extensions/types.ts`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/extensions/types.ts) for event type definitions.
 
 ### session_before_compact
 

@@ -37,7 +37,15 @@ import {
 	visibleWidth,
 } from "@dreb/tui";
 import { spawn, spawnSync } from "child_process";
-import { APP_NAME, getAgentDir, getAuthPath, getDebugLogPath, getUpdateInstruction, VERSION } from "../../config.js";
+import {
+	APP_NAME,
+	CLI_NAME,
+	getAgentDir,
+	getAuthPath,
+	getDebugLogPath,
+	getUpdateInstruction,
+	VERSION,
+} from "../../config.js";
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.js";
 import { BuddyManager, checkOllama } from "../../core/buddy/buddy-manager.js";
 import { Rarity, Stat } from "../../core/buddy/buddy-types.js";
@@ -664,9 +672,9 @@ export class InteractiveMode {
 		const cwdBasename = path.basename(process.cwd());
 		const sessionName = this.sessionManager.getSessionName();
 		if (sessionName) {
-			this.ui.terminal.setTitle(`dreb - ${sessionName} - ${cwdBasename}`);
+			this.ui.terminal.setTitle(`${APP_NAME} - ${sessionName} - ${cwdBasename}`);
 		} else {
-			this.ui.terminal.setTitle(`dreb - ${cwdBasename}`);
+			this.ui.terminal.setTitle(`${APP_NAME} - ${cwdBasename}`);
 		}
 	}
 
@@ -2933,7 +2941,7 @@ export class InteractiveMode {
 				const count = event.runningAgentCount;
 				const agentWord = count === 1 ? "agent" : "agents";
 				this.showStatus(
-					`Paused automatically — ${count} background ${agentWord} still working. dreb will resume when they report back, or send a message to continue. (configure via backgroundAgents settings)`,
+					`Paused automatically — ${count} background ${agentWord} still working. ${APP_NAME} will resume when they report back, or send a message to continue. (configure via backgroundAgents settings)`,
 				);
 				this.updateBackgroundAgentStatus();
 				break;
@@ -3625,7 +3633,7 @@ export class InteractiveMode {
 	}
 
 	showPackageUpdateNotification(packages: string[]): void {
-		const action = theme.fg("accent", `${APP_NAME} update`);
+		const action = theme.fg("accent", `${CLI_NAME} update`);
 		const updateInstruction = theme.fg("muted", "Package updates are available. Run ") + action;
 		const packageLines = packages.map((pkg) => `- ${pkg}`).join("\n");
 

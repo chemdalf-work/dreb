@@ -41,7 +41,7 @@ describe("parent_paused_for_background_agents handler", () => {
 		expect(fakeThis.showStatus).toHaveBeenCalledTimes(1);
 		const message = (fakeThis.showStatus as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
 		expect(message).toBe(
-			"Paused automatically — 1 background agent still working. dreb will resume when they report back, or send a message to continue. (configure via backgroundAgents settings)",
+			"Paused automatically — 1 background agent still working. Pierre Dreb will resume when they report back, or send a message to continue. (configure via backgroundAgents settings)",
 		);
 		expect(message).toContain("1 background agent still working");
 		expect(message).not.toContain("1 background agents");
@@ -59,7 +59,7 @@ describe("parent_paused_for_background_agents handler", () => {
 		expect(fakeThis.showStatus).toHaveBeenCalledTimes(1);
 		const message = (fakeThis.showStatus as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
 		expect(message).toBe(
-			"Paused automatically — 2 background agents still working. dreb will resume when they report back, or send a message to continue. (configure via backgroundAgents settings)",
+			"Paused automatically — 2 background agents still working. Pierre Dreb will resume when they report back, or send a message to continue. (configure via backgroundAgents settings)",
 		);
 		expect(message).toContain("2 background agents still working");
 		expect(message).not.toContain("2 background agent still working");

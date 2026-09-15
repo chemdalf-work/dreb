@@ -14,7 +14,7 @@ import { processFileArguments } from "./cli/file-processor.js";
 import { buildInitialMessage } from "./cli/initial-message.js";
 import { listModels } from "./cli/list-models.js";
 import { selectSession } from "./cli/session-picker.js";
-import { APP_NAME, getAgentDir, getModelsPath, loadProvidersEnv, VERSION } from "./config.js";
+import { CLI_NAME, getAgentDir, getModelsPath, loadProvidersEnv, VERSION } from "./config.js";
 import type { AgentSession } from "./core/agent-session.js";
 import { AuthStorage } from "./core/auth-storage.js";
 import { exportFromFile } from "./core/export-html/index.js";
@@ -33,6 +33,7 @@ import { writeRawStderr } from "./core/stderr-guard.js";
 import { printTimings, resetTimings, time } from "./core/timings.js";
 import { allTools } from "./core/tools/index.js";
 import { prepareRepoGraphIndex } from "./core/tools/search.js";
+import { handleDiagnosticsCommand } from "./diagnostics.js";
 import { runMigrations, showDeprecationWarnings } from "./migrations.js";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.js";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.js";
@@ -199,13 +200,13 @@ interface PackageCommandOptions {
 function getPackageCommandUsage(command: PackageCommand): string {
 	switch (command) {
 		case "install":
-			return `${APP_NAME} install <source> [-l]`;
+			return `${CLI_NAME} install <source> [-l]`;
 		case "remove":
-			return `${APP_NAME} remove <source> [-l]`;
+			return `${CLI_NAME} remove <source> [-l]`;
 		case "update":
-			return `${APP_NAME} update [source]`;
+			return `${CLI_NAME} update [source]`;
 		case "list":
-			return `${APP_NAME} list`;
+			return `${CLI_NAME} list`;
 	}
 }
 
@@ -221,12 +222,12 @@ Options:
   -l, --local    Install project-locally (.dreb/settings.json)
 
 Examples:
-  ${APP_NAME} install npm:@foo/bar
-  ${APP_NAME} install git:github.com/user/repo
-  ${APP_NAME} install git:git@github.com:user/repo
-  ${APP_NAME} install https://github.com/user/repo
-  ${APP_NAME} install ssh://git@github.com/user/repo
-  ${APP_NAME} install ./local/path
+  ${CLI_NAME} install npm:@foo/bar
+  ${CLI_NAME} install git:github.com/user/repo
+  ${CLI_NAME} install git:git@github.com:user/repo
+  ${CLI_NAME} install https://github.com/user/repo
+  ${CLI_NAME} install ssh://git@github.com/user/repo
+  ${CLI_NAME} install ./local/path
 `);
 			return;
 
@@ -235,14 +236,14 @@ Examples:
   ${getPackageCommandUsage("remove")}
 
 Remove a package and its source from settings.
-Alias: ${APP_NAME} uninstall <source> [-l]
+Alias: ${CLI_NAME} uninstall <source> [-l]
 
 Options:
   -l, --local    Remove from project settings (.dreb/settings.json)
 
 Examples:
-  ${APP_NAME} remove npm:@foo/bar
-  ${APP_NAME} uninstall npm:@foo/bar
+  ${CLI_NAME} remove npm:@foo/bar
+  ${CLI_NAME} uninstall npm:@foo/bar
 `);
 			return;
 
@@ -323,7 +324,7 @@ async function handlePackageCommand(args: string[]): Promise<boolean> {
 
 	if (options.invalidOption) {
 		log.error(chalk.red(`Unknown option ${options.invalidOption} for "${options.command}".`));
-		log.error(chalk.dim(`Use "${APP_NAME} --help" or "${getPackageCommandUsage(options.command)}".`));
+		log.error(chalk.dim(`Use "${CLI_NAME} --help" or "${getPackageCommandUsage(options.command)}".`));
 		process.exitCode = 1;
 		return true;
 	}
@@ -741,7 +742,7 @@ async function handleDashboardCommand(args: string[]): Promise<boolean> {
 			"The dashboard package is not installed.\n\n" +
 				"Install it with:\n" +
 				"  npm install -g @dreb/dashboard\n\n" +
-				"Then run `dreb dashboard` again, or run `dreb-dashboard` directly.",
+				`Then run \`${CLI_NAME} dashboard\` again, or run \`dreb-dashboard\` directly.`,
 		);
 		process.exit(1);
 	}
@@ -785,6 +786,9 @@ async function handleConfigCommand(args: string[]): Promise<boolean> {
 
 export async function main(args: string[]) {
 	resetTimings();
+
+	// Diagnostics is intentionally headless and runs before loading credentials, settings, or extensions.
+	if (handleDiagnosticsCommand(args)) return;
 
 	// Load API keys and provider config from ~/.dreb/secrets/providers.env
 	// Must happen before model resolution or provider initialization

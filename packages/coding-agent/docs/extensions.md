@@ -1,18 +1,18 @@
-> dreb can create extensions. Ask it to build one for your use case.
+> Pierre Dreb can create extensions. Ask it to build one for your use case.
 
 # Extensions
 
-Extensions are TypeScript modules that extend dreb's behavior. They can subscribe to lifecycle events, register custom tools callable by the LLM, add commands, and more.
+Extensions are TypeScript modules that extend Pierre Dreb's behavior. They can subscribe to lifecycle events, register custom tools callable by the LLM, add commands, and more.
 
-> **Placement for /reload:** Put extensions in `~/.dreb/agent/extensions/` (global) or `.dreb/extensions/` (project-local) for auto-discovery. Use `dreb -e ./path.ts` only for quick tests. Extensions in auto-discovered locations can be hot-reloaded with `/reload`.
+> **Placement for /reload:** Put extensions in `~/.dreb/agent/extensions/` (global) or `.dreb/extensions/` (project-local) for auto-discovery. Use `pierre-dreb -e ./path.ts` only for quick tests. Extensions in auto-discovered locations can be hot-reloaded with `/reload`.
 
 **Key capabilities:**
-- **Custom tools** - Register tools the LLM can call via `dreb.registerTool()`
+- **Custom tools** - Register tools the LLM can call via `Pierre Dreb.registerTool()`
 - **Event interception** - Block or modify tool calls, inject context, customize compaction
 - **User interaction** - Prompt users via `ctx.ui` (select, confirm, input, ask, notify)
 - **Custom UI components** - Full TUI components with keyboard input via `ctx.ui.custom()` for complex interactions
-- **Custom commands** - Register commands like `/mycommand` via `dreb.registerCommand()`
-- **Session persistence** - Store state that survives restarts via `dreb.appendEntry()`
+- **Custom commands** - Register commands like `/mycommand` via `Pierre Dreb.registerCommand()`
+- **Session persistence** - Store state that survives restarts via `Pierre Dreb.appendEntry()`
 - **Custom rendering** - Control how tool calls/results and messages appear in TUI
 
 **Example use cases:**
@@ -100,7 +100,7 @@ export default function (dreb: ExtensionAPI) {
 Test with `--extension` (or `-e`) flag:
 
 ```bash
-dreb -e ./my-extension.ts
+pierre-dreb -e ./my-extension.ts
 ```
 
 ## Extension Locations
@@ -131,7 +131,7 @@ Additional paths via `settings.json`:
 }
 ```
 
-To share extensions via npm or git as dreb packages, see [packages.md](packages.md).
+To share extensions via npm or git as Pierre Dreb packages, see [packages.md](packages.md).
 
 ## Available Imports
 
@@ -254,7 +254,7 @@ Run `npm install` in the extension directory, then imports from `node_modules/` 
 ### Lifecycle Overview
 
 ```
-dreb starts (CLI only)
+pierre-dreb starts (CLI only)
   │
   ├─► session_directory (CLI startup only, no ctx)
   └─► session_start
@@ -317,7 +317,7 @@ See [session.md](session.md) for session storage internals and the SessionManage
 
 #### session_directory
 
-Fired by the `dreb` CLI during startup session resolution, before the initial session manager is created.
+Fired by the `pierre-dreb` CLI during startup session resolution, before the initial session manager is created.
 
 This event is:
 - CLI-only. It is not emitted in SDK mode.
@@ -513,7 +513,7 @@ dreb.on("message_end", async (event, ctx) => {
 
 #### stream_retry
 
-Fired when a provider stream drops before its terminal event and dreb discards the partial assistant response before retrying.
+Fired when a provider stream drops before its terminal event and Pierre Dreb discards the partial assistant response before retrying.
 
 ```typescript
 dreb.on("stream_retry", async (event, ctx) => {
@@ -524,7 +524,7 @@ dreb.on("stream_retry", async (event, ctx) => {
 
 #### length_retry
 
-Fired when a turn ends with `stopReason: "length"` (the model exhausted its output token budget mid-response) and dreb discards the truncated partial before retrying with a larger `maxTokens` budget. If all retries are exhausted (or the budget already sits at the model's ceiling), the turn fails loudly instead with an error message ("Response truncated at token limit after N attempts") rather than returning a silently truncated response.
+Fired when a turn ends with `stopReason: "length"` (the model exhausted its output token budget mid-response) and Pierre Dreb discards the truncated partial before retrying with a larger `maxTokens` budget. If all retries are exhausted (or the budget already sits at the model's ceiling), the turn fails loudly instead with an error message ("Response truncated at token limit after N attempts") rather than returning a silently truncated response.
 
 ```typescript
 dreb.on("length_retry", async (event, ctx) => {
@@ -614,7 +614,7 @@ Use this to update UI elements (status bars, footers) or perform model-specific 
 
 Fired after `tool_execution_start`, before the tool executes. **Can block.** Use `isToolCallEventType` to narrow and get typed inputs.
 
-Before `tool_call` runs, dreb waits for previously emitted Agent events to finish draining through `AgentSession`. This means `ctx.sessionManager` is up to date through the current assistant tool-calling message.
+Before `tool_call` runs, Pierre Dreb waits for previously emitted Agent events to finish draining through `AgentSession`. This means `ctx.sessionManager` is up to date through the current assistant tool-calling message.
 
 In the default parallel tool execution mode, sibling tool calls from the same assistant message are preflighted sequentially, then executed concurrently. `tool_call` is not guaranteed to see sibling tool results from that same assistant message in `ctx.sessionManager`.
 
@@ -808,7 +808,7 @@ Control flow helpers.
 
 ### ctx.shutdown()
 
-Request a graceful shutdown of dreb.
+Request a graceful shutdown of Pierre Dreb.
 
 - **Interactive mode:** Deferred until the agent becomes idle (after processing all queued steering and follow-up messages).
 - **RPC mode:** Deferred until the next idle state (after completing the current command response, when waiting for the next command).
@@ -988,17 +988,17 @@ export default function (dreb: ExtensionAPI) {
 
 ## ExtensionAPI Methods
 
-### dreb.on(event, handler)
+### Pierre Dreb.on(event, handler)
 
 Subscribe to events. See [Events](#events) for event types and return values.
 
-### dreb.registerTool(definition)
+### Pierre Dreb.registerTool(definition)
 
 Register a custom tool callable by the LLM. See [Custom Tools](#custom-tools) for full details.
 
-`dreb.registerTool()` works both during extension load and after startup. You can call it inside `session_start`, command handlers, or other event handlers. New tools are refreshed immediately in the same session, so they appear in `dreb.getAllTools()` and are callable by the LLM without `/reload`.
+`Pierre Dreb.registerTool()` works both during extension load and after startup. You can call it inside `session_start`, command handlers, or other event handlers. New tools are refreshed immediately in the same session, so they appear in `Pierre Dreb.getAllTools()` and are callable by the LLM without `/reload`.
 
-Use `dreb.setActiveTools()` to enable or disable tools (including dynamically added tools) at runtime.
+Use `Pierre Dreb.setActiveTools()` to enable or disable tools (including dynamically added tools) at runtime.
 
 Use `promptSnippet` to opt a custom tool into a one-line entry in `Available tools`, and `promptGuidelines` to append tool-specific bullets to the default `Guidelines` section when the tool is active.
 
@@ -1035,7 +1035,7 @@ dreb.registerTool({
 });
 ```
 
-### dreb.sendMessage(message, options?)
+### Pierre Dreb.sendMessage(message, options?)
 
 Inject a custom message into the session.
 
@@ -1058,7 +1058,7 @@ dreb.sendMessage({
   - `"nextTurn"` - Queued for next user prompt. Does not interrupt or trigger anything.
 - `triggerTurn: true` - If agent is idle, trigger an LLM response immediately. Only applies to `"steer"` and `"followUp"` modes (ignored for `"nextTurn"`).
 
-### dreb.sendUserMessage(content, options?)
+### Pierre Dreb.sendUserMessage(content, options?)
 
 Send a user message to the agent. Unlike `sendMessage()` which sends custom messages, this sends an actual user message that appears as if typed by the user. Always triggers a turn.
 
@@ -1086,7 +1086,7 @@ When not streaming, the message is sent immediately and triggers a new turn. Whe
 
 See [send-user-message.ts](../examples/extensions/send-user-message.ts) for a complete example.
 
-### dreb.appendEntry(customType, data?)
+### Pierre Dreb.appendEntry(customType, data?)
 
 Persist extension state (does NOT participate in LLM context).
 
@@ -1103,7 +1103,7 @@ dreb.on("session_start", async (_event, ctx) => {
 });
 ```
 
-### dreb.setSessionName(name)
+### Pierre Dreb.setSessionName(name)
 
 Set the session display name (shown in session selector instead of first message).
 
@@ -1111,7 +1111,7 @@ Set the session display name (shown in session selector instead of first message
 dreb.setSessionName("Refactor auth module");
 ```
 
-### dreb.getSessionName()
+### Pierre Dreb.getSessionName()
 
 Get the current session name, if set.
 
@@ -1122,7 +1122,7 @@ if (name) {
 }
 ```
 
-### dreb.setLabel(entryId, label)
+### Pierre Dreb.setLabel(entryId, label)
 
 Set or clear a label on an entry. Labels are user-defined markers for bookmarking and navigation (shown in `/tree` selector).
 
@@ -1139,11 +1139,11 @@ const label = ctx.sessionManager.getLabel(entryId);
 
 Labels persist in the session and survive restarts. Use them to mark important points (turns, checkpoints) in the conversation tree.
 
-### dreb.registerCommand(name, options)
+### Pierre Dreb.registerCommand(name, options)
 
 Register a command.
 
-If multiple extensions register the same command name, dreb keeps them all and assigns numeric invocation suffixes in load order, for example `/review:1` and `/review:2`.
+If multiple extensions register the same command name, Pierre Dreb keeps them all and assigns numeric invocation suffixes in load order, for example `/review:1` and `/review:2`.
 
 ```typescript
 dreb.registerCommand("stats", {
@@ -1174,7 +1174,7 @@ dreb.registerCommand("deploy", {
 });
 ```
 
-### dreb.getCommands()
+### Pierre Dreb.getCommands()
 
 Get the slash commands available for invocation via `prompt` in the current session. Includes extension commands, prompt templates, and skill commands, in that order.
 
@@ -1207,11 +1207,11 @@ Use `sourceInfo` as the canonical provenance field. Do not infer ownership from 
 
 Built-in commands (like `/model` and `/settings`) are not included here because they are not prompt-invokable and have no resource provenance. RPC clients can discover them separately through `get_commands`; sending one through an RPC prompt command is rejected rather than passed to the model.
 
-### dreb.registerMessageRenderer(customType, renderer)
+### Pierre Dreb.registerMessageRenderer(customType, renderer)
 
 Register a custom TUI renderer for messages with your `customType`. See [Custom UI](#custom-ui).
 
-### dreb.registerShortcut(shortcut, options)
+### Pierre Dreb.registerShortcut(shortcut, options)
 
 Register a keyboard shortcut. See [keybindings.md](keybindings.md) for the shortcut format and built-in keybindings.
 
@@ -1224,7 +1224,7 @@ dreb.registerShortcut("ctrl+shift+p", {
 });
 ```
 
-### dreb.registerFlag(name, options)
+### Pierre Dreb.registerFlag(name, options)
 
 Register a CLI flag.
 
@@ -1241,7 +1241,7 @@ if (dreb.getFlag("--plan")) {
 }
 ```
 
-### dreb.exec(command, args, options?)
+### Pierre Dreb.exec(command, args, options?)
 
 Execute a shell command.
 
@@ -1250,7 +1250,7 @@ const result = await dreb.exec("git", ["status"], { signal, timeout: 5000 });
 // result.stdout, result.stderr, result.code, result.killed
 ```
 
-### dreb.getActiveTools() / dreb.getAllTools() / dreb.setActiveTools(names)
+### Pierre Dreb.getActiveTools() / Pierre Dreb.getAllTools() / Pierre Dreb.setActiveTools(names)
 
 Manage active tools. This works for both built-in tools and dynamically registered tools.
 
@@ -1269,14 +1269,14 @@ const extensionTools = all.filter((t) => t.sourceInfo.source !== "builtin" && t.
 dreb.setActiveTools(["read", "bash"]); // Switch to read-only
 ```
 
-`dreb.getAllTools()` returns `name`, `description`, `parameters`, and `sourceInfo`.
+`Pierre Dreb.getAllTools()` returns `name`, `description`, `parameters`, and `sourceInfo`.
 
 Typical `sourceInfo.source` values:
 - `builtin` for built-in tools
 - `sdk` for tools passed via `createAgentSession({ customTools })`
 - extension source metadata for tools registered by extensions
 
-### dreb.setModel(model)
+### Pierre Dreb.setModel(model)
 
 Set the current model. Returns `false` if no API key is available for the model. See [models.md](models.md) for configuring custom models.
 
@@ -1290,7 +1290,7 @@ if (model) {
 }
 ```
 
-### dreb.getThinkingLevel() / dreb.setThinkingLevel(level)
+### Pierre Dreb.getThinkingLevel() / Pierre Dreb.setThinkingLevel(level)
 
 Get or set the thinking level. Level is clamped to model capabilities (non-reasoning models always use "off").
 
@@ -1299,7 +1299,7 @@ const current = dreb.getThinkingLevel();  // "off" | "minimal" | "low" | "medium
 dreb.setThinkingLevel("high");
 ```
 
-### dreb.events
+### Pierre Dreb.events
 
 Shared event bus for communication between extensions:
 
@@ -1308,7 +1308,7 @@ dreb.events.on("my:event", (data) => { ... });
 dreb.events.emit("my:event", { ... });
 ```
 
-### dreb.registerProvider(name, config)
+### Pierre Dreb.registerProvider(name, config)
 
 Register or override a model provider dynamically. Useful for proxies, custom endpoints, or team-wide model configurations.
 
@@ -1374,7 +1374,7 @@ dreb.registerProvider("corporate-ai", {
 
 See [custom-provider.md](custom-provider.md) for advanced topics: custom streaming APIs, OAuth details, model definition reference.
 
-### dreb.unregisterProvider(name)
+### Pierre Dreb.unregisterProvider(name)
 
 Remove a previously registered provider and its models. Built-in models that were overridden by the provider are restored. Has no effect if the provider was not registered.
 
@@ -1425,11 +1425,11 @@ export default function (dreb: ExtensionAPI) {
 
 ## Custom Tools
 
-Register tools the LLM can call via `dreb.registerTool()`. Tools appear in the system prompt and can have custom rendering.
+Register tools the LLM can call via `Pierre Dreb.registerTool()`. Tools appear in the system prompt and can have custom rendering.
 
 Use `promptSnippet` for a short one-line entry in the `Available tools` section in the default system prompt. If omitted, custom tools are left out of that section.
 
-Use `promptGuidelines` to add tool-specific bullets to the default system prompt `Guidelines` section. These bullets are included only while the tool is active (for example, after `dreb.setActiveTools([...])`).
+Use `promptGuidelines` to add tool-specific bullets to the default system prompt `Guidelines` section. These bullets are included only while the tool is active (for example, after `Pierre Dreb.setActiveTools([...])`).
 
 Note: Some models are idiots and include the @ prefix in tool path arguments. Built-in tools strip a leading @ before resolving paths. If your custom tool accepts a path, normalize a leading @ as well.
 
@@ -1531,13 +1531,13 @@ Extensions can override built-in tools (`read`, `bash`, `edit`, `write`, `grep`,
 
 ```bash
 # Extension's read tool replaces built-in read
-dreb -e ./tool-override.ts
+pierre-dreb -e ./tool-override.ts
 ```
 
 Alternatively, use `--no-tools` to start without any built-in tools:
 ```bash
 # No built-in tools, only extension tools
-dreb --no-tools -e ./my-extension.ts
+pierre-dreb --no-tools -e ./my-extension.ts
 ```
 
 See [examples/extensions/tool-override.ts](../examples/extensions/tool-override.ts) for a complete example that overrides `read` with logging and access control.
@@ -1549,19 +1549,19 @@ See [examples/extensions/tool-override.ts](../examples/extensions/tool-override.
 **Your implementation must match the exact result shape**, including the `details` type. The UI and session logic depend on these shapes for rendering and state tracking.
 
 Built-in tool implementations:
-- [read.ts](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/tools/read.ts) - `ReadToolDetails`
-- [bash.ts](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/tools/bash.ts) - `BashToolDetails`
-- [edit.ts](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/tools/edit.ts)
-- [write.ts](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/tools/write.ts)
-- [grep.ts](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/tools/grep.ts) - `GrepToolDetails`
-- [find.ts](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/tools/find.ts) - `FindToolDetails`
-- [ls.ts](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/tools/ls.ts) - `LsToolDetails`
-- [web.ts](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/tools/web.ts) - `web_search` and `web_fetch`
-- [subagent.ts](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/tools/subagent.ts)
-- [wait.ts](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/tools/wait.ts)
-- [watch-github-ci.ts](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/tools/watch-github-ci.ts) - `watch_github_ci`
-- [skill.ts](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/tools/skill.ts) - factory-only
-- [tasks.ts](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/tools/tasks.ts) - factory-only
+- [read.ts](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/tools/read.ts) - `ReadToolDetails`
+- [bash.ts](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/tools/bash.ts) - `BashToolDetails`
+- [edit.ts](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/tools/edit.ts)
+- [write.ts](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/tools/write.ts)
+- [grep.ts](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/tools/grep.ts) - `GrepToolDetails`
+- [find.ts](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/tools/find.ts) - `FindToolDetails`
+- [ls.ts](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/tools/ls.ts) - `LsToolDetails`
+- [web.ts](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/tools/web.ts) - `web_search` and `web_fetch`
+- [subagent.ts](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/tools/subagent.ts)
+- [wait.ts](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/tools/wait.ts)
+- [watch-github-ci.ts](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/tools/watch-github-ci.ts) - `watch_github_ci`
+- [skill.ts](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/tools/skill.ts) - factory-only
+- [tasks.ts](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/tools/tasks.ts) - factory-only
 
 ### Remote Execution
 
@@ -1594,7 +1594,7 @@ dreb.registerTool({
 
 **Operations interfaces:** `ReadOperations`, `WriteOperations`, `EditOperations`, `BashOperations`, `LsOperations`, `GrepOperations`, `FindOperations`
 
-For `user_bash`, extensions can reuse dreb's local shell backend via `createLocalBashOperations()` instead of reimplementing local process spawning, shell resolution, and process-tree termination.
+For `user_bash`, extensions can reuse Pierre Dreb's local shell backend via `createLocalBashOperations()` instead of reimplementing local process spawning, shell resolution, and process-tree termination.
 
 The bash tool also supports a spawn hook to adjust the command, cwd, or env before execution:
 
@@ -1684,7 +1684,7 @@ export default function (dreb: ExtensionAPI) {
 
 ### Custom Rendering
 
-Tools can provide `renderCall` and `renderResult` for custom TUI display. See [tui.md](tui.md) for the full component API and [tool-execution.ts](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/modes/interactive/components/tool-execution.ts) for how tool rows are composed.
+Tools can provide `renderCall` and `renderResult` for custom TUI display. See [tui.md](tui.md) for the full component API and [tool-execution.ts](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/modes/interactive/components/tool-execution.ts) for how tool rows are composed.
 
 Tool output is wrapped in a `Box` that handles padding and background. A defined `renderCall` or `renderResult` must return a `Component`. If a slot renderer is not defined, `tool-execution.ts` uses fallback rendering for that slot.
 
@@ -1914,7 +1914,7 @@ ctx.ui.setFooter((tui, theme) => ({
 ctx.ui.setFooter(undefined);  // Restore built-in footer
 
 // Terminal title
-ctx.ui.setTitle("dreb - my-project");
+ctx.ui.setTitle("pierre-dreb - my-project");
 
 // Editor text
 ctx.ui.setEditorText("Prefill text");
@@ -2062,7 +2062,7 @@ dreb.registerMessageRenderer("my-extension", (message, options, theme) => {
 });
 ```
 
-Messages are sent via `dreb.sendMessage()`:
+Messages are sent via `Pierre Dreb.sendMessage()`:
 
 ```typescript
 dreb.sendMessage({
@@ -2192,7 +2192,7 @@ All examples in [examples/extensions/](../examples/extensions/).
 | `custom-provider-gitlab-duo/` | GitLab Duo integration | `registerProvider` with OAuth |
 | **Messages & Communication** |||
 | `message-renderer.ts` | Custom message rendering | `registerMessageRenderer`, `sendMessage` |
-| `event-bus.ts` | Inter-extension events | `dreb.events` |
+| `event-bus.ts` | Inter-extension events | `Pierre Dreb.events` |
 | **Session Metadata** |||
 | `session-name.ts` | Name sessions for selector | `setSessionName`, `getSessionName` |
 | `bookmark.ts` | Bookmark entries for /tree | `setLabel` |

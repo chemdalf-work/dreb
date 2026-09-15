@@ -1,4 +1,5 @@
 import { readFileSync, statSync } from "node:fs";
+import { CLI_NAME } from "../config.js";
 import { parseFrontmatter } from "../utils/frontmatter.js";
 import { resolveToCwd } from "./tools/path-utils.js";
 
@@ -105,7 +106,7 @@ export function validateModelRoutingGuideContent(
 ): ValidatedModelRoutingGuide {
 	if (activeModelIds.length === 0) {
 		throw new ModelRoutingGuideError(
-			"Dispatch arbitration requires a non-empty explicit live model scope. Start dreb with --models or configure enabledModels.",
+			`Dispatch arbitration requires a non-empty explicit live model scope. Start ${CLI_NAME} with --models or configure enabledModels.`,
 		);
 	}
 	if (new Set(activeModelIds).size !== activeModelIds.length) {

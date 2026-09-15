@@ -1,6 +1,6 @@
 # Windows Setup
 
-dreb's built-in tools (`bash`, `grep`, `find`) execute commands through a bash shell. Windows doesn't ship with bash, so dreb searches for one at startup.
+Pierre Dreb's built-in tools (`bash`, `grep`, `find`) execute commands through a bash shell. Windows doesn't ship with bash, so Pierre Dreb searches for one at startup.
 
 ## Shell resolution order
 
@@ -20,7 +20,7 @@ For most users, [Git for Windows](https://git-scm.com/download/win) is the simpl
 
 ## PowerShell
 
-PowerShell is not supported. dreb's tool execution assumes bash semantics (pipes, redirects, `&&`/`||`, glob expansion). PowerShell uses different syntax for all of these, so commands the model generates would fail silently or behave unexpectedly.
+PowerShell is not supported. Pierre Dreb's tool execution assumes bash semantics (pipes, redirects, `&&`/`||`, glob expansion). PowerShell uses different syntax for all of these, so commands the model generates would fail silently or behave unexpectedly.
 
 ## WSL vs Git Bash
 
@@ -29,7 +29,7 @@ Both work. Tradeoffs:
 - **Git Bash** — lightweight, no VM, accesses Windows filesystem directly. Some Unix tools are missing or behave slightly differently (e.g., `find` flags).
 - **WSL** — full Linux environment, all tools behave as expected. Filesystem access across the Windows/Linux boundary is slower. If your project lives on the Windows filesystem, Git Bash may be faster for file operations.
 
-If you use WSL, consider running dreb entirely inside WSL rather than from Windows pointing at WSL's bash.
+If you use WSL, consider running Pierre Dreb entirely inside WSL rather than from Windows pointing at WSL's bash.
 
 ## Common issues
 
@@ -49,13 +49,13 @@ Or add a `.gitattributes` file:
 
 ### Paths with spaces
 
-dreb handles spaces in paths, but some tools the model invokes may not. If you see unexpected errors, check whether your project path contains spaces.
+Pierre Dreb handles spaces in paths, but some tools the model invokes may not. If you see unexpected errors, check whether your project path contains spaces.
 
 ### Shell detection failures
 
-If dreb can't find bash:
+If Pierre Dreb can't find bash:
 
 1. Verify bash exists: open a terminal and run `bash --version`
 2. Check your PATH: `echo %PATH%` (cmd) or `$env:PATH` (PowerShell)
 3. Set the path explicitly in `settings.json` (see above)
-4. Check the debug log: run `/debug` in dreb, then look at `~/.dreb/agent/dreb-debug.log`
+4. Check the debug log: run `/debug` in Pierre Dreb, then look at `~/.dreb/agent/dreb-debug.log`

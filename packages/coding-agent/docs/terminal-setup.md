@@ -1,6 +1,6 @@
 # Terminal Setup
 
-dreb uses the [Kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/) for reliable modifier key detection. Most modern terminals support this protocol, but some require configuration.
+Pierre Dreb uses the [Kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/) for reliable modifier key detection. Most modern terminals support this protocol, but some require configuration.
 
 ## Kitty, iTerm2
 
@@ -20,9 +20,9 @@ You may have a Ghostty mapping that sends a raw linefeed for `Shift+Enter`:
 keybind = shift+enter=text:\n
 ```
 
-This is indistinguishable from `Ctrl+J` inside dreb, so tmux and dreb can't see a real `shift+enter` key event. If you don't need this mapping for another tool, remove it.
+This is indistinguishable from `Ctrl+J` inside Pierre Dreb, so tmux and Pierre Dreb can't see a real `shift+enter` key event. If you don't need this mapping for another tool, remove it.
 
-If you want `Shift+Enter` to keep working in tmux with that remap active, add `ctrl+j` to your dreb `tui.input.newLine` keybinding in `~/.dreb/agent/keybindings.json`:
+If you want `Shift+Enter` to keep working in tmux with that remap active, add `ctrl+j` to your Pierre Dreb `tui.input.newLine` keybinding in `~/.dreb/agent/keybindings.json`:
 
 ```json
 {
@@ -61,7 +61,7 @@ Add to `keybindings.json` to enable `Shift+Enter` for multi-line input:
 
 ## Windows Terminal
 
-Add to `settings.json` (Ctrl+Shift+, or Settings → Open JSON file) to forward the modified Enter keys dreb uses:
+Add to `settings.json` (Ctrl+Shift+, or Settings → Open JSON file) to forward the modified Enter keys Pierre Dreb uses:
 
 ```json
 {
@@ -79,8 +79,8 @@ Add to `settings.json` (Ctrl+Shift+, or Settings → Open JSON file) to forward 
 ```
 
 - `Shift+Enter` inserts a new line.
-- Windows Terminal binds `Alt+Enter` to fullscreen by default. That prevents dreb from receiving `Alt+Enter` for follow-up queueing.
-- Remapping `Alt+Enter` to `sendInput` forwards the real key chord to dreb instead.
+- Windows Terminal binds `Alt+Enter` to fullscreen by default. That prevents Pierre Dreb from receiving `Alt+Enter` for follow-up queueing.
+- Remapping `Alt+Enter` to `sendInput` forwards the real key chord to Pierre Dreb instead.
 
 If you already have an `actions` array, add the objects to it. If the old fullscreen behavior persists, fully close and reopen Windows Terminal.
 
@@ -99,6 +99,6 @@ For the best experience, use a terminal that supports the Kitty keyboard protoco
 
 The built-in terminal has limited escape sequence support. Shift+Enter cannot be distinguished from Enter in IntelliJ's terminal.
 
-If you want the hardware cursor visible, set `DREB_HARDWARE_CURSOR=1` before running dreb (disabled by default for compatibility).
+If you want the hardware cursor visible, set `DREB_HARDWARE_CURSOR=1` before running Pierre Dreb (disabled by default for compatibility).
 
 Consider using a dedicated terminal emulator for the best experience.

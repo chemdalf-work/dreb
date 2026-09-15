@@ -514,7 +514,7 @@ describe("AgentSession model-specific system prompts", () => {
 
 		try {
 			expect(session.systemPrompt).toMatch(/^CUSTOM MODEL REPLACEMENT/);
-			expect(session.systemPrompt).not.toContain("You are an expert coding assistant operating inside dreb");
+			expect(session.systemPrompt).not.toContain("You are an expert coding assistant operating inside Pierre Dreb");
 			expect(session.systemPrompt).toContain("You are running on: ollama/team/qwen-local");
 		} finally {
 			session.dispose();
@@ -538,11 +538,15 @@ describe("AgentSession model-specific system prompts", () => {
 		}).session;
 
 		try {
-			expect(defaultSession.systemPrompt).toContain("You are an expert coding assistant operating inside dreb");
+			expect(defaultSession.systemPrompt).toContain(
+				"You are an expert coding assistant operating inside Pierre Dreb",
+			);
 			expect(defaultSession.systemPrompt).toContain(modelAppend);
 			expect(explicitSession.systemPrompt).toMatch(/^EXPLICIT REPLACEMENT/);
 			expect(explicitSession.systemPrompt).toContain(modelAppend);
-			expect(explicitSession.systemPrompt).not.toContain("You are an expert coding assistant operating inside dreb");
+			expect(explicitSession.systemPrompt).not.toContain(
+				"You are an expert coding assistant operating inside Pierre Dreb",
+			);
 		} finally {
 			defaultSession.dispose();
 			explicitSession.dispose();
@@ -726,7 +730,7 @@ describe("AgentSession model-specific system prompts", () => {
 			writeFileSync(modelsJsonPath, JSON.stringify({ providers: {} }));
 			await session.reload();
 			expect(session.systemPrompt).not.toContain(afterReload);
-			expect(session.systemPrompt).toContain("You are an expert coding assistant operating inside dreb");
+			expect(session.systemPrompt).toContain("You are an expert coding assistant operating inside Pierre Dreb");
 		} finally {
 			session.dispose();
 			rmSync(dir, { recursive: true, force: true });

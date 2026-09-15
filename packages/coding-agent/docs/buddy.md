@@ -4,7 +4,7 @@ The buddy is an optional companion that lives in the sidebar of the TUI. It reac
 
 ## Setup
 
-The buddy requires [Ollama](https://ollama.com) running locally. Install it, pull a model, then use `/buddy` in dreb to hatch your companion.
+The buddy requires [Ollama](https://ollama.com) running locally. Install it, pull a model, then use `/buddy` in Pierre Dreb to hatch your companion.
 
 ```bash
 # Install Ollama and pull a model
@@ -33,7 +33,7 @@ The buddy won't react until a model is configured. The choice is persisted acros
 | `/buddy pet` | Pet your buddy |
 | `/buddy reroll` | Reroll for a new buddy (new species, name, personality) |
 | `/buddy stats` | Show buddy stats panel |
-| `/buddy off` | Hide the buddy (persists across sessions, and syncs to any other dreb instance running concurrently — see [Persistence & multiple instances](#persistence--multiple-instances)) |
+| `/buddy off` | Hide the buddy (persists across sessions, and syncs to any other Pierre Dreb instance running concurrently — see [Persistence & multiple instances](#persistence--multiple-instances)) |
 
 ## How It Works
 
@@ -44,7 +44,7 @@ The buddy won't react until a model is configured. The choice is persisted acros
 
 ## Persistence & multiple instances
 
-The buddy's state — including whether it's hidden via `/buddy off` — lives in a shared file at `~/.dreb/agent/buddy.json`. All dreb instances on the machine (multiple TUIs, and the Telegram bridge) read and write the same file.
+The buddy's state — including whether it's hidden via `/buddy off` — lives in a shared file at `~/.dreb/agent/buddy.json`. All Pierre Dreb instances on the machine (multiple TUIs, and the Telegram bridge) read and write the same file.
 
 Because the state is shared, `/buddy off` (and bringing the buddy back with `/buddy`) **converges across every concurrently-running instance**: each instance re-checks the persisted flag at turn boundaries (when you send a message and when the agent finishes responding), so a buddy you hide in one terminal disappears from the others within one interaction — no restart required. Deleting `~/.dreb/agent/buddy.json` removes the buddy entirely on the next interaction everywhere.
 
@@ -116,4 +116,4 @@ ollama show phi4-mini-reasoning-fixed
 
 ### Reasoning model thinks but never responds
 
-If the buddy shows the activity indicator for a while but never produces a quip, the model may be spending its entire token budget on reasoning. dreb allocates 2048 tokens for buddy responses, which should be enough for most models, but very verbose reasoners may still exhaust it. Consider using a non-reasoning model for the buddy, or a smaller/faster one.
+If the buddy shows the activity indicator for a while but never produces a quip, the model may be spending its entire token budget on reasoning. Pierre Dreb allocates 2048 tokens for buddy responses, which should be enough for most models, but very verbose reasoners may still exhaust it. Consider using a non-reasoning model for the buddy, or a smaller/faster one.

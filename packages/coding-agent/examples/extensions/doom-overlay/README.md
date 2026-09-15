@@ -1,11 +1,11 @@
 # DOOM Overlay Demo
 
-Play DOOM as an overlay in dreb. Demonstrates that the overlay system can handle real-time game rendering at 35 FPS.
+Play DOOM as an overlay in Pierre Dreb. Demonstrates that the overlay system can handle real-time game rendering at 35 FPS.
 
 ## Usage
 
 ```bash
-dreb --extension ./examples/extensions/doom-overlay
+pierre-dreb --extension ./examples/extensions/doom-overlay
 ```
 
 Then run:

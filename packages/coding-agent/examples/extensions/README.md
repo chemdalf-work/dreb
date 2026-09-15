@@ -6,7 +6,7 @@ Example extensions for dreb-coding-agent.
 
 ```bash
 # Load an extension with --extension flag
-dreb --extension examples/extensions/permission-gate.ts
+pierre-dreb --extension examples/extensions/permission-gate.ts
 
 # Or copy to extensions directory for auto-discovery
 cp permission-gate.ts ~/.dreb/agent/extensions/
@@ -54,7 +54,7 @@ cp permission-gate.ts ~/.dreb/agent/extensions/
 | `widget-placement.ts` | Shows widgets above and below the editor via `ctx.ui.setWidget()` placement |
 | `model-status.ts` | Shows model changes in status bar via `model_select` hook |
 | `snake.ts` | Snake game with custom UI, keyboard handling, and session persistence |
-| `send-user-message.ts` | Demonstrates `dreb.sendUserMessage()` for sending user messages from extensions |
+| `send-user-message.ts` | Demonstrates `Pierre Dreb.sendUserMessage()` for sending user messages from extensions |
 | `timed-confirm.ts` | Demonstrates AbortSignal for auto-dismissing `ctx.ui.confirm()` and `ctx.ui.select()` dialogs |
 | `rpc-demo.ts` | Exercises all RPC-supported extension UI methods; pair with [`examples/rpc-extension-ui.ts`](../rpc-extension-ui.ts) |
 | `modal-editor.ts` | Custom vim-like modal editor via `ctx.ui.setEditorComponent()` |
@@ -92,7 +92,7 @@ cp permission-gate.ts ~/.dreb/agent/extensions/
 
 | Extension | Description |
 |-----------|-------------|
-| `mac-system-theme.ts` | Syncs dreb theme with macOS dark/light mode |
+| `mac-system-theme.ts` | Syncs Pierre Dreb theme with macOS dark/light mode |
 
 ### Resources
 
@@ -105,7 +105,7 @@ cp permission-gate.ts ~/.dreb/agent/extensions/
 | Extension | Description |
 |-----------|-------------|
 | `message-renderer.ts` | Custom message rendering with colors and expandable details via `registerMessageRenderer` |
-| `event-bus.ts` | Inter-extension communication via `dreb.events` |
+| `event-bus.ts` | Inter-extension communication via `Pierre Dreb.events` |
 
 ### Session Metadata
 

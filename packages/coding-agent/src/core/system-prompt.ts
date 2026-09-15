@@ -2,7 +2,7 @@
  * System prompt construction and project context loading
  */
 
-import { getDocsPath, getExamplesPath, getReadmePath } from "../config.js";
+import { getDocsPath, getExamplesPath, getReadmePath, PRODUCT_NAME } from "../config.js";
 import type { GitRepoState } from "./git-repo-state.js";
 import { getMemoryInstructions } from "./memory-prompt.js";
 import type { MemoryIndexes } from "./resource-loader.js";
@@ -318,7 +318,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 
 	const guidelines = guidelinesList.map((g) => `- ${g}`).join("\n");
 
-	let prompt = `You are an expert coding assistant operating inside dreb, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
+	let prompt = `You are an expert coding assistant operating inside ${PRODUCT_NAME}, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
 
 Available tools:
 ${toolsList}

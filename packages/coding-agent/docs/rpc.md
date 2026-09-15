@@ -28,7 +28,7 @@ Child stdio pipe failures (e.g. an `EPIPE` when writing a large prompt to a dyin
 ## Starting RPC Mode
 
 ```bash
-dreb --mode rpc [options]
+pierre-dreb --mode rpc [options]
 ```
 
 Common options:
@@ -84,7 +84,7 @@ With images:
 
 If the agent is streaming and no `streamingBehavior` is specified, the command returns an error.
 
-**Extension commands**: If the message is an extension command (e.g., `/mycommand`), it executes immediately even during streaming. Extension commands manage their own LLM interaction via `dreb.sendMessage()`.
+**Extension commands**: If the message is an extension command (e.g., `/mycommand`), it executes immediately even during streaming. Extension commands manage their own LLM interaction via `Pierre Dreb.sendMessage()`.
 
 **Input expansion**: Skill commands (`/skill:name`) and prompt templates (`/template`) are expanded before sending/queueing.
 
@@ -1041,14 +1041,14 @@ Response:
 
 Every command has `name`, optional `description`, and a `source`:
 
-- `"extension"`: registered via `dreb.registerCommand()`; prompt-invokable and includes `sourceInfo`.
+- `"extension"`: registered via `Pierre Dreb.registerCommand()`; prompt-invokable and includes `sourceInfo`.
 - `"prompt"`: loaded prompt template; prompt-invokable and includes `sourceInfo`.
 - `"skill"`: loaded skill (name prefixed with `skill:`); prompt-invokable and includes `sourceInfo`.
 - `"builtin"`: core slash command; not prompt-invokable, has no file `sourceInfo`, and includes `dashboard`. A false value means dashboard clients should omit it from autocomplete while still intercepting typed use with terminal-only guidance.
 
 Names are deduplicated, with a built-in taking precedence over a colliding resource command. Future registry entries appear automatically. Hidden development commands are intentionally not registered and do not appear.
 
-The extension SDK's `dreb.getCommands()` contract is unchanged: it continues to return only commands invokable via `prompt`, with required resource provenance. Built-ins are added only to this RPC discovery surface.
+The extension SDK's `Pierre Dreb.getCommands()` contract is unchanged: it continues to return only commands invokable via `prompt`, with required resource provenance. Built-ins are added only to this RPC discovery surface.
 
 ### Session Listing
 
@@ -1735,7 +1735,7 @@ All four context-trust commands concern only future lazy nested/out-of-cwd loads
 
 #### get_version
 
-Get the dreb version.
+Get the Pierre Dreb version.
 
 ```json
 {"type": "get_version"}
@@ -2289,7 +2289,7 @@ Set the terminal window/tab title. Fire-and-forget.
   "type": "extension_ui_request",
   "id": "uuid-8",
   "method": "setTitle",
-  "title": "dreb - my project"
+  "title": "pierre-dreb - my project"
 }
 ```
 

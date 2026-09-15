@@ -23,10 +23,10 @@ Inspired by [mach10](https://github.com/LeanAndMean/mach10) (MIT, by Kevin Ryan)
 Install the separately maintained package once to make its advisory routing available to later main sessions and subagents automatically:
 
 ```bash
-dreb install git:github.com/chemdalf-work/dreb-context-mode
+pierre-dreb install git:github.com/chemdalf-work/dreb-context-mode
 ```
 
-This does not add a generic MCP client to dreb's core and is not universal deterministic interception. MACH6 starts discovery with `search`; native tools handle small, exact, ordered, edit, and Git/CI/version/release/publish evidence, while `context_mode` is only for precise large derived analysis or broad gathers. Treat derived output as non-proof and verify material claims directly. On failure, show a bounded visible diagnostic and continue natively—never silently fall back or accept partial protocol output as success. Child handoffs repeat this boundary; never call `ctx_*` directly or expose arbitrary MCP methods. RTK remains rejected because of fidelity, exit-code, and actionable-diagnostic failures. See the [package](https://github.com/chemdalf-work/dreb-context-mode) for its process privileges and persistent storage boundary.
+This does not add a generic MCP client to Pierre Dreb's core and is not universal deterministic interception. MACH6 starts discovery with `search`; native tools handle small, exact, ordered, edit, and Git/CI/version/release/publish evidence, while `context_mode` is only for precise large derived analysis or broad gathers. Treat derived output as non-proof and verify material claims directly. On failure, show a bounded visible diagnostic and continue natively—never silently fall back or accept partial protocol output as success. Child handoffs repeat this boundary; never call `ctx_*` directly or expose arbitrary MCP methods. RTK remains rejected because of fidelity, exit-code, and actionable-diagnostic failures. See the [package](https://github.com/chemdalf-work/dreb-context-mode) for its process privileges and persistent storage boundary.
 
 | MACH6 stage | Additional limit |
 |---|---|

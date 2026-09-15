@@ -1,6 +1,6 @@
 # Shell Aliases
 
-dreb runs bash in non-interactive mode (`bash -c "<command>"`). Non-interactive bash doesn't load your shell config files (`.bashrc`, `.bash_profile`) and doesn't expand aliases by default.
+Pierre Dreb runs bash in non-interactive mode (`bash -c "<command>"`). Non-interactive bash doesn't load your shell config files (`.bashrc`, `.bash_profile`) and doesn't expand aliases by default.
 
 ## Enabling aliases
 
@@ -12,7 +12,7 @@ Add to `~/.dreb/agent/settings.json`:
 }
 ```
 
-The `shellCommandPrefix` is prepended to every bash command dreb executes. This sources your config and enables alias expansion.
+The `shellCommandPrefix` is prepended to every bash command Pierre Dreb executes. This sources your config and enables alias expansion.
 
 Adjust the path to match your shell config: `~/.bashrc`, `~/.bash_profile`, etc.
 
@@ -44,7 +44,7 @@ Complex zsh/fish aliases that use shell-specific syntax won't translate to bash.
 
 ## Alternative: wrapper scripts
 
-If you have commands you frequently want dreb to use (e.g., `docker-compose`, `kubectl` shortcuts), you can create small scripts in a directory on your `$PATH` instead of relying on aliases:
+If you have commands you frequently want Pierre Dreb to use (e.g., `docker-compose`, `kubectl` shortcuts), you can create small scripts in a directory on your `$PATH` instead of relying on aliases:
 
 ```bash
 #!/bin/bash

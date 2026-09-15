@@ -10,8 +10,8 @@ See [AGENTS.md](../../../AGENTS.md) for build requirements, release protocol, an
 ## Setup
 
 ```bash
-git clone https://github.com/aebrer/dreb
-cd dreb
+git clone https://github.com/chemdalf-work/pierre-dreb
+cd pierre-dreb
 npm install
 npm run build
 ```
@@ -22,7 +22,7 @@ Run from source:
 node /path/to/dreb/packages/coding-agent/dist/cli.js
 ```
 
-The script can be run from any directory. dreb keeps the caller's current working directory.
+The script can be run from any directory. Pierre Dreb keeps the caller's current working directory.
 
 ## Monorepo structure
 
@@ -86,22 +86,30 @@ The pre-commit hook runs in order: biome check → `tsgo --noEmit` → `test.sh`
 
 ## Forking / Rebranding
 
-Configure via `package.json`:
+Product identity and compatibility paths are configured independently in `package.json`:
 
 ```json
 {
   "drebConfig": {
-    "name": "dreb",
-    "configDir": ".dreb"
+    "displayName": "Pierre Dreb",
+    "commandName": "pierre-dreb",
+    "compatibilityName": "dreb",
+    "configDir": ".dreb",
+    "envPrefix": "DREB",
+    "upstreamBaseline": "aebrer/dreb@52583b0"
+  },
+  "bin": {
+    "pierre-dreb": "dist/cli.js",
+    "dreb": "dist/cli.js"
   }
 }
 ```
 
-Change `name`, `configDir`, and `bin` field for your fork. Affects CLI banner, config paths, and environment variable names.
+`displayName` controls user-facing branding and `commandName` controls examples and diagnostics. `compatibilityName`, `configDir`, and `envPrefix` remain independent so a fork can change its visible identity without breaking existing `~/.dreb`, project `.dreb`, or `DREB_*` behavior. During a command transition, both bin names should point to the same compiled entry point.
 
 ## Path Resolution
 
-dreb runs in three execution modes (npm install, standalone binary, tsx from source), all of which need to find package assets correctly.
+Pierre Dreb runs in three execution modes (npm install, standalone binary, tsx from source), all of which need to find package assets correctly.
 
 **Always use `src/config.ts`** for package assets:
 

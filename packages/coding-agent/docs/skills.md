@@ -1,10 +1,10 @@
-> dreb can create skills. Ask it to build one for your use case.
+> Pierre Dreb can create skills. Ask it to build one for your use case.
 
 # Skills
 
 Skills are self-contained capability packages that the agent loads on-demand. A skill provides specialized workflows, setup instructions, helper scripts, and reference documentation for specific tasks.
 
-dreb implements the [Agent Skills standard](https://agentskills.io/specification), warning about violations but remaining lenient.
+Pierre Dreb implements the [Agent Skills standard](https://agentskills.io/specification), warning about violations but remaining lenient.
 
 ## Table of Contents
 
@@ -23,7 +23,7 @@ dreb implements the [Agent Skills standard](https://agentskills.io/specification
 
 > **Note:** Skills can instruct the model to run commands and may include executable code. Skim what you're loading, same as any other dependency.
 
-dreb loads skills from:
+Pierre Dreb loads skills from:
 
 - Global:
   - `~/.dreb/agent/skills/`
@@ -31,7 +31,7 @@ dreb loads skills from:
 - Project:
   - `.dreb/skills/`
   - `.agents/skills/` in `cwd` and ancestor directories (up to git repo root, or filesystem root when not in a repo)
-- Packages: `skills/` directories or `dreb.skills` entries in `package.json`
+- Packages: `skills/` directories or `Pierre Dreb.skills` entries in `package.json`
 - Settings: `skills` array with files or directories
 - CLI: `--skill <path>` (repeatable, additive even with `--no-skills`)
 
@@ -64,7 +64,7 @@ For project-level Claude Code skills, add to `.dreb/settings.json`:
 
 ## How Skills Work
 
-1. At startup, dreb scans skill locations and extracts names and descriptions
+1. At startup, Pierre Dreb scans skill locations and extracts names and descriptions
 2. The system prompt includes available skills in XML format per the [specification](https://agentskills.io/integrate-skills)
 3. When a task matches, the agent uses the `skill` tool to load the full SKILL.md with content substitution applied
 4. Users can also invoke skills directly via `/skill:name [args]` slash commands
@@ -222,7 +222,7 @@ Usage: `/skill:review-file src/main.ts "security" "performance"`
 
 ## Validation
 
-dreb validates skills against the Agent Skills standard. Most issues produce warnings but still load the skill:
+Pierre Dreb validates skills against the Agent Skills standard. Most issues produce warnings but still load the skill:
 
 - Name doesn't match parent directory
 - Name exceeds 64 characters or contains invalid characters
@@ -275,7 +275,7 @@ cd ${DREB_SKILL_DIR} && npm install
 
 ## Built-in Skills
 
-dreb ships with **mach6**, a development workflow that orchestrates the full issue-to-merge lifecycle using GitHub as shared memory. Six skills cover each stage:
+Pierre Dreb ships with **mach6**, a development workflow that orchestrates the full issue-to-merge lifecycle using GitHub as shared memory. Six skills cover each stage:
 
 | Skill | What it does |
 |---|---|
@@ -318,11 +318,11 @@ When model scope rotates, update the existing guide incrementally instead of reg
 
 Model-pattern arguments after the optional `update` keyword take precedence over `enabledModels`; the skill selects one source and does not search for any other runtime or session scope. Because this Stage 1 workflow is implemented only as a skill, it cannot discover the current session's `--models` value or later in-session scope changes. To research that runtime scope, pass the same comma-separated patterns as skill arguments.
 
-The skill refuses missing/empty and effectively all-model scopes. It obtains available candidates with `dreb --list-models`, resolves the selected patterns to canonical provider/model IDs, snapshots existing files under `~/.dreb/agent/subagent-sessions/`, and combines sanitized aggregate local observations with official documentation, model cards, benchmarks, issue trackers, forums, and practitioner reports. Existing unreadable or malformed child logs fail the run; a genuinely empty history is labeled cold-start.
+The skill refuses missing/empty and effectively all-model scopes. It obtains available candidates with `pierre-dreb --list-models`, resolves the selected patterns to canonical provider/model IDs, snapshots existing files under `~/.dreb/agent/subagent-sessions/`, and combines sanitized aggregate local observations with official documentation, model cards, benchmarks, issue trackers, forums, and practitioner reports. Existing unreadable or malformed child logs fail the run; a genuinely empty history is labeled cold-start.
 
 The generated `~/.dreb/agent/model-routing-guide.md` is human-readable Markdown with schema-versioned YAML frontmatter and one validated section per canonical candidate. Evidence is labeled as vendor claims, measured benchmarks, community reports, or local observations, with dates, confidence, sample counts, contrary findings, and explicit unknowns. The workflow prohibits copied prompts, outputs, tool arguments, secrets, paths, and identifying project details.
 
-Semantic local-evidence assessment uses normal dreb tools, so inspected session content is processed by the active research model's configured provider. The persisted guide is sanitized and generalized, but invoking the skill is still a decision to send the inspected evidence to that provider.
+Semantic local-evidence assessment uses normal Pierre Dreb tools, so inspected session content is processed by the active research model's configured provider. The persisted guide is sanitized and generalized, but invoking the skill is still a decision to send the inspected evidence to that provider.
 
 Its primary routing safeguards are practical: `Explore` is for factual collection and navigation, not planning or implementation; routine lookup, extraction, repetitive file inspection, and straightforward summarization should use the least expensive scoped model demonstrated adequate by the evidence.
 
@@ -331,4 +331,4 @@ The optional global-only [Dispatch Arbiter](agent-models.md#dispatch-arbiter) no
 ## Skill Repositories
 
 - [Anthropic Skills](https://github.com/anthropics/skills) - Document processing (docx, pdf, pptx, xlsx), web development
-- [Pi Skills](https://github.com/badlogic/pi-skills) - Web search, browser automation, Google APIs, transcription (from [pi-mono](https://github.com/badlogic/pi-mono), dreb's upstream fork)
+- [Pi Skills](https://github.com/badlogic/pi-skills) - Web search, browser automation, Google APIs, transcription (from [pi-mono](https://github.com/badlogic/pi-mono), Pierre Dreb's upstream fork)

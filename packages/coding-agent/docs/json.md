@@ -1,14 +1,14 @@
 # JSON Event Stream Mode
 
 ```bash
-dreb --mode json "Your prompt"
+pierre-dreb --mode json "Your prompt"
 ```
 
-Outputs all session events as JSON lines to stdout. Useful for integrating dreb into other tools or custom UIs.
+Outputs all session events as JSON lines to stdout. Useful for integrating Pierre Dreb into other tools or custom UIs.
 
 ## Event Types
 
-Events are defined in [`AgentSessionEvent`](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/agent-session.ts):
+Events are defined in [`AgentSessionEvent`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/agent-session.ts):
 
 ```typescript
 type AgentSessionEvent =
@@ -48,7 +48,7 @@ interface DispatchRoute {
 }
 ```
 
-Base events from [`AgentEvent`](https://github.com/aebrer/dreb/blob/master/packages/agent/src/types.ts):
+Base events from [`AgentEvent`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/agent/src/types.ts):
 
 ```typescript
 type AgentEvent =
@@ -70,12 +70,12 @@ type AgentEvent =
 
 ## Message Types
 
-Base messages from [`packages/ai/src/types.ts`](https://github.com/aebrer/dreb/blob/master/packages/ai/src/types.ts):
+Base messages from [`packages/ai/src/types.ts`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/ai/src/types.ts):
 - `UserMessage`
 - `AssistantMessage`
 - `ToolResultMessage`
 
-Extended messages from [`packages/coding-agent/src/core/messages.ts`](https://github.com/aebrer/dreb/blob/master/packages/coding-agent/src/core/messages.ts):
+Extended messages from [`packages/coding-agent/src/core/messages.ts`](https://github.com/chemdalf-work/pierre-dreb/blob/master/packages/coding-agent/src/core/messages.ts):
 - `BashExecutionMessage`
 - `CustomMessage`
 - `BranchSummaryMessage`
@@ -114,7 +114,7 @@ The event never contains the arbiter prompt, response, reasoning, guide, task, o
 
 Errors surface as events, not as broken JSON or exit codes:
 
-- **LLM failures** (rate limits, network errors) trigger `auto_retry_start` / `auto_retry_end` events. dreb retries automatically with backoff. If all retries fail, `auto_retry_end` has `success: false` and `finalError` set.
+- **LLM failures** (rate limits, network errors) trigger `auto_retry_start` / `auto_retry_end` events. Pierre Dreb retries automatically with backoff. If all retries fail, `auto_retry_end` has `success: false` and `finalError` set.
 - **Tool execution errors** produce a `tool_execution_end` event with `isError: true` and the error message in `result`.
 - **Context overflow or a proactive threshold** triggers `auto_compaction_start` / `auto_compaction_end`. If compaction fails, `errorMessage` is set. `willRetry: true` means another model request is imminent, including continuation inside the same tool loop.
 
@@ -136,5 +136,5 @@ Auto-compaction and auto-retry events can appear between turns. Background lifec
 
 ```bash
 # 2>/dev/null suppresses startup/TUI output on stderr
-dreb --mode json "List files" 2>/dev/null | jq -c 'select(.type == "message_end")'
+pierre-dreb --mode json "List files" 2>/dev/null | jq -c 'select(.type == "message_end")'
 ```

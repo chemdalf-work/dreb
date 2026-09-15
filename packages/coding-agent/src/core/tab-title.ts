@@ -14,7 +14,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Api, Context, Model } from "@dreb/ai";
 import { completeSimple } from "@dreb/ai";
-import { CONFIG_DIR_NAME, getPackageDir } from "../config.js";
+import { CONFIG_DIR_NAME, getPackageDir, PRODUCT_NAME } from "../config.js";
 import { extractUserText, labelMessageEnd, labelToolEnd, RollingContextBuffer } from "./context-buffer.js";
 import type { ModelRegistry } from "./model-registry.js";
 import type { TabTitleSettings } from "./settings-manager.js";
@@ -170,7 +170,7 @@ export class TabTitleGenerator {
 		if (title) {
 			// Re-check: a name may have landed during the async LLM call.
 			if (this.deps.getSessionName?.()) return;
-			this.deps.setTitle(`dreb - ${title}`);
+			this.deps.setTitle(`${PRODUCT_NAME} - ${title}`);
 			this.deps.setSessionName?.(title);
 		}
 	}

@@ -11,6 +11,7 @@ vi.mock("@dreb/ai", () => ({
 vi.mock("../../coding-agent/src/config.js", () => ({
 	getPackageDir: () => "/mock/package",
 	CONFIG_DIR_NAME: ".dreb",
+	PRODUCT_NAME: "Pierre Dreb",
 }));
 
 // Mock fs.readFileSync for agent file reading.
@@ -146,7 +147,7 @@ describe("TabTitleGenerator", () => {
 			});
 
 			expect(gen.hasFired).toBe(true);
-			expect(deps.setTitle).toHaveBeenCalledWith("dreb - Fix auth bug");
+			expect(deps.setTitle).toHaveBeenCalledWith("Pierre Dreb - Fix auth bug");
 		});
 
 		it("respects custom triggerAfter setting", async () => {
@@ -396,7 +397,7 @@ describe("TabTitleGenerator", () => {
 			});
 
 			const title = (deps.setTitle as ReturnType<typeof vi.fn>).mock.calls[0][0];
-			const titleContent = title.replace("dreb - ", "");
+			const titleContent = title.replace("Pierre Dreb - ", "");
 			expect(titleContent.length).toBe(300);
 		});
 
@@ -415,7 +416,7 @@ describe("TabTitleGenerator", () => {
 			});
 
 			const title = (deps.setTitle as ReturnType<typeof vi.fn>).mock.calls[0][0];
-			expect(title).toBe("dreb - This is a longer descriptive title well over thirty characters");
+			expect(title).toBe("Pierre Dreb - This is a longer descriptive title well over thirty characters");
 		});
 
 		it("strips surrounding double quotes from LLM response", async () => {
@@ -427,7 +428,7 @@ describe("TabTitleGenerator", () => {
 			gen.onToolEnd();
 
 			await vi.waitFor(() => {
-				expect(deps.setTitle).toHaveBeenCalledWith("dreb - Fix auth bug");
+				expect(deps.setTitle).toHaveBeenCalledWith("Pierre Dreb - Fix auth bug");
 			});
 		});
 
@@ -440,7 +441,7 @@ describe("TabTitleGenerator", () => {
 			gen.onToolEnd();
 
 			await vi.waitFor(() => {
-				expect(deps.setTitle).toHaveBeenCalledWith("dreb - Fix auth bug");
+				expect(deps.setTitle).toHaveBeenCalledWith("Pierre Dreb - Fix auth bug");
 			});
 		});
 
@@ -453,7 +454,7 @@ describe("TabTitleGenerator", () => {
 			gen.onToolEnd();
 
 			await vi.waitFor(() => {
-				expect(deps.setTitle).toHaveBeenCalledWith("dreb - Fix auth bug");
+				expect(deps.setTitle).toHaveBeenCalledWith("Pierre Dreb - Fix auth bug");
 			});
 		});
 
@@ -639,7 +640,7 @@ describe("TabTitleGenerator", () => {
 
 			gen.onToolEnd();
 
-			await vi.waitFor(() => expect(deps.setTitle).toHaveBeenCalledWith("dreb - Fix auth bug"));
+			await vi.waitFor(() => expect(deps.setTitle).toHaveBeenCalledWith("Pierre Dreb - Fix auth bug"));
 			expect(registry.find).toHaveBeenCalledWith("dedicated-provider", "family/title-model");
 			expect(mockResolveModel).not.toHaveBeenCalled();
 			expect(mockParseAgent).not.toHaveBeenCalled();
@@ -671,7 +672,7 @@ describe("TabTitleGenerator", () => {
 
 			gen.onToolEnd();
 
-			await vi.waitFor(() => expect(deps.setTitle).toHaveBeenCalledWith("dreb - Fix auth bug"));
+			await vi.waitFor(() => expect(deps.setTitle).toHaveBeenCalledWith("Pierre Dreb - Fix auth bug"));
 			expect(mockCompleteSimple).toHaveBeenCalledTimes(2);
 			expect(mockCompleteSimple.mock.calls[0][0]).toMatchObject({
 				provider: "dedicated-provider",
@@ -700,7 +701,7 @@ describe("TabTitleGenerator", () => {
 
 				gen.onToolEnd();
 
-				await vi.waitFor(() => expect(deps.setTitle).toHaveBeenCalledWith("dreb - Fix auth bug"));
+				await vi.waitFor(() => expect(deps.setTitle).toHaveBeenCalledWith("Pierre Dreb - Fix auth bug"));
 				expect(mockCompleteSimple.mock.calls[0][0]).toMatchObject({
 					provider: "test-provider",
 					id: "test-model",
@@ -874,7 +875,7 @@ describe("TabTitleGenerator", () => {
 			gen.onToolEnd();
 
 			await vi.waitFor(() => {
-				expect(deps.setTitle).toHaveBeenCalledWith("dreb - Fix auth bug");
+				expect(deps.setTitle).toHaveBeenCalledWith("Pierre Dreb - Fix auth bug");
 			});
 
 			expect(registry.find).toHaveBeenCalledWith("explore-provider", "explore-model");
@@ -901,7 +902,7 @@ describe("TabTitleGenerator", () => {
 				expect(deps.setTitle).toHaveBeenCalled();
 			});
 
-			expect(deps.setTitle).toHaveBeenCalledWith("dreb - Fix auth bug");
+			expect(deps.setTitle).toHaveBeenCalledWith("Pierre Dreb - Fix auth bug");
 			expect(deps.setSessionName).toHaveBeenCalledWith("Fix auth bug");
 		});
 
@@ -918,7 +919,7 @@ describe("TabTitleGenerator", () => {
 			});
 
 			// setTitle still works, and no error was thrown
-			expect(deps.setTitle).toHaveBeenCalledWith("dreb - Fix auth bug");
+			expect(deps.setTitle).toHaveBeenCalledWith("Pierre Dreb - Fix auth bug");
 		});
 
 		it("does not call setSessionName when title generation fails", async () => {

@@ -1,34 +1,34 @@
 # Web Dashboard
 
-`dreb dashboard` launches a browser UI for dreb: a fleet overview of sessions
+`pierre-dreb dashboard` launches a browser UI for Pierre Dreb: a fleet overview of sessions
 across projects, a full-parity chat view, live background-subagent
 observability, host file browsing, and settings — usable from desktop and
 mobile browsers.
 
 The dashboard lives in the `@dreb/dashboard` package. Live agent control goes
-over [RPC mode](rpc.md): the server maintains a pool of `dreb --mode rpc`
-child processes, one per live session. The server uses dreb's public session
+over [RPC mode](rpc.md): the server maintains a pool of `pierre-dreb --mode rpc`
+child processes, one per live session. The server uses Pierre Dreb's public session
 APIs for on-disk inventory/delete and serves its own host file API.
 
 ## Memories
 
-The Memories tab keeps the global dreb scope visible and lists only populated project `.dreb/memory` directories discovered from active and on-disk sessions. Empty or missing project scopes are omitted because the dashboard edits and deletes existing documents but does not create entries. The complete `MEMORY.md` index and direct-child entries are editable with revision conflicts, sanitized previews, and synchronized index cleanup on delete. Local direct-child links in the rendered index open the entry within the current scope; external links retain normal safe link behavior. Scope and document changes immediately hide stale editor content and show loading feedback while fresh data is read.
+The Memories tab keeps the global Pierre Dreb scope visible and lists only populated project `.dreb/memory` directories discovered from active and on-disk sessions. Empty or missing project scopes are omitted because the dashboard edits and deletes existing documents but does not create entries. The complete `MEMORY.md` index and direct-child entries are editable with revision conflicts, sanitized previews, and synchronized index cleanup on delete. Local direct-child links in the rendered index open the entry within the current scope; external links retain normal safe link behavior. Scope and document changes immediately hide stale editor content and show loading feedback while fresh data is read.
 
 ## Launching
 
 ```bash
-# via the dreb CLI (requires @dreb/dashboard to be installed)
-dreb dashboard [--port 5343]
+# via the pierre-dreb CLI (requires @dreb/dashboard to be installed)
+pierre-dreb dashboard [--port 5343]
 
 # or directly
 dreb-dashboard [--port 5343]
 
 # remote over Tailscale with HTTPS (PWA + notifications on mobile)
-dreb dashboard --remote --allow you@example.com \
+pierre-dreb dashboard --remote --allow you@example.com \
   --https --cert /path/cert.pem --key /path/key.pem
 ```
 
-If `@dreb/dashboard` is not installed, `dreb dashboard` fails loudly with
+If `@dreb/dashboard` is not installed, `pierre-dreb dashboard` fails loudly with
 install instructions (`npm install -g @dreb/dashboard`).
 
 Open `http://127.0.0.1:5343` on the same machine.
@@ -47,7 +47,7 @@ malicious website cannot drive the dashboard API through DNS rebinding.
 on the same LAN — the path is [Tailscale](https://tailscale.com):
 
 ```bash
-dreb dashboard --remote --allow you@example.com --allow teammate@example.com
+pierre-dreb dashboard --remote --allow you@example.com --allow teammate@example.com
 # or: dreb-dashboard --remote --allow you@example.com --allow teammate@example.com
 ```
 
@@ -83,7 +83,7 @@ interface without Tailscale identity enforcement.
 
 Pairing grants the same power as sitting at the terminal: chatting with
 agents, running commands through them, browsing the whole host filesystem
-(anywhere the dreb process can read), and uploading/downloading files. The
+(anywhere the Pierre Dreb process can read), and uploading/downloading files. The
 pairing screen states this before the PIN is entered. Every file operation is
 logged server-side.
 
@@ -113,7 +113,7 @@ PID 1 where the watchdog never sees it. So an always-on dashboard still lets the
 VM idle out, and the first request after resume can land in the transitional
 networking window above.
 
-**Workarounds** (host-side — no dreb changes needed):
+**Workarounds** (host-side — no Pierre Dreb changes needed):
 
 - **Keep a WSL terminal open.** Simplest and most reliable: an attached
   interactive session is exactly the signal WSL uses to keep the VM alive, which
@@ -159,8 +159,8 @@ On desktop, drag the right-edge separator or focus it and use Left/Right arrows
 (10px steps), Home (minimum), or End (maximum). The initial width is **260px**;
 the preferred range is **240–560px**, constrained by available space to reserve
 **360px** for the transcript plus the separator. The browser saves the preferred
-width under `dreb.dashboard.sessionSidebarWidth`, independently of
-`dreb.dashboard.sessionSidebarCollapsed`. Narrowing the window clamps only the
+width under `Pierre Dreb.dashboard.sessionSidebarWidth`, independently of
+`Pierre Dreb.dashboard.sessionSidebarCollapsed`. Narrowing the window clamps only the
 rendered width; widening restores the saved choice. Invalid values fall back to
 the default or clamp to the allowed range. Unavailable localStorage leaves the
 controls usable in memory. A cancelled drag does not replace the saved width.
@@ -241,7 +241,7 @@ is dropped exactly as before — never becoming an unresolvable reference.
 Command responses (`get_messages`, `get_dashboard_snapshot`) always carry full
 payloads because they are the authoritative source image recovery reads.
 
-The browser-local `dreb.dashboard.imageDisplayMode` setting has three modes:
+The browser-local `Pierre Dreb.dashboard.imageDisplayMode` setting has three modes:
 
 - **placeholders** — assign no image `src` and make no request until preview or
   original loading is explicit;
@@ -356,7 +356,7 @@ For optional troubleshooting, the stream first supplies an opaque connection ID.
 
 ### Nested context trust
 
-The Files controls govern only **lazy nested/out-of-cwd** context loading, not the separate initial upward scan that dreb performs from a session's launch cwd. The initial scan is always part of startup; do not treat the Files trust badge as a way to disable or redefine it.
+The Files controls govern only **lazy nested/out-of-cwd** context loading, not the separate initial upward scan that Pierre Dreb performs from a session's launch cwd. The initial scan is always part of startup; do not treat the Files trust badge as a way to disable or redefine it.
 
 By default, lazy loading is off. The Files view is the primary grant flow: trust the displayed folder and descendants, or untrust its actual granting root. Settings lists every configured trusted root for audit and revoke, and also offers a simple add-by-path control. Trusting through either screen writes a global root to `~/.dreb/agent/settings.json` (`context.trustedFolders`) and covers that existing canonical directory and descendants. Targets and roots are matched through native `realpath`, so a symlink that escapes a trusted root is untrusted. Project `.dreb/settings.json` cannot enable, disable, or extend nested-context trust; only global settings and the dashboard Files/Settings controls can, so a cloned repository cannot grant itself trust. The global `context.autoLoadNested: true` toggle is an expert trust-all override: it permits every resolvable target and can inject prompt-injection content from untrusted repositories; the UI warns prominently and folder controls cannot narrow it.
 
@@ -415,7 +415,7 @@ terminates TLS itself using certificate files from
 (no reverse proxy, **no auth-model change**):
 
 ```bash
-dreb dashboard --remote --allow you@example.com \
+pierre-dreb dashboard --remote --allow you@example.com \
   --https --cert /etc/dreb/cert.pem --key /etc/dreb/key.pem
 ```
 
@@ -432,7 +432,7 @@ sudo tailscale cert \
   --cert-file=/etc/dreb/cert.pem \
   --key-file=/etc/dreb/key.pem \
   hostname.tailXXXX.ts.net
-sudo chown dreb:dreb /etc/dreb/cert.pem /etc/dreb/key.pem
+sudo chown dreb:pierre-dreb /etc/dreb/cert.pem /etc/dreb/key.pem
 sudo chmod 644 /etc/dreb/cert.pem && sudo chmod 600 /etc/dreb/key.pem
 ```
 
@@ -448,7 +448,7 @@ when within 30 days of expiry) is the recommended cadence:
 Type=oneshot
 ExecStart=/usr/bin/tailscale cert --cert-file=/etc/dreb/cert.pem \
   --key-file=/etc/dreb/key.pem --min-validity=720h hostname.tailXXXX.ts.net
-ExecStartPost=/bin/chown dreb:dreb /etc/dreb/cert.pem /etc/dreb/key.pem
+ExecStartPost=/bin/chown dreb:pierre-dreb /etc/dreb/cert.pem /etc/dreb/key.pem
 
 # /etc/systemd/system/dreb-cert.timer
 [Timer]
@@ -536,7 +536,7 @@ For browser acceptance, use Chromium's network throttling with 100 ms RTT and
 ```
 Browser dashboard (SolidJS + Vite, tokens.css design system)
   ⇄ Express server: fail-closed auth, REST, SSE fanout, file API
-  ⇄ RpcClient pool — one `dreb --mode rpc --ui dashboard` child per session
+  ⇄ RpcClient pool — one `pierre-dreb --mode rpc --ui dashboard` child per session
   ⇄ sessions on disk (~/.dreb/agent/sessions), settings, models
 ```
 
@@ -583,8 +583,8 @@ TUI theme system** — dashboard themes intentionally do not map to TUI themes.
   choices are reflected in the previews, while Theme default previews stay on
   IBM Plex Mono so the inactive Gruvbox card does not fetch JetBrains Mono.
 - **Per-browser persistence.** Selections are stored in per-browser
-  `localStorage` (`dreb.dashboard.theme`, `dreb.dashboard.colorMode`, and
-  `dreb.dashboard.font`), with a cross-tab sync listener; a pristine install
+  `localStorage` (`Pierre Dreb.dashboard.theme`, `Pierre Dreb.dashboard.colorMode`, and
+  `Pierre Dreb.dashboard.font`), with a cross-tab sync listener; a pristine install
   (entropist.ca + system + Theme default font) leaves no keys behind and renders
   byte-for-byte identically to the `tokens.css` baseline. No server/RPC
   involvement, no runtime dependencies.
@@ -621,7 +621,7 @@ Save a user unit to `~/.config/systemd/user/dreb-dashboard.service`:
 
 ```ini
 [Unit]
-Description=dreb web dashboard
+Description=pierre-dreb web dashboard
 
 [Service]
 ExecStart=%h/.npm-global/bin/dreb-dashboard
@@ -643,7 +643,7 @@ systemctl --user enable --now dreb-dashboard
 
 Create a **LaunchAgent** (not a LaunchDaemon) — the dashboard must run as the
 logged-in user to read `~/.dreb/agent/sessions` and `auth.json`, and to spawn
-`dreb --mode rpc` children under that user. A root LaunchDaemon would have the
+`pierre-dreb --mode rpc` children under that user. A root LaunchDaemon would have the
 wrong `HOME` and credentials.
 
 Save a plist to `~/Library/LaunchAgents/com.dreb.dashboard.plist`:

@@ -16,6 +16,7 @@ import {
 	writeFileSync,
 } from "fs";
 import { join, resolve } from "path";
+import { type BuildProvenance, getBuildProvenance } from "../build-provenance.js";
 import { getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.js";
 import {
 	type BashExecutionMessage,
@@ -25,7 +26,7 @@ import {
 	createCustomMessage,
 } from "./messages.js";
 
-export const CURRENT_SESSION_VERSION = 3;
+export const CURRENT_SESSION_VERSION = 4;
 
 export interface SessionHeader {
 	type: "session";
@@ -36,6 +37,8 @@ export interface SessionHeader {
 	parentSession?: string;
 	/** Agent type that executed this session (set for subagent child processes via --agent-type) */
 	agentType?: string;
+	/** Exact product/build/runtime identity for sessions created by version 4 or later. */
+	provenance?: BuildProvenance;
 }
 
 export interface NewSessionOptions {
@@ -255,6 +258,12 @@ function migrateV2ToV3(entries: FileEntry[]): void {
 	}
 }
 
+/** Migrate v3 → v4: reserve provenance on new headers without inventing it for old sessions. */
+function migrateV3ToV4(entries: FileEntry[]): void {
+	const header = entries.find((entry) => entry.type === "session") as SessionHeader | undefined;
+	if (header) header.version = 4;
+}
+
 /**
  * Run all necessary migrations to bring entries to current version.
  * Mutates entries in place. Returns true if any migration was applied.
@@ -267,6 +276,7 @@ function migrateToCurrentVersion(entries: FileEntry[]): boolean {
 
 	if (version < 2) migrateV1ToV2(entries);
 	if (version < 3) migrateV2ToV3(entries);
+	if (version < 4) migrateV3ToV4(entries);
 
 	return true;
 }
@@ -758,6 +768,7 @@ export class SessionManager {
 			timestamp,
 			cwd: this.cwd,
 			parentSession: options?.parentSession,
+			provenance: getBuildProvenance(),
 		};
 		this.fileEntries = [header];
 		this.byId.clear();
@@ -1245,6 +1256,7 @@ export class SessionManager {
 			timestamp,
 			cwd: this.cwd,
 			parentSession: this.persist ? previousSessionFile : undefined,
+			provenance: getBuildProvenance(),
 		};
 
 		// Collect labels for entries in the path
@@ -1428,6 +1440,7 @@ export class SessionManager {
 			timestamp,
 			cwd: targetCwd,
 			parentSession: sourcePath,
+			provenance: getBuildProvenance(),
 		};
 		appendFileSync(newSessionFile, `${JSON.stringify(newHeader)}\n`);
 

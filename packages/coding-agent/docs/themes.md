@@ -1,4 +1,4 @@
-> dreb can create themes. Ask it to build one for your setup.
+> Pierre Dreb can create themes. Ask it to build one for your setup.
 
 # Themes
 
@@ -16,12 +16,12 @@ Themes are JSON files that define colors for the TUI.
 
 ## Locations
 
-dreb loads themes from:
+Pierre Dreb loads themes from:
 
 - Built-in: `dark`, `light`
 - Global: `~/.dreb/agent/themes/*.json`
 - Project: `.dreb/themes/*.json`
-- Packages: `themes/` directories or `dreb.themes` entries in `package.json`
+- Packages: `themes/` directories or `Pierre Dreb.themes` entries in `package.json`
 - Settings: `themes` array with files or directories
 - CLI: `--theme <path>` (repeatable)
 
@@ -37,7 +37,7 @@ Select a theme via `/settings` or in `settings.json`:
 }
 ```
 
-On first run, dreb detects your terminal background and defaults to `dark` or `light`.
+On first run, Pierre Dreb detects your terminal background and defaults to `dark` or `light`.
 
 ## Creating a Custom Theme
 
@@ -117,7 +117,7 @@ vim ~/.dreb/agent/themes/my-theme.json
 
 3. Select the theme via `/settings`.
 
-**Hot reload:** When you edit the currently active custom theme file, dreb reloads it automatically for immediate visual feedback.
+**Hot reload:** When you edit the currently active custom theme file, Pierre Dreb reloads it automatically for immediate visual feedback.
 
 ## Theme Format
 
@@ -270,7 +270,7 @@ Four formats are supported:
 
 ### Terminal Compatibility
 
-dreb uses 24-bit RGB colors. Most modern terminals support this (iTerm2, Kitty, WezTerm, Windows Terminal, VS Code). For older terminals with only 256-color support, dreb falls back to the nearest approximation.
+Pierre Dreb uses 24-bit RGB colors. Most modern terminals support this (iTerm2, Kitty, WezTerm, Windows Terminal, VS Code). For older terminals with only 256-color support, Pierre Dreb falls back to the nearest approximation.
 
 Check truecolor support:
 

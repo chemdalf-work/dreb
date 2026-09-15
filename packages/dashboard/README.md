@@ -1,12 +1,12 @@
 # @dreb/dashboard
 
-Web dashboard for [dreb](https://github.com/aebrer/dreb) — a visual, real-time,
+Web dashboard for [Pierre Dreb](https://github.com/chemdalf-work/pierre-dreb) — a visual, real-time,
 mobile-friendly interface for browsing projects and sessions, controlling
-multiple dreb agents, watching background subagents live, and using dreb from
+multiple Pierre Dreb agents, watching background subagents live, and using Pierre Dreb from
 devices that are not sitting at the host terminal.
 
-Live agent control goes through RPC: the dashboard spawns `dreb --mode rpc`
-child processes (one per live session). The server also uses dreb's public
+Live agent control goes through RPC: the dashboard spawns `pierre-dreb --mode rpc`
+child processes (one per live session). The server also uses Pierre Dreb's public
 session APIs for on-disk inventory/delete and serves its own host file API.
 
 ## Install & launch
@@ -17,12 +17,12 @@ npm install -g @dreb/dashboard
 # local-only (default): binds 127.0.0.1, no auth needed
 dreb-dashboard
 
-# If you installed the main dreb CLI (@dreb/coding-agent), the same server is
+# If you installed the main pierre-dreb CLI (@dreb/coding-agent), the same server is
 # also available through:
-dreb dashboard
+pierre-dreb dashboard
 
 # remote over Tailscale with HTTPS (mobile PWA + notifications)
-dreb dashboard --remote --allow you@example.com \
+pierre-dreb dashboard --remote --allow you@example.com \
   --https --cert /path/cert.pem --key /path/key.pem
 ```
 
@@ -108,8 +108,8 @@ Cards navigate on click, without adding the fleet page's stop-runtime action.
 On desktop, drag the right-edge separator or focus it and use Left/Right (10px),
 Home, or End. The default is 260px; preferred widths range from 240–560px, further
 constrained to leave 360px for the transcript. Collapse and width are saved in
-localStorage (`dreb.dashboard.sessionSidebarCollapsed` and
-`dreb.dashboard.sessionSidebarWidth`) across navigation and reload. Narrowing a
+localStorage (`Pierre Dreb.dashboard.sessionSidebarCollapsed` and
+`Pierre Dreb.dashboard.sessionSidebarWidth`) across navigation and reload. Narrowing a
 window temporarily clamps the rendered width without replacing the saved choice;
 mobile ignores that width. Cancelling a drag discards its uncommitted change.
 While the sidebar/drawer is hidden, the toggle uses the highest-priority status
@@ -150,7 +150,7 @@ The selected project context reads effective global + project settings, but save
 
 ### Memories
 
-The Memories screen exposes only dreb memory scopes: global `~/.dreb/memory` and populated project `.dreb/memory` directories derived from currently active sessions plus on-disk session cwd inventory. Empty or missing project memory directories are omitted because this screen cannot create entries; the global scope remains visible. Documents are existing-only: `MEMORY.md` is the special index, and entries are direct child `.md` files (excluding hidden/internal/path-like names). Local direct-child links in the rendered index open that entry in the current scope, while external links keep their normal safe behavior. Scope and document changes replace stale editor content with visible loading feedback.
+The Memories screen exposes only Pierre Dreb memory scopes: global `~/.dreb/memory` and populated project `.dreb/memory` directories derived from currently active sessions plus on-disk session cwd inventory. Empty or missing project memory directories are omitted because this screen cannot create entries; the global scope remains visible. Documents are existing-only: `MEMORY.md` is the special index, and entries are direct child `.md` files (excluding hidden/internal/path-like names). Local direct-child links in the rendered index open that entry in the current scope, while external links keep their normal safe behavior. Scope and document changes replace stale editor content with visible loading feedback.
 
 Saves require the exact opaque SHA-256 revision of the UTF-8 content that was loaded. A stale revision returns a conflict and leaves the browser draft intact. Entry saves validate `name`, `description`, and `type` frontmatter (`user-preferences`, `good-practices`, `project`, or `navigation`); listing/reading malformed entries surfaces a metadata error instead of hiding them so they can be repaired. The index accepts Markdown, is shown complete, and warns when it exceeds the 200-line memory-index convention.
 
@@ -168,7 +168,7 @@ sends only `{id, mimeType, size}` references; SVG, malformed data, and MIME
 mismatches are dropped. Image bytes therefore never consume SSE frame/replay
 budgets or cause an `oversized_event` barrier.
 
-The browser-local `dreb.dashboard.imageDisplayMode` preference is separate from
+The browser-local `Pierre Dreb.dashboard.imageDisplayMode` preference is separate from
 model-input auto-resize/block settings. **Bounded previews** are the default:
 they are generated lazily in a worker, fit within 1024 × 1024 and 256 KiB, and
 a click enlarges the same preview without fetching the original. **Placeholders**
@@ -281,7 +281,7 @@ See the full [dashboard recovery contract](../coding-agent/docs/dashboard.md#liv
 ## Nested context trust
 
 The Files trust controls apply only to **lazy nested/out-of-cwd** context
-loading. They do not control dreb's separate initial upward scan for
+loading. They do not control Pierre Dreb's separate initial upward scan for
 `AGENTS.md`/`CLAUDE.md` from a session's launch cwd.
 
 Lazy loading is off by default. The Files view is the primary grant flow:
@@ -349,7 +349,7 @@ Running the dashboard inside **WSL2** and reaching it from a Windows browser can
 intermittently show an access-denied / pairing screen on `http://127.0.0.1`
 right after the WSL VM has been idle. It's a WSL mirrored-networking quirk (the
 loopback source address is transiently `10.255.255.254`, which fails local-mode
-auth's `127.x`/`::1` check), not a dreb bug. Keeping a WSL terminal open — or a
+auth's `127.x`/`::1` check), not a Pierre Dreb bug. Keeping a WSL terminal open — or a
 headless keep-alive — avoids it. Full explanation and workarounds:
 [WSL2 gotcha](../coding-agent/docs/dashboard.md#wsl2-gotcha).
 
@@ -385,7 +385,7 @@ is unchanged (the peer address stays the real tailnet IP). See
 ```
 Browser (SolidJS, hash-routed SPA)
   ⇄ REST + SSE (Express server, fail-closed auth middleware)
-  ⇄ RpcClient pool — one `dreb --mode rpc` child per live session
+  ⇄ RpcClient pool — one `pierre-dreb --mode rpc` child per live session
 ```
 
 - Events stream over one SSE connection carrying `{seq, key, event}` envelopes.

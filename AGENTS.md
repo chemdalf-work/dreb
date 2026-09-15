@@ -2,7 +2,7 @@
 
 ## Build Requirement
 
-**You MUST run `npm run build` after ANY code change before testing with the real `dreb` binary.** The CLI runs compiled JS from `dist/`, not TypeScript source. Vitest transpiles TS on the fly, so tests will pass even with a stale build — but manual testing against the binary will use old code.
+**You MUST run `npm run build` after ANY code change before testing with the real `pierre-dreb` or compatibility `dreb` binary.** Both commands run the same compiled `dist/cli.js`, not TypeScript source. Vitest transpiles TS on the fly, so tests will pass even with a stale build — but manual testing against either binary will use old code.
 
 ```bash
 npm run build

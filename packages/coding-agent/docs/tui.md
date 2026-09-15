@@ -1,10 +1,10 @@
-> dreb can create TUI components. Ask it to build one for your use case.
+> Pierre Dreb can create TUI components. Ask it to build one for your use case.
 
 # TUI Components
 
 Extensions and custom tools can render custom TUI components for interactive user interfaces. This page covers the component system and available building blocks.
 
-**Source:** [`@dreb/tui`](https://github.com/aebrer/dreb/tree/master/packages/tui)
+**Source:** [`@dreb/tui`](https://github.com/chemdalf-work/pierre-dreb/tree/master/packages/tui)
 
 ## Component Interface
 
@@ -96,7 +96,7 @@ dreb.on("session_start", async (_event, ctx) => {
 });
 ```
 
-**In custom tools** via `dreb.ui.custom()`:
+**In custom tools** via `Pierre Dreb.ui.custom()`:
 
 ```typescript
 async execute(toolCallId, params, onUpdate, ctx, signal) {
@@ -810,7 +810,7 @@ The default footer shows these rows:
 4. **Child usage** — One always-expanded row per direct or nested child, with hierarchy, agent type, token/cache usage, cost, and provider/model when available. Completed children and chains are recovered from persisted JSONL after restart.
 5. **Extension statuses** — Alphabetical list of persistent status texts set by extensions via `ctx.ui.setStatus()`.
 
-Daily spend is warning-only: dreb warns once at $50, $100, and every additional $50 threshold. Atomic local markers deduplicate warnings across refreshes and process restarts; no threshold cancels work.
+Daily spend is warning-only: Pierre Dreb warns once at $50, $100, and every additional $50 threshold. Atomic local markers deduplicate warnings across refreshes and process restarts; no threshold cancels work.
 
 ### Pattern 6: Custom Footer
 
