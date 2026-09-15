@@ -53,6 +53,11 @@ describe("supportsXhigh", () => {
 		expect(supportsXhigh(model!)).toBe(true);
 	});
 
+	it("returns true for DeepSeek V4 Pro", () => {
+		const base = getModel("anthropic", "claude-opus-4-6");
+		expect(supportsXhigh({ ...base, id: "deepseek-v4-pro" })).toBe(true);
+	});
+
 	it.each(["kimi-for-coding", "kimi-for-coding-highspeed"] as const)(
 		"returns false for the K2.7 managed variant %s",
 		(id) => {

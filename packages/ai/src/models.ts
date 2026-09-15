@@ -214,6 +214,7 @@ export function supportsMax<TApi extends Api>(model: Model<TApi>): boolean {
 export function supportsXhigh<TApi extends Api>(model: Model<TApi>): boolean {
 	if (model.provider === "kimi-coding-oauth" && model.id === "k3") return true;
 	if (isQwen38OrLater(model.id)) return true;
+	if (model.id === "deepseek-v4-pro") return true;
 	if (
 		model.id.includes("gpt-5.2") ||
 		model.id.includes("gpt-5.3") ||
