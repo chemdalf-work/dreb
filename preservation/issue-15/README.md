@@ -9,7 +9,7 @@
 Recovery from the base commit:
 
 ```bash
-git apply .dreb/preservation/changes.patch
+git apply preservation/issue-15/changes.patch
 ```
 
 The patch was verified with `git apply --check` against the recorded base before this branch was pushed.
