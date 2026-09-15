@@ -9,7 +9,6 @@
 Recovery from the base commit:
 
 ```bash
-git apply .dreb/preservation/changes.patch
+git apply preservation/issue-15/changes.patch
 ```
-
-When recovering from this branch, use `preservation/issue-15/changes.patch` as the source path. The patch was verified with `git apply --check` against the recorded base before this branch was pushed.
+ The patch was verified with `git apply --check` against the recorded base before this branch was pushed.
